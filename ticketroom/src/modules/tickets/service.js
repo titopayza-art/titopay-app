@@ -31,7 +31,7 @@ async function qrSvg(ticket) {
 
 async function listForUser(userId) {
   const { rows } = await db.query(
-    `SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents,
+    `SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test,
             tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
             e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, o.reference AS order_reference,
             (SELECT json_build_object('id', tr.id, 'toEmail', tr.to_email, 'expiresAt', tr.expires_at)
@@ -166,6 +166,8 @@ async function admit(staff, { eventId, payload, tagInput, gate }) {
       }
     }
     if (ticket.event_id !== eventId) { await log("wrong_event", ticket.id); return { outcome: "wrong_event", message: "This ticket is for a different event." }; }
+    // Bought in test mode (sandbox): never valid for entry.
+    if (ticket.test) { await log("invalid", ticket.id); return { outcome: "test_ticket", message: "Test ticket, bought while payments were in test mode. Not valid for entry.", holderName: ticket.holder_name }; }
     if (ticket.status === "revoked" || ticket.status === "refunded") { await log(ticket.status, ticket.id); return { outcome: ticket.status, message: `This ticket was ${ticket.status}.` }; }
 
     // The single atomic statement that prevents double entry.

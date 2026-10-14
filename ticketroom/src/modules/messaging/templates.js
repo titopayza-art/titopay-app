@@ -28,9 +28,11 @@ module.exports = {
     const open = guestLink
       ? `View your tickets: ${guestLink}\n\nKeep this email: the link opens your tickets on any phone. Want them all in one place? Create a free account with this email address at ${base()}/account and confirm it. Your tickets will be waiting.`
       : `Open my tickets: ${base()}/account#/tickets`;
+    // Paid while payments were in test mode (the sandbox): marked TEST.
+    const test = order.test === true || Number(order.test) === 1;
     return {
-      subject: free ? `Your free ${ticketCount === 1 ? "ticket" : "tickets"} for ${event.title}` : `Your tickets for ${event.title} (${order.reference})`,
-      body: `Hi ${first(order.buyer_name)},\n\n${free ? `You're booked for ${event.title}. Your ${plural(ticketCount, "free ticket")} ${isAre} waiting in your TicketRoom account.` : `Thanks for your order. Your ${plural(ticketCount, "ticket")} for ${event.title} ${isAre} ready.`}\n\n${place(event)}\n${when(event.starts_at)}\nOrder ${order.reference}${free ? "" : ` · ${formatZar(order.total_cents)}`}\n\n${open}\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in.${free && !guestLink ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : ""}${FOOTER}`,
+      subject: (test ? "[TEST] " : "") + (free ? `Your free ${ticketCount === 1 ? "ticket" : "tickets"} for ${event.title}` : `Your tickets for ${event.title} (${order.reference})`),
+      body: `Hi ${first(order.buyer_name)},\n\n${test ? "This is a TEST order, paid while TicketRoom payments were in test mode. No real money moved and these tickets will not get you in.\n\n" : ""}${free ? `You're booked for ${event.title}. Your ${plural(ticketCount, "free ticket")} ${isAre} waiting in your TicketRoom account.` : `Thanks for your order. Your ${plural(ticketCount, "ticket")} for ${event.title} ${isAre} ready.`}\n\n${place(event)}\n${when(event.starts_at)}\nOrder ${order.reference}${free ? "" : ` · ${formatZar(order.total_cents)}`}\n\n${open}\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in.${free && !guestLink ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : ""}${FOOTER}`,
     };
   },
   eventReminder: ({ name, event, ticketCount, soon }) => {
@@ -79,6 +81,10 @@ module.exports = {
     subject: `Top-up confirmed for ${event.title}`,
     body: `We've added ${formatZar(amount)} to your cashless balance for ${event.title}.\n\nSee my balance: ${base()}/account#/wallet${FOOTER}`,
   }),
+  refundDone: ({ name, order, event, amountCents }) => ({
+    subject: `Your refund for ${event.title} (${order.reference})`,
+    body: `Hi ${first(name || order.buyer_name)},\n\nWe have refunded ${formatZar(Number(amountCents))} for your order ${order.reference} (${event.title}).\n\nIt goes back to the card or account you paid with. Banks usually show it within 3 to 7 working days. Any refunded tickets no longer work at the gate.\n\nQuestions? Reply to this email or ask us to call you back at ${base()}/contact.${FOOTER}`,
+  }),
   refundCompleted: ({ reference, amount }) => ({
     subject: `Refund ${reference} processed`,
     body: `Your refund of ${formatZar(amount)} (${reference}) has been processed. Depending on your bank, it can take 3 to 7 working days to show.${FOOTER}`,
@@ -120,6 +126,29 @@ module.exports = {
   teamInvite: ({ name, by, roles, url }) => ({
     subject: "You've been added to the TicketRoom team",
     body: `Hi ${first(name)},\n\n${by} has added you to the TicketRoom team as ${roles}. ${url ? `Set a password to get started. The link works for 7 days.\n\nSet my password: ${url}\n\n` : "Sign in with your usual TicketRoom password.\n\n"}After signing in you land in the admin portal. Keep your password to yourself: this account can see customer details.${FOOTER}`,
+  }),
+  // An admin sends a staff member a link to choose a new password (staff
+  // can't reset their own from the sign-in box).
+  staffPasswordReset: ({ name, by, url }) => ({
+    subject: "Choose a new TicketRoom password",
+    body: `Hi ${first(name)},\n\n${by} has sent you a link to choose a new password for the TicketRoom admin portal. It works for 24 hours.\n\nChoose my password: ${url}\n\nIf you didn't ask for this, tell ${by} straight away.${FOOTER}`,
+  }),
+  // Someone new added to an organiser's team: a new organiser account.
+  orgMemberInvite: ({ name, by, organiser, role, url }) => ({
+    subject: `${organiser} added you to their team on TicketRoom`,
+    body: `Hi ${first(name)},\n\n${by} has added you to the ${organiser} team on TicketRoom, with the ${String(role).charAt(0).toUpperCase()}${String(role).slice(1)} role. Set a password to open the organiser portal. The link works for 7 days.\n\nSet my password: ${url}\n\nAfter that, sign in at ticketroom.co.za/organisers.${FOOTER}`,
+  }),
+  payoutRequested: ({ name, reference, amountCents, organiser, bank }) => ({
+    subject: `Payout ${reference} requested`,
+    body: `Hi ${first(name)},\n\nWe've received your payout request of ${formatZar(Number(amountCents))} for ${organiser}. TicketRoom finance checks every request, then pays it by EFT to ${bank}. You'll get an email when it's paid.\n\nSee your balance: ${base()}/organisers#/finance${FOOTER}`,
+  }),
+  payoutRejected: ({ name, reference, amountCents, note }) => ({
+    subject: `Payout ${reference} was not approved`,
+    body: `Hi ${first(name)},\n\nYour payout request of ${formatZar(Number(amountCents))} was not approved.\n\nThe reason: ${note}\n\nThe amount is back in your available balance. Reply to this email if you have questions.${FOOTER}`,
+  }),
+  payoutPaid: ({ name, reference, amountCents, organiser, bank, bankReference }) => ({
+    subject: `Payout ${reference} is on its way`,
+    body: `Hi ${first(name)},\n\nWe have paid ${formatZar(Number(amountCents))} to ${bank} for ${organiser}. Bank reference: ${bankReference}.\n\nEFTs usually clear within 1 to 2 working days.\n\nSee your balance: ${base()}/organisers#/finance${FOOTER}`,
   }),
   staffInvite: ({ name, organiser, event, url }) => ({
     subject: `${organiser} added you as a ticket scanner on TicketRoom`,

@@ -142,4 +142,24 @@ async function deliverBatch(limit = 50) {
   return sent;
 }
 
-module.exports = { enqueue, deliverBatch, mask, adapterFor };
+// Sends one email straight away (tests from the admin portal), bypassing the
+// queue, and records it in Messages like any other.
+async function sendNow(to, subject, body, userId = null) {
+  let adapter;
+  try {
+    adapter = adapterFor("email");
+    const { providerMessageId } = await adapter.send({ channel: "email", to_address: to, subject, body });
+    await db.query(
+      `INSERT INTO message_outbox (channel, kind, to_address, subject, body, user_id, status, provider, provider_message_id, attempts, sent_at)
+       VALUES ('email','transactional',$1,$2,$3,$4,'sent',$5,$6,1, now())`, [to, subject, body, userId, adapter.key, providerMessageId]);
+    return { ok: true, detail: adapter.key === "log" ? 'Recorded, not sent: email is set to "Do not send" (log only). Set SMTP_HOST, SMTP_USER and SMTP_PASS to send real email.' : `Sent to ${to}. Check the inbox (and spam) in a minute.` };
+  } catch (err) {
+    const msg = String(err.message || err);
+    await db.query(
+      `INSERT INTO message_outbox (channel, kind, to_address, subject, body, user_id, status, provider, attempts, last_error)
+       VALUES ('email','transactional',$1,$2,$3,$4,'failed',$5,1,$6)`, [to, subject, body, userId, adapter?.key || null, msg.slice(0, 300)]);
+    return { ok: false, detail: `Not sent: ${msg}` };
+  }
+}
+
+module.exports = { enqueue, deliverBatch, mask, adapterFor, sendNow };

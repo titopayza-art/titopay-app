@@ -9,7 +9,7 @@ const ledger = require("../../lib/ledger");
 const { reference } = require("../../lib/crypto");
 const { bpsOf } = require("../../lib/money");
 const { conflict, notFound, forbidden, bad } = require("../../lib/errors");
-const { getProvider } = require("../payments/providers");
+const { getProvider, isTestEnvironment } = require("../payments/providers");
 const outbox = require("../messaging/outbox");
 const templates = require("../messaging/templates");
 
@@ -135,7 +135,7 @@ async function execute(actor, refundId) {
       const payment = await orderPayment(r);
       if (!getProvider(payment.provider).capabilities?.refunds) return await markManual(actor, r, payment.provider);
       const total = r.amount_cents + r.fee_refund_cents;
-      const { refundReference } = await getProvider(payment.provider).refund({ providerReference: payment.provider_reference, amountCents: total, idempotencyKey: `refund:${r.id}` });
+      const { refundReference } = await getProvider(payment.provider).refund({ providerReference: payment.provider_reference, amountCents: total, idempotencyKey: `refund:${r.id}`, reference: r.reference });
       return await finalizeOrder(actor, r, payment, refundReference);
     }
     const plan = await walletPlan(r);
@@ -185,6 +185,7 @@ async function finalizeOrder(actor, r, payment, refundReference, manual = false)
     const order = o[0];
     const journalId = await ledger.post(c, {
       kind: "ticket_refund", reference: r.reference, idempotencyKey: `refund:${r.id}`, createdBy: actor?.id, memo: manual ? `manual refund ${refundReference}` : undefined,
+      test: isTestEnvironment(payment.environment),
       lines: [
         { account: ledger.codes.organiserPayable(order.organiser_id, order.event_id), debit: r.amount_cents - r.organiser_fee_cents },
         { account: ledger.codes.organiserCommission(), debit: r.organiser_fee_cents },

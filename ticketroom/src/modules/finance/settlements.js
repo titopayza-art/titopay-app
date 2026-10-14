@@ -27,7 +27,8 @@ async function organiserBalances(organiserId, q = db) {
   const { rows: open } = await q.query("SELECT COALESCE(SUM(amount_cents),0)::bigint AS s FROM payouts WHERE organiser_id = $1 AND beneficiary_type = 'organiser' AND status IN ('requested','approved')", [organiserId]);
   const { rows: pendingRefunds } = await q.query(
     `SELECT COALESCE(SUM(r.amount_cents),0)::bigint AS s FROM refunds r JOIN events e ON e.id = r.event_id
-      WHERE e.organiser_id = $1 AND r.kind = 'order' AND r.status IN ('requested','approved','processing','failed')`, [organiserId]);
+      WHERE e.organiser_id = $1 AND r.kind = 'order' AND r.status IN ('requested','approved','processing','failed')
+        AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = r.order_id AND o.test)`, [organiserId]);
   const total = rows.reduce((s, r) => s + r.balance_cents, 0);
   const releasable = rows.filter((r) => r.releasable).reduce((s, r) => s + Math.max(0, r.balance_cents), 0);
   const available = Math.max(0, releasable - open[0].s - pendingRefunds[0].s);

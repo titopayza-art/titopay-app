@@ -94,7 +94,11 @@ test("payouts: bank details required, maker-checker approval, EFT recorded in th
 });
 
 test("a payout cannot be approved by the person who requested it", async () => {
-  const both = await h.user({ roles: ["finance"] });
+  // TicketRoom staff never act inside an organisation, even with a member row.
+  const staffMember = await h.user({ roles: ["finance"] });
+  await h.db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'finance')", [ev.organiser.id, staffMember.user.id]);
+  assert.equal((await staffMember.post(`${A()}/payouts`, { amountCents: 10000 })).status, 404);
+  const both = await h.user({ type: "organiser" });
   await h.db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'finance')", [ev.organiser.id, both.user.id]);
   const b = await h.user();
   await h.db.query("UPDATE events SET status = 'published' WHERE id = $1", [ev.event.id]);
@@ -195,7 +199,7 @@ test("SMS campaigns are length-checked and costed by segment", async () => {
 });
 
 test("unapproved organisers cannot send marketing", async () => {
-  const o2 = await h.user();
+  const o2 = await h.user({ type: "organiser" });
   const ap = await o2.post("/api/organiser/apply", { name: "Pending Org", contactEmail: "p@test.local" });
   const c = await o2.post(`/api/organiser/${ap.body.organiser.id}/campaigns`, { channel: "email", name: "Spam", subject: "x", body: "x" });
   const r = await o2.post(`/api/organiser/${ap.body.organiser.id}/campaigns/${c.body.campaign.id}/send`, {});

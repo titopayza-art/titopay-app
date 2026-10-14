@@ -35,7 +35,7 @@ router.get("/dashboard", wrap(async (_req, res) => {
     one("SELECT count(*) FILTER (WHERE status = 'pending_approval')::int AS pending, count(*) FILTER (WHERE status = 'published')::int AS live, count(*) FILTER (WHERE cancellation_requested_at IS NOT NULL AND status <> 'cancelled')::int AS cancel_requests FROM events"),
     one(`SELECT COALESCE(SUM(total_cents) FILTER (WHERE paid_at > now() - interval '1 day'),0)::bigint AS gmv24, COALESCE(SUM(total_cents),0)::bigint AS gmv_all,
                 count(*) FILTER (WHERE paid_at > now() - interval '1 day')::int AS orders24
-           FROM orders WHERE status IN ('paid','partially_refunded','refunded','paid_unfulfilled')`),
+           FROM orders WHERE NOT test AND status IN ('paid','partially_refunded','refunded','paid_unfulfilled')`),
     one(`SELECT (SELECT count(*) FROM refunds WHERE status = 'requested')::int AS refunds_pending,
                 (SELECT count(*) FROM refunds WHERE status = 'failed')::int AS refunds_failed,
                 (SELECT count(*) FROM payouts WHERE status IN ('requested','approved'))::int AS payouts_open,
@@ -44,8 +44,11 @@ router.get("/dashboard", wrap(async (_req, res) => {
                 (SELECT count(*) FROM support_cases WHERE status IN ('open','in_progress'))::int AS support_open,
                 (SELECT count(*) FROM orders WHERE status = 'paid_unfulfilled')::int AS unfulfilled,
                 (SELECT count(*) FROM message_outbox WHERE status = 'failed')::int AS messages_failed,
-                (SELECT count(*) FROM payments WHERE status = 'pending' AND created_at < now() - interval '30 minutes')::int AS stale_payments`),
+                (SELECT count(*) FROM payments WHERE status = 'pending' AND created_at < now() - interval '30 minutes')::int AS stale_payments,
+                (SELECT count(*) FROM orders WHERE test AND status <> 'cancelled')::int AS test_orders`),
   ]);
+  // Payments in test mode: the overview warns until they are switched to live.
+  ops.payments_test = require("../modules/payments/providers").paymentsTest() ? 1 : 0;
   res.json({ users, organisers: orgs, events, sales, ops, ledger: await reconciliation.ledgerIntegrity() });
 }));
 
@@ -174,23 +177,38 @@ router.post("/events/:id/cancel", ADMIN, wrap(async (req, res) => {
 }));
 
 // ---- users -------------------------------------------------------------------
+// The platform owner: the first administrator. Only they act on their own account.
+const { ownerId, userByEmail, accountType } = require("../lib/accounts");
+async function guardOwner(actor, targetId, q = db) {
+  if (targetId === (await ownerId(q)) && actor.id !== targetId) throw forbidden("That is the platform owner. Only the owner can change their own account.");
+}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Customers and organisers. TicketRoom staff are managed under Staff & roles.
 router.get("/users", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
   const q = String(req.query.q || "").replace(/[%_\\]/g, "").slice(0, 80);
+  const type = ["customer", "organiser"].includes(String(req.query.type || "")) ? String(req.query.type) : "";
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.full_name, u.phone, u.status, u.created_at, u.email_verified_at,
-            COALESCE((SELECT array_agg(role) FROM platform_roles WHERE user_id = u.id), '{}') AS roles
-       FROM users u WHERE $1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.full_name ILIKE '%' || $1 || '%' OR u.phone ILIKE '%' || $1 || '%'
-      ORDER BY u.created_at DESC LIMIT 100`, [q]);
-  res.json({ users: rows });
+    `SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_type, u.guest, u.created_at, u.email_verified_at,
+            (SELECT string_agg(o.name, ', ' ORDER BY o.name) FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = u.id) AS organisations
+       FROM users u
+      WHERE u.account_type <> 'staff' AND ($2 = '' OR u.account_type = $2)
+        AND ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.full_name ILIKE '%' || $1 || '%' OR u.phone ILIKE '%' || $1 || '%')
+      ORDER BY u.created_at DESC LIMIT 100`, [q, type]);
+  const { rows: n } = await db.query("SELECT account_type, count(*)::int AS n FROM users WHERE account_type <> 'staff' GROUP BY account_type");
+  res.json({ users: rows, counts: Object.fromEntries(n.map((x) => [x.account_type, x.n])) });
 }));
 
 router.get("/users/:id", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
-  const { rows } = await db.query("SELECT id, email, full_name, phone, status, created_at, email_verified_at, (spending_pin_hash IS NOT NULL) AS has_pin FROM users WHERE id = $1", [req.params.id]);
+  if (!UUID.test(req.params.id)) throw notFound("User not found.");
+  const { rows } = await db.query(
+    `SELECT id, email, full_name, phone, status, account_type, guest, created_at, email_verified_at, (spending_pin_hash IS NOT NULL) AS has_pin
+       FROM users WHERE id = $1 AND account_type <> 'staff'`, [req.params.id]);
   if (!rows[0]) throw notFound("User not found.");
   const q = (sql) => db.query(sql, [req.params.id]).then((x) => x.rows);
   res.json({
     user: rows[0],
-    roles: (await q("SELECT role, granted_at FROM platform_roles WHERE user_id = $1")),
+    organisations: await q("SELECT o.id, o.name, o.ref, o.status, m.role FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = $1 ORDER BY o.name"),
     orders: await q("SELECT o.id, o.reference, o.status, o.total_cents, o.created_at, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = $1 ORDER BY o.created_at DESC LIMIT 50"),
     tickets: await q("SELECT t.id, t.code, t.status, e.title, t.admitted_at FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = $1 ORDER BY t.created_at DESC LIMIT 100"),
     tags: (await q("SELECT t.id, t.display_code, t.tag_type, t.status, e.title FROM tags t LEFT JOIN events e ON e.id = t.event_id WHERE t.user_id = $1")).map((t) => ({ ...t, display_code: tags.formatDisplay(t.display_code) })),
@@ -200,65 +218,77 @@ router.get("/users/:id", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
 router.post("/users/:id/status", ADMIN, wrap(async (req, res) => {
   const b = check(req.body, { status: r.oneOf(["active", "suspended"]), reason: r.str({ min: 3, max: 400 }) });
   if (req.params.id === req.user.id) throw bad("You cannot change your own status.");
-  const { rowCount } = await db.query("UPDATE users SET status = $2, updated_at = now() WHERE id = $1 AND status <> 'deleted'", [req.params.id, b.status]);
-  if (!rowCount) throw notFound("User not found.");
-  if (b.status === "suspended") await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+  if (!UUID.test(req.params.id)) throw notFound("User not found.");
+  await guardOwner(req.user, req.params.id);
+  await db.withTx(async (c) => {
+    // Staff accounts are switched on and off under Staff & roles only.
+    const { rowCount } = await c.query("UPDATE users SET status = $2, updated_at = now() WHERE id = $1 AND status <> 'deleted' AND account_type <> 'staff'", [req.params.id, b.status]);
+    if (!rowCount) throw notFound("User not found.");
+    if (b.status === "suspended") await c.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+  });
   await audit.record(null, { actor: req.user, action: `user.${b.status}`, entityType: "user", entityId: req.params.id, details: { reason: b.reason } });
   res.json({ ok: true });
 }));
 
-router.post("/users/:id/roles", ADMIN, wrap(async (req, res) => {
-  const b = check(req.body, { role: r.oneOf(["admin", "finance", "support"]), grant: r.bool() });
-  if (req.params.id === req.user.id) throw forbidden("You cannot change your own platform roles.");
-  if (b.grant) await db.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [req.params.id, b.role, req.user.id]);
-  else await db.query("DELETE FROM platform_roles WHERE user_id = $1 AND role = $2", [req.params.id, b.role]);
-  await audit.record(null, { actor: req.user, action: b.grant ? "role.granted" : "role.revoked", entityType: "user", entityId: req.params.id, details: { role: b.role } });
-  res.json({ ok: true });
-}));
-
 // ---- TicketRoom staff (admin portal team) ------------------------------------------
+// Staff accounts are made here and nowhere else. A customer's or organiser's
+// account can never become staff: staff use their own work email.
 const STAFF_ROLE_NAMES = { admin: "Admin", finance: "Finance", support: "Support" };
+async function staffTarget(actor, id, q = db) {
+  if (!UUID.test(String(id))) throw notFound("Staff member not found.");
+  const { rows: [t] } = await q.query("SELECT * FROM users WHERE id = $1 AND account_type = 'staff'", [id]);
+  if (!t) throw notFound("Staff member not found.");
+  await guardOwner(actor, id, q);
+  return t;
+}
+async function staffResetLink(q, userId, interval = "7 days") {
+  const { randomToken, sha256 } = require("../lib/crypto");
+  const token = randomToken(32);
+  await q.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + $3::interval)", [sha256(token), userId, interval]);
+  return `${config.publicBaseUrl}/admin#/reset/${token}`;
+}
 router.get("/staff", wrap(async (_req, res) => {
-  const { rows } = await db.query(`SELECT u.id, u.full_name, u.email, u.status, u.created_at, array_agg(r.role ORDER BY r.role) AS roles
-     FROM users u JOIN platform_roles r ON r.user_id = u.id GROUP BY u.id ORDER BY u.full_name`);
-  res.json({ staff: rows });
+  const { rows } = await db.query(`SELECT u.id, u.full_name, u.email, u.status, u.created_at,
+            COALESCE(array_agg(r.role ORDER BY r.role) FILTER (WHERE r.role IS NOT NULL), '{}') AS roles
+     FROM users u LEFT JOIN platform_roles r ON r.user_id = u.id WHERE u.account_type = 'staff' GROUP BY u.id ORDER BY u.full_name`);
+  const owner = await ownerId();
+  res.json({ staff: rows.map((x) => ({ ...x, owner: x.id === owner })) });
 }));
-// Add someone to the team. A new address gets an account and an email to set a password.
+// Add someone to the team: a new staff account and an email to set a password.
 router.post("/staff", ADMIN, limit("staffteam", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
   const b = check(req.body, { email: r.email(), fullName: r.str({ min: 2, max: 120 }), roles: r.array(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { min: 1, max: 3 }) });
   const roles = [...new Set(b.roles)];
-  const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
+  const { hashSecret, randomToken } = require("../lib/crypto");
   const invited = await db.withTx(async (c) => {
-    const existing = await require("../lib/accounts").userByEmail(c, b.email);
-    if (existing && existing.status !== "active") throw conflict("That account is suspended or closed. Restore it under All users first.", "account_inactive");
-    // Someone new, or someone who has only bought as a guest, sets a password from the email.
-    const needsPassword = !existing || existing.guest;
-    let id = existing?.id, url = null;
-    if (!existing) {
-      ({ rows: [{ id }] } = await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, b.fullName, hashSecret(randomToken(24))]));
+    const existing = await userByEmail(c, b.email);
+    if (existing && accountType(existing) !== "staff") {
+      throw conflict("That email already belongs to a customer or organiser account. Staff need their own work email, for example name@ticketroom.co.za.", "not_staff_account", { email: "Use a work email." });
     }
-    if (needsPassword) {
-      const token = randomToken(32);
-      await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), id]);
-      url = `${config.publicBaseUrl}/account#/reset/${token}`;
+    let id = existing?.id;
+    if (existing) {
+      // Someone who was taken off the team comes back with their own password.
+      await guardOwner(req.user, existing.id, c);
+      await c.query("UPDATE users SET status = 'active', updated_at = now() WHERE id = $1", [id]);
+    } else {
+      ({ rows: [{ id }] } = await c.query("INSERT INTO users (email, full_name, password_hash, account_type) VALUES ($1,$2,$3,'staff') RETURNING id", [b.email, b.fullName, hashSecret(randomToken(24))]));
     }
+    const url = existing ? null : await staffResetLink(c, id);
     for (const role of roles) await c.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, role, req.user.id]);
     const names = roles.map((x) => STAFF_ROLE_NAMES[x]).join(" and ");
-    await outbox.enqueue(c, { to: b.email, userId: id, ...templates.teamInvite({ name: needsPassword ? b.fullName : null, by: req.user.fullName, roles: names, url }) });
+    await outbox.enqueue(c, { to: b.email, userId: id, ...templates.teamInvite({ name: existing ? existing.full_name : b.fullName, by: req.user.fullName, roles: names, url }) });
     await audit.record(c, { actor: req.user, action: "staff.added", entityType: "user", entityId: id, details: { roles, newAccount: !existing } });
-    return needsPassword;
+    return !existing;
   });
   res.status(201).json({ ok: true, invited });
 }));
-// Set exactly these roles; an empty list removes the person from the team.
+// Set exactly these roles. An empty list takes the person off the team: their
+// staff account is switched off until someone adds them again.
 router.put("/staff/:id", ADMIN, wrap(async (req, res) => {
   const b = check(req.body, { roles: r.array(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { max: 3 }) });
   if (req.params.id === req.user.id) throw forbidden("You cannot change your own roles. Ask another admin.");
-  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) throw notFound("Staff member not found.");
+  await staffTarget(req.user, req.params.id);
   const want = [...new Set(b.roles)];
   await db.withTx(async (c) => {
-    const { rows: found } = await c.query("SELECT 1 FROM users WHERE id = $1", [req.params.id]);
-    if (!found.length) throw notFound("Staff member not found.");
     const have = (await c.query("SELECT role FROM platform_roles WHERE user_id = $1", [req.params.id])).rows.map((x) => x.role);
     for (const role of have.filter((x) => !want.includes(x))) {
       await c.query("DELETE FROM platform_roles WHERE user_id = $1 AND role = $2", [req.params.id, role]);
@@ -268,9 +298,28 @@ router.put("/staff/:id", ADMIN, wrap(async (req, res) => {
       await c.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3)", [req.params.id, role, req.user.id]);
       await audit.record(c, { actor: req.user, action: "role.granted", entityType: "user", entityId: req.params.id, details: { role } });
     }
-    if (!want.length) await c.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+    if (!want.length) {
+      await c.query("UPDATE users SET status = 'suspended', updated_at = now() WHERE id = $1", [req.params.id]);
+      await c.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+    }
+    const { rows: left } = await c.query(
+      "SELECT 1 FROM platform_roles r JOIN users x ON x.id = r.user_id WHERE r.role = 'admin' AND x.status = 'active' AND x.account_type = 'staff' LIMIT 1");
+    if (!left[0]) throw conflict("TicketRoom needs at least one active admin.", "last_admin");
   });
   res.json({ ok: true });
+}));
+// The owner or an admin sends a staff member a link to choose a new password.
+// Staff cannot reset their own password from the sign-in box.
+router.post("/staff/:id/reset", ADMIN, limit("staffreset", 20, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const t = await staffTarget(req.user, req.params.id);
+  if (t.status !== "active") throw conflict("That staff account is switched off. Add them to the team again first.", "account_inactive");
+  await db.withTx(async (c) => {
+    await c.query("UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [t.id]);
+    const url = await staffResetLink(c, t.id, "24 hours");
+    await outbox.enqueue(c, { to: t.email, userId: t.id, ...templates.staffPasswordReset({ name: t.full_name, by: req.user.fullName, url }) });
+    await audit.record(c, { actor: req.user, action: "staff.password_reset_sent", entityType: "user", entityId: t.id });
+  });
+  res.json({ ok: true, message: `A link to choose a new password is on its way to ${t.email}. It works for 24 hours.` });
 }));
 
 // ---- orders, tickets, payments ---------------------------------------------------
@@ -479,9 +528,11 @@ router.post("/terminals/:id/status", ADMIN, wrap(async (req, res) => {
 }));
 
 // ---- integrations (payments, SMS, TitoPay wallet) ------------------------------
-router.get("/integrations", wrap(async (_req, res) => {
+// Provider settings are for admins only.
+router.get("/integrations", ADMIN, wrap(async (_req, res) => {
   const config = require("../config");
   const i = config.integrations;
+  const testOrders = await countTestOrders();
   const { rows: calls } = await db.query(
     `SELECT integration, count(*)::int AS calls, count(*) FILTER (WHERE NOT ok)::int AS failures, max(occurred_at) AS last_call,
             round(avg(duration_ms))::int AS avg_ms
@@ -492,9 +543,11 @@ router.get("/integrations", wrap(async (_req, res) => {
   res.json({
     defaults: { bookingFeeCents: config.fees.ticketFeeFixedCents, bookingFeeBps: config.fees.ticketFeeBps, organiserCommissionBps: config.fees.organiserCommissionBps },
     integrations: [
-      { key: "payments", label: "Card payments", provider: config.payments.provider, environment: config.payments.provider === "simulated" ? "mock" : i[config.payments.provider]?.env,
-        endpoint: config.payments.provider === "yoco" ? i.yoco.baseUrl : config.payments.provider === "payfast" ? i.payfast.processUrl : "built-in simulator",
-        webhookUrl: `${config.publicBaseUrl}/api/webhooks/${config.payments.provider}`,
+      { key: "payments", label: "Card payments", provider: config.payments.provider,
+        environment: config.payments.provider === "simulated" ? "mock" : config.payments.provider === "sandbox" ? "test" : i[config.payments.provider]?.env,
+        endpoint: config.payments.provider === "yoco" ? i.yoco.baseUrl : config.payments.provider === "payfast" ? i.payfast.processUrl : config.payments.provider === "sandbox" ? "TicketRoom practice payment page" : config.payments.provider === "none" ? "not set up" : "built-in simulator",
+        webhookUrl: ["none", "sandbox"].includes(config.payments.provider) ? null : `${config.publicBaseUrl}/api/webhooks/${config.payments.provider}`,
+        sandbox: paymentMode.current(), testOrders,
         credentials: config.payments.provider === "yoco" ? { secretKey: set(i.yoco.secretKey), webhookSecret: set(i.yoco.webhookSecret) } : config.payments.provider === "payfast" ? { merchantId: set(i.payfast.merchantId), merchantKey: set(i.payfast.merchantKey), passphrase: set(i.payfast.passphrase) } : {},
         ...stat(config.payments.provider) },
       { key: "sms", label: "SMS", provider: config.messaging.smsProvider, environment: config.messaging.smsProvider === "log" ? "mock" : i[config.messaging.smsProvider]?.env,
@@ -518,6 +571,87 @@ router.post("/integrations/:key/health", ADMIN, wrap(async (req, res) => {
   else throw notFound("Unknown integration.");
   await audit.record(null, { actor: req.user, action: "integration.health_checked", entityType: "integration", entityId: req.params.key, details: { ok: result.ok } });
   res.json(result);
+}));
+
+// ---- test payments: the sandbox --------------------------------------------------
+const paymentMode = require("../modules/payments/mode");
+const countTestOrders = async (q = db) => (await q.query("SELECT count(*)::int AS n FROM orders WHERE test AND status <> 'cancelled'")).rows[0].n;
+async function confirmPassword(user, password) {
+  const { verifySecret } = require("../lib/crypto");
+  const { rows: [u] } = await db.query("SELECT password_hash FROM users WHERE id = $1", [user.id]);
+  if (!verifySecret(password, u.password_hash)) throw new (require("../lib/errors").AppError)(401, "bad_credentials", "Your password is incorrect.", { currentPassword: "Incorrect." });
+}
+// Test mode in one click. "ticketroom": TicketRoom's own sandbox, works
+// anywhere with no provider account. "payfast": PayFast's shared sandbox
+// account (published by PayFast for testing). Needs the admin's password.
+router.post("/integrations/payments/sandbox", ADMIN, limit("integsave", 20, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { currentPassword: r.str({ max: 200 }), kind: r.oneOf(["ticketroom", "payfast"], { optional: true }) });
+  await confirmPassword(req.user, b.currentPassword);
+  const { getProvider } = require("../modules/payments/providers");
+  const config = require("../config");
+  const live = config.payments.provider !== "none" && (() => { try { return getProvider(config.payments.provider).environment === "live"; } catch { return false; } })();
+  if (live) throw conflict("Live payments are switched on. Switch them to test first if you really want a test setup.", "live_mode");
+  const kind = b.kind || "ticketroom";
+  await db.withTx(async (c) => {
+    await paymentMode.useSandbox(c, kind);
+    await audit.record(c, { actor: req.user, action: "integration.updated", entityType: "integration", entityId: "payments", ip: req.ip, details: { sandbox: kind } });
+  });
+  res.json({ ok: true, message: kind === "payfast"
+    ? "Test payments are ready: PayFast test mode with PayFast's shared test account. Buy a ticket to try it; no real money moves."
+    : "The TicketRoom sandbox is on. Buy a ticket to try it: you choose whether the practice payment goes through. No real money moves." });
+}));
+// Back to the configured provider (PAYMENT_PROVIDER and its settings).
+router.delete("/integrations/payments/sandbox", ADMIN, limit("integsave", 20, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body || {}, { currentPassword: r.str({ max: 200 }) });
+  await confirmPassword(req.user, b.currentPassword);
+  await db.withTx(async (c) => {
+    await paymentMode.clear(c);
+    await audit.record(c, { actor: req.user, action: "integration.updated", entityType: "integration", entityId: "payments", ip: req.ip, details: { sandbox: null } });
+  });
+  res.json({ ok: true, provider: require("../config").payments.provider });
+}));
+// Before going live: test orders are cancelled, their tickets stop working and
+// the places they held go back on sale. Test ledger entries stay, as history.
+router.post("/payments/clear-test", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { currentPassword: r.str({ max: 200 }) });
+  await confirmPassword(req.user, b.currentPassword);
+  const cleared = await db.withTx(async (c) => {
+    const { rows: freed } = await c.query(
+      `UPDATE ticket_types tt SET quantity_sold = GREATEST(tt.quantity_sold - x.n, 0)
+         FROM (SELECT ticket_type_id, count(*)::int AS n FROM tickets WHERE test AND status IN ('valid','used') GROUP BY 1) x
+        WHERE tt.id = x.ticket_type_id RETURNING x.n`);
+    await c.query("UPDATE tickets SET status = 'revoked', revoked_reason = 'test order cleared', updated_at = now() WHERE test AND status IN ('valid','used')");
+    // Unpaid test orders still hold places: let them go.
+    const { rows: pending } = await c.query("SELECT * FROM orders WHERE test AND status = 'pending_payment' FOR UPDATE");
+    for (const o of pending) {
+      await require("../modules/orders/service").releaseHolds(c, o);
+      await c.query("UPDATE payments SET status = 'cancelled', updated_at = now() WHERE order_id = $1 AND status IN ('initiated','pending')", [o.id]);
+    }
+    const { rowCount } = await c.query("UPDATE orders SET status = 'cancelled', updated_at = now() WHERE test AND status <> 'cancelled'");
+    const n = { orders: rowCount, tickets: freed.reduce((s, x) => s + x.n, 0) };
+    await audit.record(c, { actor: req.user, action: "payments.test_cleared", entityType: "integration", entityId: "payments", ip: req.ip, details: n });
+    return n;
+  });
+  res.json({ ok: true, cleared, testOrders: await countTestOrders() });
+}));
+
+// Sends a test email (to any address, the admin's own by default) or SMS straight away.
+router.post("/integrations/:key/test", ADMIN, limit("integtest", 10, 600e3, (q) => q.user.id), wrap(async (req, res) => {
+  if (req.params.key === "email") {
+    const b = check(req.body || {}, { to: r.email({ optional: true }) });
+    const to = b.to || req.user.email;
+    const result = await outbox.sendNow(to, "TicketRoom test email", `Hi,\n\nThis is a test from Admin portal → Integrations, sent by ${req.user.fullName}. If you can read it, TicketRoom email works.\n\n-- \nTicketRoom`, null);
+    await audit.record(null, { actor: req.user, action: "integration.test_email", entityType: "integration", entityId: "mail", details: { ok: result.ok } });
+    return res.json(result);
+  }
+  if (req.params.key === "sms") {
+    const b = check(req.body || {}, { phone: r.phone() });
+    try {
+      await outbox.adapterFor("sms").send({ channel: "sms", to_address: b.phone, body: "TicketRoom test SMS. If you can read this, SMS works." });
+      return res.json({ ok: true, detail: `Sent to ${b.phone}.` });
+    } catch (err) { return res.json({ ok: false, detail: String(err.message || err) }); }
+  }
+  throw notFound("Nothing to test here.");
 }));
 
 // ---- site settings: maintenance, banner, hours, support, legal, assistant ----------
@@ -624,12 +758,15 @@ router.get("/emails/:key/preview", wrap(async (req, res) => {
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.type("html").send(toHtml(m.subject, m.body));
 }));
-router.post("/emails/:key/test", ADMIN, limit("emailtest", 20, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+// Sends a sample straight away (not through the queue) to any address the
+// admin types, their own by default.
+router.post("/emails/:key/test", ADMIN, limit("emailtest", 100, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
   const item = catalog.find(req.params.key);
   if (!item) throw notFound("Unknown email.");
+  const b = check(req.body || {}, { to: r.email({ optional: true }) });
+  const to = b.to || req.user.email;
   const m = item.sample();
-  await db.withTx((c) => outbox.enqueue(c, { to: req.user.email, userId: req.user.id, subject: `[TEST] ${m.subject}`, body: m.body }));
-  res.json({ ok: true, to: req.user.email });
+  res.json({ ...(await outbox.sendNow(to, `[TEST] ${m.subject}`, m.body, null)), to });
 }));
 
 // ---- audit, support, outbox -------------------------------------------------------
@@ -707,8 +844,9 @@ router.post("/support/:id/transfer", ADMIN_OR_SUPPORT, limit("suptransfer", 60, 
 router.post("/support/:id/take-back", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
   const c = await support.getCase(req.params.id);
   await db.withTx(async (q) => {
-    await q.query("UPDATE support_cases SET handled_by = 'ticketroom', status = 'in_progress', updated_at = now() WHERE id = $1", [c.id]);
-    await support.note(q, c.id, req.user.id, "system", "Taken back by TicketRoom customer care.");
+    // Taken back: the organiser no longer sees the case or anything said after.
+    await q.query("UPDATE support_cases SET handled_by = 'ticketroom', organiser_id = NULL, event_id = NULL, status = 'in_progress', updated_at = now() WHERE id = $1", [c.id]);
+    await support.note(q, c.id, req.user.id, "system", `Taken back by TicketRoom customer care${c.organiser_name ? ` from ${c.organiser_name}` : ""}.`);
     await audit.record(q, { actor: req.user, action: "support.taken_back", entityType: "support_case", entityId: c.id });
   });
   res.json({ case: await support.getCase(c.id) });

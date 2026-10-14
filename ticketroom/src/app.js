@@ -8,19 +8,34 @@ const { notFound } = require("./lib/errors");
 
 const PUBLIC = path.resolve(__dirname, "..", "public");
 
-// Maintenance mode (Back office → Site settings). TicketRoom staff keep full
-// access; everyone else sees the maintenance page. Payment webhooks, sign-in
-// and the health check keep working so no payment is lost while it is on.
-const EXEMPT = /^\/(api\/(health|config|auth\/|webhooks\/|site(\/|$)|admin\/)|admin(\/|$)|assets\/|media\/|sim\/|signin$|sw\.js$|manifest\.webmanifest$|favicon)/;
+// Maintenance mode (Admin portal → Site settings). TicketRoom staff keep full
+// access. Visitors get the maintenance page for every HTML page (the admin
+// portal, assets and other static files stay open so staff can sign in and
+// switch it off), and a 503 from the API. Only what staff need to work and
+// turn it off again stays open: signing in and out, the admin API, payment
+// notifications, the health check and the site settings read.
+const API_EXEMPT = /^\/api\/(health|config|auth\/(login|logout|me|password\/reset)$|admin\/|webhooks\/)/;
+const NOT_A_PAGE = /^\/(admin(\/|\.html$|$)|api\/|assets\/|media\/|sim\/)/;
+const isPage = (p) => !NOT_A_PAGE.test(p) && (!p.split("/").pop().includes(".") || p.endsWith(".html"));
+const escHtml = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+function maintenancePage(res, message) {
+  res.status(503);
+  res.setHeader("Retry-After", "900");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'");
+  res.send('<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">'
+    + '<title>TicketRoom | Back soon</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/tr.css"></head>'
+    + '<body class="maint-on"><div class="maint-screen"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260">'
+    + `<h1>We'll be right back</h1><p>${escHtml(message)}</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main></div></body></html>`);
+}
 async function maintenance(req, res, next) {
-  if (EXEMPT.test(req.path)) return next();
+  const api = req.path.startsWith("/api/");
+  if (api ? API_EXEMPT.test(req.path) || (req.method === "GET" && req.path === "/api/site") : !isPage(req.path)) return next();
   const m = await require("./modules/site/settings").get("maintenance");
   if (!m.enabled || (req.user && req.user.platformRoles.size)) return next();
-  if (req.path.startsWith("/api/")) return res.status(503).json({ error: { code: "maintenance", message: m.message } });
-  const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-  res.status(503).setHeader("Retry-After", "1800");
-  res.send(`<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TicketRoom — back soon</title><link rel="icon" href="/assets/favicon.svg"><link rel="stylesheet" href="/assets/tr.css"></head>
-<body class="maint"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${esc(m.message)}</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main></body></html>`);
+  if (api) return res.status(503).json({ error: { code: "maintenance", message: m.message } });
+  maintenancePage(res, m.message);
 }
 
 function createApp() {
@@ -46,7 +61,7 @@ function createApp() {
   }));
   app.get("/api/config", (_req, res) => res.json({
     operator: config.operator, provider: config.payments.provider, simulatedPayments: config.payments.provider === "simulated",
-    cardPaymentsEnabled: config.payments.provider !== "none", titopayWallet: config.integrations.titopay.enabled,
+    cardPaymentsEnabled: config.payments.provider !== "none", paymentsTest: require("./modules/payments/providers").paymentsTest(), titopayWallet: config.integrations.titopay.enabled,
     messaging: { email: config.messaging.emailProvider, sms: config.messaging.smsProvider },
     cashless: { pinThresholdCents: config.cashless.pinThresholdCents, minTopupCents: config.cashless.minTopupCents, maxTopupCents: config.cashless.maxTopupCents, maxBalanceCents: config.cashless.maxBalanceCents },
     fees: config.fees, holdMinutes: config.orders.holdMinutes,

@@ -31,6 +31,8 @@ async function startTopup(user, eventId, amountCents, idempotencyKey, paymentMet
     const ev = await cashlessEvent(c, eventId);
     if (ev.status !== "published" || new Date(ev.ends_at) < new Date()) throw conflict("Top-ups are closed for this event.", "event_closed");
     if (paymentMethod === "card" && !require("../payments/providers").cardPaymentsEnabled()) throw conflict("Card top-ups are not switched on yet.", "payments_not_configured");
+    // Test money is never spendable money: no top-ups while card payments are in test mode.
+    if (paymentMethod === "card" && require("../payments/providers").paymentsTest()) throw conflict("Top-ups are not available while payments are in test mode.", "payments_test_mode");
     if (paymentMethod === "titopay_wallet" && !(await require("../wallets/service").activeToken(user.id))) throw conflict("Link your TitoPay wallet first.", "wallet_not_linked");
     const { rows: tk } = await c.query("SELECT 1 FROM tickets WHERE owner_user_id = $1 AND event_id = $2 AND status IN ('valid','used') LIMIT 1", [user.id, eventId]);
     if (!tk[0]) throw conflict("You need a ticket for this event to top up.", "no_ticket");

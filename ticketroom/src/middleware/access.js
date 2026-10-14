@@ -3,6 +3,7 @@
 // objects return 404, not 403, so their existence is not disclosed.
 const db = require("../lib/db");
 const { notFound, forbidden } = require("../lib/errors");
+const { accountType } = require("../lib/accounts");
 
 const isAdmin = (user) => user?.platformRoles?.has("admin");
 const isStaffRole = (user, ...roles) => roles.some((r) => user?.platformRoles?.has(r));
@@ -15,7 +16,10 @@ async function organiserAccess(user, organiserId, roles = ["owner", "manager", "
       WHERE o.id = $1`, [organiserId, user.id]);
   const org = rows[0];
   if (!org) throw notFound("Organiser not found.");
-  if (isAdmin(user)) return { organiser: org, role: org.member_role || "admin" };
+  // Only the organisation's own team works here. TicketRoom staff oversee
+  // organisers from the admin portal and never act as one (no bank details,
+  // payouts, campaigns or replies in an organiser's name).
+  if (accountType(user) !== "organiser") throw notFound("Organiser not found.");
   if (!org.member_role) throw notFound("Organiser not found.");
   if (!roles.includes(org.member_role)) throw forbidden("Your role in this organisation does not allow that.");
   return { organiser: org, role: org.member_role };
@@ -28,8 +32,8 @@ async function eventAccess(user, organiserId, eventId, roles, q = db) {
   return { ...access, event: rows[0] };
 }
 
-// Staff scanning/tag rights for an event: explicit event staff, or organiser
-// owner/manager, or platform admin/support.
+// Staff scanning/tag rights for an event: explicit event staff, or the
+// organiser's owners and managers. Never TicketRoom staff.
 async function eventStaffAccess(user, eventId, capability = "can_scan", q = db) {
   const { rows } = await q.query(
     `SELECT e.*, s.can_scan, s.can_manage_tags, m.role AS member_role
@@ -39,7 +43,7 @@ async function eventStaffAccess(user, eventId, capability = "can_scan", q = db) 
       WHERE e.id = $1`, [eventId, user.id]);
   const ev = rows[0];
   if (!ev) throw notFound("Event not found.");
-  if (isStaffRole(user, "admin", "support")) return ev;
+  if (accountType(user) === "staff") throw notFound("Event not found.");
   if (["owner", "manager"].includes(ev.member_role)) return ev;
   if (ev[capability]) return ev;
   throw notFound("Event not found.");

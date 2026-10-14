@@ -9,9 +9,15 @@ const qr = require("../modules/tickets/qr");
 const tags = require("../modules/tags/service");
 const cashless = require("../modules/cashless/service");
 const refunds = require("../modules/finance/refunds");
+const { accountType } = require("../lib/accounts");
+const { forbidden } = require("../lib/errors");
 
 const router = express.Router();
 router.use(requireAuth);
+// The customer portal's API is for customer accounts. Organisers and staff
+// have their own portals (liking an event is open to anyone signed in).
+router.use((req, _res, next) => (req.path !== "/likes" && accountType(req.user) !== "customer"
+  ? next(forbidden("This is for customer accounts. Sign in on your own portal.")) : next()));
 
 router.get("/tickets", wrap(async (req, res) => {
   const list = await tickets.listForUser(req.user.id);

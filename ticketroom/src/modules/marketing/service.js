@@ -37,7 +37,7 @@ function audienceSql(channel, eventIds) {
              JOIN marketing_consents mc ON mc.user_id = u.id AND mc.organiser_id = $1 AND mc.channel = $2 AND mc.granted
             WHERE u.status = 'active' AND ${contact} IS NOT NULL
               AND (EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id
-                            WHERE o.user_id = u.id AND e.organiser_id = $1 AND o.status IN ('paid','partially_refunded','refunded')
+                            WHERE o.user_id = u.id AND e.organiser_id = $1 AND o.status IN ('paid','partially_refunded','refunded') AND NOT o.test
                             ${eventIds?.length ? "AND e.id = ANY($3::uuid[])" : ""})
                 OR EXISTS (SELECT 1 FROM tickets t JOIN events e ON e.id = t.event_id
                             WHERE t.owner_user_id = u.id AND e.organiser_id = $1
