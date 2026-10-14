@@ -744,7 +744,9 @@ async function integrations() {
 
 (async () => {
   // Nothing on this page says "admin" until a staff account has signed in.
-  await header($("#header"));
+  // Staff who are already signed in get the admin header in one go.
+  const signedIn = await me();
+  await header($("#header"), roles(signedIn).size ? { portal: "admin" } : {});
   const u = await requireUser("Sign in to continue.");
   if (!u) return render(main, empty("Sign in to continue."));
   R = roles(await me(true));

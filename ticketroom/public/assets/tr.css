@@ -461,10 +461,27 @@ html.maint-on body > *:not(.maint-screen) { display: none !important; }
 .card .sub-done { background: var(--good-bg); color: var(--good); }
 
 /* ---------- calm first paint (see pageReady in core.js) ---------- */
-html.booting #main, html.booting #footer, html.booting .site-banner, html.booting .portal-bar, html.booting .pw-nag, html.booting #sidenav, html.booting #header nav, html.booting .menu-toggle { visibility: hidden; }
+html.booting #main, html.booting #footer, html.booting .site-banner, html.booting .pw-nag, html.booting #sidenav, html.booting #header nav, html.booting .menu-toggle { visibility: hidden; }
 html.booting body::after { content: ""; position: fixed; left: 50%; top: 40vh; width: 28px; height: 28px; margin-left: -14px; border: 3px solid var(--line); border-top-color: var(--navy-900); border-radius: 50%; animation: spin .8s linear infinite; }
 body.venue main#main { min-height: 0; }
 #main { min-height: calc(100vh - 64px); }
+/* Moving between sections of a portal: the page keeps its height and fades a
+   touch while the next section loads (see router in core.js). A fast load
+   never shows the fade at all. */
+#main[aria-busy="true"] > * { opacity: .55; transition: opacity .2s ease .15s; }
+#main[aria-busy="true"] { cursor: progress; }
+/* Portals fill the screen exactly: the shell takes what the header and the
+   portal bar leave, and the main area fills the shell, so a short section has
+   no stray scroll. */
+body:has(> .shell) { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
+.shell > #main { min-height: 0; }
+/* Going from one page or portal to another cross-fades, with the header held
+   still, instead of flashing blank. Browsers without this simply switch. */
+@view-transition { navigation: auto; }
+.site-header { view-transition-name: site-header; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .18s; }
+@media (prefers-reduced-motion: reduce) { @view-transition { navigation: none; } }
 
 /* ---------- QR codes ---------- */
 .qr-panel { display: grid; gap: 12px; justify-items: start; }

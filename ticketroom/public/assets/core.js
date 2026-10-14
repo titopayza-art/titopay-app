@@ -310,13 +310,18 @@ export async function header(el, { portal, active } = {}) {
     </nav></div>`);
   // A coloured bar under the header names the portal, so admin, organiser and
   // customer screens can never be mistaken for each other, on a phone too.
-  $(".portal-bar")?.remove();
+  // Portal pages ship with their bar already in place, so nothing is pushed
+  // down when the page fills in; it is only added here if a page lacks one.
+  const bar = $(".portal-bar");
   if (here) {
-    const bar = document.createElement("div");
-    bar.className = `portal-bar pb-${portal}`;
-    render(bar, html`<div class="wrap"><strong>${here.name}</strong><span>${here.note}</span></div>`);
-    el.after(bar);
-  }
+    if (!bar || !bar.classList.contains(`pb-${portal}`)) {
+      bar?.remove();
+      const b = document.createElement("div");
+      b.className = `portal-bar pb-${portal}`;
+      render(b, html`<div class="wrap"><strong>${here.name}</strong><span>${here.note}</span></div>`);
+      el.after(b);
+    }
+  } else bar?.remove();
   const toggle = $(".menu-toggle", el);
   toggle.addEventListener("click", () => { const open = $("#nav", el).classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); });
   $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin"));
@@ -644,10 +649,29 @@ export async function requireUser(reason) {
 
 // ---------- tiny hash router for portals ----------
 export function router(routes, fallback) {
+  let shown = null; // the section on screen now
+  let turn = 0; // only the latest tap gets to draw
   const go = async () => {
     // A window left open belongs to the page being left.
     document.querySelectorAll("dialog[open]").forEach((d) => { d.dataset.left = "1"; d.close(); });
     const path = location.hash.replace(/^#/, "") || "/";
+    const mine = ++turn;
+    const main = $("#main");
+    const moving = shown !== null && shown !== path;
+    // Tabs inside one item (an event's Tickets, Orders, Check-ins) keep their place.
+    const section = (x) => x.split("/").slice(0, 3).join("/");
+    const toTop = moving && section(shown) !== section(path);
+    // While the next section loads, the page keeps its height and fades a
+    // little, instead of collapsing to a spinner and growing again.
+    if (moving && main) { main.style.minHeight = `${main.offsetHeight}px`; main.setAttribute("aria-busy", "true"); }
+    const settle = () => {
+      if (mine !== turn || !main) return;
+      main.style.minHeight = "";
+      main.removeAttribute("aria-busy");
+      // A new section always starts at its top, in one step.
+      if (toTop) window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      shown = path;
+    };
     for (const [pattern, fn] of routes) {
       const keys = [];
       const re = new RegExp("^" + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
@@ -655,6 +679,8 @@ export function router(routes, fallback) {
       if (m) {
         const params = Object.fromEntries(keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
         try { await fn(params); } catch (err) { console.error(err); toast(err.message || "Something went wrong.", "bad"); }
+        if (mine !== turn) return; // a later tap took over
+        settle();
         document.querySelectorAll(".sidenav a").forEach((a) => {
           const target = a.getAttribute("href").replace(/^#/, "");
           a.toggleAttribute("aria-current", target === "/" ? path === "/" : path === target || path.startsWith(target + "/"));
@@ -670,6 +696,7 @@ export function router(routes, fallback) {
         return;
       }
     }
+    settle();
     fallback?.();
   };
   window.addEventListener("hashchange", go);
