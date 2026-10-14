@@ -133,7 +133,7 @@ route('GET', '/api/public/orders/:ref', function ($a) {
     }
     $items = rows('SELECT oi.quantity, oi.unit_price_cents, oi.unit_fee_cents, tt.name FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = ?', [$o['id']]);
     $owner = row('SELECT email, guest FROM users WHERE id = ?', [$o['user_id']]);
-    $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
+    $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.test, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
                       WHERE t.order_id = ? AND t.owner_user_id = ? ORDER BY t.created_at", [$o['id'], $o['user_id']]);
     $k = $key && verify_link($key) ? $key : order_key($o['id']);
     foreach ($tickets as &$t) $t['qrUrl'] = $t['status'] === 'valid' ? "/api/public/orders/{$o['reference']}/tickets/{$t['id']}/qr.svg?k=" . rawurlencode($k) : null;
@@ -142,7 +142,7 @@ route('GET', '/api/public/orders/:ref', function ($a) {
         'order' => [
             'reference' => $o['reference'], 'status' => $o['status'], 'subtotalCents' => $o['subtotal_cents'], 'discountCents' => $o['discount_cents'],
             'feeCents' => $o['fee_cents'], 'totalCents' => $o['total_cents'], 'refundedCents' => $o['refunded_cents'], 'expiresAt' => $o['expires_at'], 'paidAt' => $o['paid_at'],
-            'buyerName' => $o['buyer_name'],
+            'buyerName' => $o['buyer_name'], 'test' => (int) $o['test'] === 1,
             'event' => ['title' => $o['title'], 'slug' => $o['slug'], 'startsAt' => $o['starts_at'], 'endsAt' => $o['ends_at'], 'venue' => $o['venue_name'], 'city' => $o['city']],
         ],
         'guest' => (int) $owner['guest'] === 1, 'email' => (int) $owner['guest'] === 1 ? $owner['email'] : null,
@@ -177,6 +177,23 @@ route('GET', '/api/public/payments/:id/payfast', function ($a) {
     $o = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
     if ($o['status'] !== 'pending_payment') throw conflict('This order is not waiting for payment.', 'order_not_pending');
     return payfast_form($p, $o);
+});
+
+// The sandbox payment page: what is being paid, and the buyer's choice of answer.
+route('GET', '/api/public/payments/:id/sandbox', function ($a) {
+    limit('payform', 30, 600);
+    $p = sandbox_payment($a['id'], qs('k'));
+    $o = row('SELECT o.reference, o.buyer_name, o.buyer_email, o.total_cents, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.id = ?', [$p['order_id']]);
+    return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']], 'order' => $o,
+        'returnUrl' => '/orders/' . $o['reference'] . '?k=' . rawurlencode(order_key($p['order_id']))];
+});
+route('POST', '/api/public/payments/:id/sandbox', function ($a) {
+    limit('payform', 30, 600);
+    $b = check(body(), ['k' => R::str(['max' => 600]), 'outcome' => R::oneOf(['paid', 'failed', 'cancelled'])]);
+    $p = sandbox_payment($a['id'], $b['k']);
+    $r = sandbox_answer($p, $b['outcome']);
+    $ref = val('SELECT reference FROM orders WHERE id = ?', [$p['order_id']]);
+    return $r + ['returnUrl' => '/orders/' . $ref . '?k=' . rawurlencode(order_key($p['order_id'])) . ($b['outcome'] === 'cancelled' ? '&cancelled=1' : '')];
 });
 
 route('POST', '/api/public/orders/:ref/cancel', function ($a) {

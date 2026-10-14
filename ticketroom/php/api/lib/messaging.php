@@ -270,9 +270,10 @@ function tpl(string $name, array $a): array
     switch ($name) {
         case 'orderConfirmed':
             $o = $a['order']; $e = $a['event']; $n = (int) $a['ticketCount']; $free = (int) $o['total_cents'] === 0; $isAre = $n === 1 ? 'is' : 'are';
+            $test = (int) ($o['test'] ?? 0) === 1;
             return [
-                'subject' => $free ? 'Your free ' . ($n === 1 ? 'ticket' : 'tickets') . " for {$e['title']}" : "Your tickets for {$e['title']} ({$o['reference']})",
-                'body' => $hi . ($free ? "You're booked for {$e['title']}. Your " . plural($n, 'free ticket') . " $isAre waiting in your TicketRoom account."
+                'subject' => ($test ? '[TEST] ' : '') . ($free ? 'Your free ' . ($n === 1 ? 'ticket' : 'tickets') . " for {$e['title']}" : "Your tickets for {$e['title']} ({$o['reference']})"),
+                'body' => $hi . ($test ? "This is a TEST order, paid while TicketRoom payments were in test mode. No real money moved and these tickets will not get you in.\n\n" : '') . ($free ? "You're booked for {$e['title']}. Your " . plural($n, 'free ticket') . " $isAre waiting in your TicketRoom account."
                                        : 'Thanks for your order. Your ' . plural($n, 'ticket') . " for {$e['title']} $isAre ready.")
                     . "\n\n" . place($e) . "\n" . when_str($e['starts_at']) . "\nOrder {$o['reference']}" . ($free ? '' : ' · ' . format_zar((int) $o['total_cents']))
                     . (!empty($a['guestLink'])

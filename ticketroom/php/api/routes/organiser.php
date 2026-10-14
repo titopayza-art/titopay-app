@@ -64,13 +64,13 @@ function org_dashboard(string $orgId): array
     $events = rows("SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.capacity,
                            COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0) AS sold,
                            e.is_free, (SELECT count(*) FROM ticket_types WHERE event_id = e.id) AS ticket_types,
-                           COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . "),0) AS revenue_cents,
-                           COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . "),0) AS organiser_fee_cents
+                           COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . " AND test = 0),0) AS revenue_cents,
+                           COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . " AND test = 0),0) AS organiser_fee_cents
                       FROM events e WHERE e.organiser_id = ? ORDER BY e.starts_at DESC", [$orgId]);
     foreach ($events as &$e) foreach (['sold', 'revenue_cents', 'organiser_fee_cents', 'capacity', 'ticket_types'] as $k) $e[$k] = (int) $e[$k];
     unset($e);
     $last7 = row("SELECT COALESCE(SUM(o.subtotal_cents - o.discount_cents),0) AS revenue_cents, COUNT(*) AS orders
-                    FROM orders o JOIN events e ON e.id = o.event_id WHERE e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.paid_at > ?", [$orgId, iso_in(-7 * 86400)]);
+                    FROM orders o JOIN events e ON e.id = o.event_id WHERE e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 AND o.paid_at > ?", [$orgId, iso_in(-7 * 86400)]);
     $now = now_iso();
     return [
         'events' => $events,
@@ -89,10 +89,10 @@ function org_dashboard(string $orgId): array
 function org_event_analytics(array $event): array
 {
     $id = $event['id'];
-    $tr = row("SELECT COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " THEN 1 ELSE 0 END),0) AS orders,
-                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " THEN subtotal_cents - discount_cents ELSE 0 END),0) AS ticket_revenue_cents,
-                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " THEN fee_cents ELSE 0 END),0) AS fees_cents,
-                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " THEN organiser_fee_cents ELSE 0 END),0) AS organiser_fee_cents,
+    $tr = row("SELECT COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN 1 ELSE 0 END),0) AS orders,
+                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN subtotal_cents - discount_cents ELSE 0 END),0) AS ticket_revenue_cents,
+                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN fee_cents ELSE 0 END),0) AS fees_cents,
+                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN organiser_fee_cents ELSE 0 END),0) AS organiser_fee_cents,
                       COALESCE(SUM(refunded_cents),0) AS refunded_cents,
                       COALESCE(SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END),0) AS abandoned,
                       COALESCE(SUM(CASE WHEN status = 'pending_payment' THEN 1 ELSE 0 END),0) AS pending
@@ -103,10 +103,10 @@ function org_event_analytics(array $event): array
     $since = gmdate('Y-m-d', time() - 29 * 86400);
     $tick = [];
     foreach (rows("SELECT substr(o.paid_at,1,10) AS d, SUM(oi.quantity) AS n FROM orders o JOIN order_items oi ON oi.order_id = o.id
-                    WHERE o.event_id = ? AND o.status IN " . ORG_PAID . " AND o.paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $tick[$r['d']] = (int) $r['n'];
+                    WHERE o.event_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 AND o.paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $tick[$r['d']] = (int) $r['n'];
     $rev = [];
     foreach (rows("SELECT substr(paid_at,1,10) AS d, SUM(subtotal_cents - discount_cents) AS c FROM orders
-                    WHERE event_id = ? AND status IN " . ORG_PAID . " AND paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $rev[$r['d']] = (int) $r['c'];
+                    WHERE event_id = ? AND status IN " . ORG_PAID . " AND test = 0 AND paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $rev[$r['d']] = (int) $r['c'];
     $daily = [];
     for ($i = 29; $i >= 0; $i--) {
         $d = gmdate('Y-m-d', time() - $i * 86400);
@@ -122,11 +122,11 @@ function org_event_analytics(array $event): array
     $byHour = rows("SELECT strftime('%H:00', occurred_at, '+2 hours') AS hour, count(*) AS n FROM admission_log
                      WHERE event_id = ? AND outcome = 'admitted' GROUP BY 1 ORDER BY 1", [$id]);
     $links = rows("SELECT l.code, l.label, l.clicks,
-                          (SELECT count(*) FROM orders o WHERE o.tracking_link_id = l.id AND o.status IN " . ORG_PAID . ") AS orders,
-                          (SELECT COALESCE(SUM(o.subtotal_cents - o.discount_cents),0) FROM orders o WHERE o.tracking_link_id = l.id AND o.status IN " . ORG_PAID . ") AS revenue_cents
+                          (SELECT count(*) FROM orders o WHERE o.tracking_link_id = l.id AND o.status IN " . ORG_PAID . " AND o.test = 0) AS orders,
+                          (SELECT COALESCE(SUM(o.subtotal_cents - o.discount_cents),0) FROM orders o WHERE o.tracking_link_id = l.id AND o.status IN " . ORG_PAID . " AND o.test = 0) AS revenue_cents
                      FROM tracking_links l WHERE l.event_id = ? ORDER BY revenue_cents DESC", [$id]);
     $promos = rows("SELECT p.code, p.kind, p.value, p.used_count, p.max_uses, p.active,
-                           (SELECT COALESCE(SUM(o.discount_cents),0) FROM orders o WHERE o.promo_code_id = p.id AND o.status IN " . ORG_PAID . ") AS discount_given_cents
+                           (SELECT COALESCE(SUM(o.discount_cents),0) FROM orders o WHERE o.promo_code_id = p.id AND o.status IN " . ORG_PAID . " AND o.test = 0) AS discount_given_cents
                       FROM promo_codes p WHERE p.event_id = ? ORDER BY p.used_count DESC", [$id]);
     $sold = array_sum(array_map(fn($t) => (int) $t['quantity_sold'], $byType));
     return [
@@ -215,7 +215,7 @@ function org_audience(string $orgId, string $channel, ?array $eventIds): array
                    JOIN marketing_consents mc ON mc.user_id = u.id AND mc.organiser_id = ? AND mc.channel = ? AND mc.granted = 1
                   WHERE u.status = 'active' AND $contact IS NOT NULL
                     AND (EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id
-                                  WHERE o.user_id = u.id AND e.organiser_id = ? AND o.status IN " . ORG_PAID . " $evf)
+                                  WHERE o.user_id = u.id AND e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 $evf)
                       OR EXISTS (SELECT 1 FROM tickets t JOIN events e ON e.id = t.event_id
                                   WHERE t.owner_user_id = u.id AND e.organiser_id = ? $evf))", $p);
 }

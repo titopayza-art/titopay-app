@@ -212,7 +212,7 @@ const login = (creds) => anon("/api/auth/login", creds);
     // Without the test switch, only public https addresses are accepted.
     assert.equal((await ad.post("/api/admin/integrations/sms/health")).body.ok, false, "http and private addresses refused");
     await a.goto(`${BASE}/admin#/integrations`);
-    await a.getByRole("button", { name: "Use the test account" }).click();
+    await a.getByRole("button", { name: "Use PayFast's test account" }).click();
     await a.locator("dialog[open]").getByLabel("Your password").fill(ADMIN.password);
     await a.locator("dialog[open]").getByRole("button", { name: "Save" }).click();
     await a.getByText(/Test payments are ready/).waitFor();
@@ -220,6 +220,67 @@ const login = (creds) => anon("/api/auth/login", creds);
     assert.equal(pay.provider, "payfast"); assert.equal(pay.environment, "test"); assert.equal(pay.status, "active");
     assert.equal((await anon("/api/config", null, "GET")).body.cardPaymentsEnabled, true, "card checkout ready in test mode");
     step("your own SMS provider through its web API (number, message and key sent as set up); PayFast's test account in one click");
+
+    // 4b. The TicketRoom sandbox: practice payments end to end, nothing real.
+    clearLimits();
+    await a.goto(`${BASE}/admin#/integrations`);
+    await a.getByRole("button", { name: "Use the TicketRoom sandbox" }).click();
+    await a.locator("dialog[open]").getByLabel("Your password").fill(ADMIN.password);
+    await a.locator("dialog[open]").getByRole("button", { name: "Save" }).click();
+    await a.getByText(/The TicketRoom sandbox is on/).waitFor();
+    const cfg = (await anon("/api/config", null, "GET")).body;
+    assert.equal(cfg.cardPaymentsEnabled, true); assert.equal(cfg.paymentsTest, true, "the site knows payments are in test mode");
+    assert.equal((await ad.put("/api/admin/integrations/payments", { currentPassword: ADMIN.password, values: { provider: "sandbox", mode: "live" } })).status, 200);
+    assert.equal((await ad.get("/api/admin/integrations")).body.integrations.find((i) => i.key === "payments").environment, "test", "the sandbox can never be live");
+    const starts = new Date(Date.now() + 2 * 3600e3), ends = new Date(Date.now() + 6 * 3600e3);
+    const sev = (await o.post(`/api/organiser/${orgId}/events`, { title: "Sandbox Sessions", category: "music", venueName: "The Practice Room", city: "Durban", startsAt: starts.toISOString(), endsAt: ends.toISOString(), capacity: 100 })).body.event;
+    const stt = (await o.post(`/api/organiser/${orgId}/events/${sev.id}/ticket-types`, { name: "General", priceCents: 10000, quantityTotal: 50, perOrderLimit: 6 })).body.ticketType;
+    assert.equal((await o.post(`/api/organiser/${orgId}/events/${sev.id}/submit`)).status, 200);
+    assert.equal((await ad.post(`/api/admin/events/${sev.id}/status`, { action: "publish" })).status, 200);
+    const g = await page(browser, null, { width: 390, height: 844 });
+    await g.goto(`${BASE}/events/${sev.slug}`);
+    await g.getByRole("button", { name: /More General/ }).click();
+    await g.getByRole("button", { name: "Continue" }).click();
+    await g.getByText(/Test mode\. Payments are being tested/).waitFor();
+    await g.getByLabel("Full name").fill("Sam Sandbox");
+    await g.getByLabel("Email", { exact: true }).fill("sam.sandbox@example.co.za");
+    await g.getByLabel("Confirm email").fill("sam.sandbox@example.co.za");
+    await g.getByRole("button", { name: "Pay R110.00" }).click();
+    await g.waitForURL(/\/pay\?p=.*m=sandbox/);
+    await g.getByText("Practice payment. No real money moves").waitFor();
+    await g.getByRole("button", { name: "Decline (card refused)" }).click();
+    await g.getByRole("heading", { name: "Payment not completed" }).waitFor();
+    await g.getByRole("button", { name: "Try paying again" }).click();
+    await g.getByRole("button", { name: "Approve payment" }).click();
+    await g.getByRole("heading", { name: /You're going/ }).waitFor({ timeout: 20000 });
+    await g.getByText(/Test order\./).waitFor();
+    assert.equal(await g.locator(".tk-test").count(), 1, "the ticket is stamped TEST");
+    const so = sql("SELECT * FROM orders WHERE buyer_email = 'sam.sandbox@example.co.za'")[0];
+    assert.equal(so.status, "paid"); assert.equal(Number(so.test), 1);
+    const stk = sql("SELECT * FROM tickets WHERE order_id = ?", so.id)[0];
+    assert.equal(Number(stk.test), 1);
+    assert.match(lastMail("sam.sandbox@example.co.za").subject, /^\[TEST\] /, "the confirmation email says TEST");
+    assert.equal(sql("SELECT count(*) AS n FROM ledger_entries WHERE account = ?", `organiser:${orgId}:event:${sev.id}`)[0].n, 0, "nothing owed to the organiser");
+    assert.ok(sql("SELECT count(*) AS n FROM ledger_entries WHERE account = ?", `test:organiser:${orgId}:event:${sev.id}`)[0].n > 0, "kept apart in the test ledger");
+    const recon = (await ad.get("/api/admin/reconciliation")).body;
+    assert.equal(recon.ledger.balanced, true); assert.ok(!recon.providers.includes("sandbox"), "nothing to reconcile for the sandbox");
+    // The gate refuses it.
+    sql("UPDATE events SET starts_at = ? WHERE id = ?", new Date(Date.now() - 1800e3).toISOString(), sev.id);
+    const scan = await o.post("/api/staff/scan", { eventId: sev.id, payload: stk.code });
+    assert.equal(scan.body.outcome, "test_ticket", JSON.stringify(scan.body));
+    assert.equal(sql("SELECT status FROM tickets WHERE id = ?", stk.id)[0].status, "valid", "not admitted");
+    // Refunds complete straight away; then the owner clears test orders.
+    const ov = (await ad.get("/api/admin/dashboard")).body;
+    assert.equal(ov.ops.payments_test, 1); assert.ok(ov.ops.test_orders >= 1);
+    await a.goto(`${BASE}/admin#/integrations`);
+    await a.getByRole("button", { name: "Clear test orders" }).click();
+    await a.locator("dialog[open]").getByLabel("Your password").fill(ADMIN.password);
+    await a.locator("dialog[open]").getByRole("button", { name: "Clear test orders" }).click();
+    await a.getByText(/Cleared \d+ test order/).waitFor();
+    assert.equal(sql("SELECT status FROM tickets WHERE id = ?", stk.id)[0].status, "revoked");
+    assert.equal(Number(sql("SELECT quantity_sold FROM ticket_types WHERE id = ?", stt.id)[0].quantity_sold), 0, "seats back on sale");
+    await g.close();
+    step("payment sandbox: practice page (decline, retry, approve); TEST order, ticket and email; nothing owed or reconciled; the gate refuses it; never live; test orders cleared");
 
     // 5. Maintenance mode closes the site for visitors, on the server.
     clearLimits();

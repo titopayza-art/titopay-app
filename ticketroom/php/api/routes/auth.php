@@ -7,7 +7,7 @@ route('GET', '/api/health', function () {
     return ['ok' => true, 'service' => 'ticketroom', 'edition' => 'php', 'version' => TR_VERSION, 'provider' => 'none'];
 });
 route('GET', '/api/config', fn() => [
-    'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'titopayWallet' => false,
+    'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'titopayWallet' => false,
     'features' => ['payments' => false, 'cashless' => false, 'pos' => false, 'finance' => true, 'sms' => sms_ready(), 'tags' => false,
         'walletApple' => wallet_apple_ready(), 'walletGoogle' => wallet_google_ready()],
     'messaging' => ['email' => mail_mode(), 'sms' => sms_provider()],

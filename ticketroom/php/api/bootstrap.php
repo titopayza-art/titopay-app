@@ -155,7 +155,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -241,6 +241,14 @@ const UPGRADES = [
         "UPDATE users SET account_type = 'organiser' WHERE account_type = 'customer' AND id IN (SELECT user_id FROM organiser_members)",
         'CREATE INDEX IF NOT EXISTS users_type_idx ON users (account_type, created_at)',
         '@owner',
+    ],
+    // Sandbox: orders paid in test mode are test orders. Their tickets never
+    // open a gate and their money never reaches an organiser's balance.
+    9 => [
+        'ALTER TABLE orders ADD COLUMN test INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE tickets ADD COLUMN test INTEGER NOT NULL DEFAULT 0',
+        "UPDATE orders SET test = 1 WHERE id IN (SELECT order_id FROM payments WHERE environment <> 'live')",
+        'UPDATE tickets SET test = 1 WHERE order_id IN (SELECT id FROM orders WHERE test = 1)',
     ],
 ];
 // The platform owner is the first administrator. Nobody else can change

@@ -181,6 +181,7 @@ async function overview() {
       <div class="kpi"><div class="k">Users</div><div class="v">${d.users.total}</div><div class="s">+${d.users.new7} this week</div></div>
       <div class="kpi"><div class="k">Live events</div><div class="v">${d.events.live}</div><div class="s">${d.organisers.approved} approved organisers</div></div></div>
     <section class="card mt"><h2>Needs attention</h2><div class="stack">
+      ${d.ops.payments_test ? html`<a class="callout warn row between" href="#/integrations"><span><strong>Payments are in test mode.</strong> Buyers pay with practice payments and get TEST tickets the gate refuses${d.ops.test_orders ? ` (${d.ops.test_orders} so far)` : ""}. Switch to Live in Integrations before tickets go on sale.</span><span aria-hidden="true">→</span></a>` : ""}
       ${alert(d.organisers.pending, ["organiser awaiting approval", "organisers awaiting approval"], "#/organisers")}
       ${alert(d.events.pending, ["event awaiting approval", "events awaiting approval"], "#/events")}
       ${alert(d.events.cancel_requests, ["event cancellation request", "event cancellation requests"], "#/events")}
@@ -726,7 +727,9 @@ function integrationCard(i) {
   return html`<section class="card stack integ" data-integ="${i.key}">
     <div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.status === "active" ? "active" : "draft")}${i.status === "active" ? html` <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment}</span>` : html` <span class="badge plain">not set up</span>`}</span></div>
     <p class="muted mb-0">${INTEG_HELP[i.key] || ""}</p>
-    ${i.key === "payments" && isA() ? html`<div class="callout small row between"><span><strong>Want to try payments now?</strong> Use PayFast's shared test account: test mode, no real money, nothing to sign up for. Switch to your own keys and Live when you're ready.</span><button type="button" class="btn btn-ghost btn-sm" data-sandbox>Use the test account</button></div>` : ""}
+    ${i.key === "payments" && isA() && i.environment !== "live" ? html`<div class="callout small stack"><span><strong>Want to try payments now?</strong> The TicketRoom sandbox needs no provider account: buyers see a practice payment page and choose whether it goes through. PayFast's shared test account sends you through PayFast's own sandbox instead. Either way no real money moves and every ticket is marked TEST. Switch to your own keys and Live when you're ready.</span>
+      <div class="row"><button type="button" class="btn btn-primary btn-sm" data-sandbox="ticketroom">Use the TicketRoom sandbox</button><button type="button" class="btn btn-ghost btn-sm" data-sandbox="payfast">Use PayFast's test account</button></div></div>` : ""}
+    ${i.key === "payments" && i.testOrders ? html`<div class="callout warn small row between"><span><strong>${i.testOrders} test order${i.testOrders === 1 ? "" : "s"}</strong> on record. They never count as sales or payouts. Clear them before you go live to free their seats.</span>${isA() ? html`<button type="button" class="btn btn-ghost btn-sm" data-clear-test>Clear test orders</button>` : ""}</div>` : ""}
     ${i.notifyUrl ? html`<p class="small mb-0">Payment notifications arrive at <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : ". PayFast is told this address with every payment."}</p>` : ""}
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
       ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
@@ -765,10 +768,16 @@ async function integrations() {
       integrations();
     });
   });
-  $("[data-sandbox]")?.addEventListener("click", async () => {
-    const pw = await askPassword("PayFast's test account");
+  $$("[data-sandbox]").forEach((b) => b.addEventListener("click", async () => {
+    const kind = b.dataset.sandbox;
+    const pw = await askPassword(kind === "payfast" ? "PayFast's test account" : "the TicketRoom sandbox");
     if (!pw) return;
-    try { const r = await post("/api/admin/integrations/payments/sandbox", { currentPassword: pw }); toast(r.message, "good"); integrations(); } catch (err) { toast(err.message, "bad"); }
+    try { const r = await post("/api/admin/integrations/payments/sandbox", { currentPassword: pw, kind }); toast(r.message, "good"); integrations(); } catch (err) { toast(err.message, "bad"); }
+  }));
+  $("[data-clear-test]")?.addEventListener("click", async () => {
+    const pw = await confirmDialog("Clear test orders?", "Test tickets are cancelled and their seats go back on sale. Real orders are not touched. Type your password to confirm.", { confirm: "Clear test orders", danger: true, input: { label: "Your password", type: "password", required: true, autocomplete: "current-password" } });
+    if (!pw) return;
+    try { const r = await post("/api/admin/payments/clear-test", { currentPassword: pw }); toast(`Cleared ${r.cleared.orders} test order${r.cleared.orders === 1 ? "" : "s"}.`, "good"); integrations(); } catch (err) { toast(err.message, "bad"); }
   });
   $$("[data-health]").forEach((b) => b.addEventListener("click", async () => {
     try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Working. ${r.detail || ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }

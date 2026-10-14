@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 route('GET', '/api/staff/events', function () {
     $u = require_auth();
-    $all = has_role($u, 'admin', 'support') ? 1 : 0;
+    $all = 0; // only the events this person was added to, or their organisation's
     $list = rows("SELECT DISTINCT e.id, e.title, e.venue_name, e.city, e.starts_at, e.ends_at, e.status, e.cashless_enabled,
                          COALESCE(s.can_scan, CASE WHEN m.role IN ('owner','manager') THEN 1 END, ?) AS can_scan,
                          0 AS can_manage_tags
@@ -72,11 +72,12 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
     $types = [];
     foreach (rows('SELECT id, name, kind, admits FROM ticket_types WHERE event_id = ?', [$ev['id']]) as $t) $types[$t['id']] = gate_label($t);
     $generatedAt = now_iso();
-    $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
+    $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id, test FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
     $list = [];
     while ($t = $st->fetch(PDO::FETCH_NUM)) {
         $first = staff_short_name($t[3]);
-        $list[] = [$t[0], (int) $t[1], $t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0), $first, $types[$t[4]] ?? ''];
+        // Test tickets ride along as "not valid", so offline phones refuse them too.
+        $list[] = [$t[0], (int) $t[1], (int) $t[5] === 1 ? 0 : ($t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0)), $first, (int) $t[5] === 1 ? 'Test ticket' : ($types[$t[4]] ?? '')];
     }
     $st->closeCursor();
     // Gate passes ride along; the sixth field marks a re-entry pass.

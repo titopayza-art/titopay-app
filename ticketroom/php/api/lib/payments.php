@@ -7,6 +7,8 @@
 // payment page proves nothing and changes nothing.
 //
 // Providers (chosen and set up in Admin portal → Integrations):
+//   Sandbox TicketRoom's own practice payment page: no provider account,
+//           nothing real. Always test mode.
 //   Yoco    Checkout API: hosted payment page, signed webhooks, refunds by API.
 //   PayFast hosted form + ITN; refunds are done in the PayFast dashboard and
 //           recorded here ("manual"), because PayFast's refund API needs a
@@ -15,19 +17,27 @@
 // Every confirmed payment, completed refund and paid payout is written to an
 // append-only double-entry ledger in the same transaction, so the books
 // always balance and every rand is accounted for.
+//
+// Test mode (the sandbox, Yoco test keys, PayFast's sandbox) is a separate
+// world: its orders are test orders, their tickets never open a gate, and
+// their money is booked to "test:" ledger accounts that never reach an
+// organiser's balance, a payout or the sales figures.
 declare(strict_types=1);
 
 // ============================================================== settings
 function pay_provider(): string
 {
     $p = (string) cfg('payments.provider', 'none');
-    return in_array($p, ['yoco', 'payfast'], true) ? $p : 'none';
+    return in_array($p, ['sandbox', 'yoco', 'payfast'], true) ? $p : 'none';
 }
-function pay_mode(): string { return cfg('payments.mode', 'test') === 'live' ? 'live' : 'test'; }
+// The sandbox is never live.
+function pay_mode(): string { return pay_provider() !== 'sandbox' && cfg('payments.mode', 'test') === 'live' ? 'live' : 'test'; }
+function pay_test(): bool { return pay_mode() !== 'live'; }
 // Paid tickets can be sold once a provider is fully set up.
 function pay_ready(): bool
 {
     return match (pay_provider()) {
+        'sandbox' => true,
         'yoco' => (string) cfg('payments.yocoSecretKey', '') !== '' && (string) cfg('payments.yocoWebhookSecret', '') !== '',
         'payfast' => (string) cfg('payments.payfastMerchantId', '') !== '' && (string) cfg('payments.payfastMerchantKey', '') !== '',
         default => false,
@@ -149,6 +159,8 @@ function payment_start(array $order): array
     q("UPDATE payments SET status = 'cancelled', updated_at = ? WHERE order_id = ? AND status IN ('initiated','pending')", [$now, $order['id']]);
     $p = insert('payments', ['id' => uuid(), 'order_id' => $order['id'], 'provider' => pay_provider(), 'environment' => pay_mode(), 'amount_cents' => (int) $order['total_cents'],
         'status' => 'initiated', 'created_at' => $now, 'updated_at' => $now]);
+    // A test-mode payment makes this a test order, start to finish.
+    q('UPDATE orders SET test = ?, updated_at = ? WHERE id = ?', [pay_test() ? 1 : 0, $now, $order['id']]);
     $k = rawurlencode(order_key($order['id']));
     try {
         if ($p['provider'] === 'yoco') {
@@ -156,8 +168,9 @@ function payment_start(array $order): array
             q("UPDATE payments SET provider_reference = ?, status = 'pending', updated_at = ? WHERE id = ?", [$c['reference'], now_iso(), $p['id']]);
             return ['id' => $p['id'], 'provider' => 'yoco', 'redirectUrl' => $c['redirectUrl']];
         }
+        // PayFast and the sandbox: TicketRoom's own /pay page takes the buyer on.
         q("UPDATE payments SET provider_reference = ?, status = 'pending', updated_at = ? WHERE id = ?", [$p['id'], now_iso(), $p['id']]);
-        return ['id' => $p['id'], 'provider' => 'payfast', 'redirectUrl' => base_url() . '/pay?p=' . $p['id'] . '&k=' . rawurlencode(sign_link(['p' => $p['id']], 3600))];
+        return ['id' => $p['id'], 'provider' => $p['provider'], 'redirectUrl' => '/pay?p=' . $p['id'] . ($p['provider'] === 'sandbox' ? '&m=sandbox' : '') . '&k=' . rawurlencode(sign_link(['p' => $p['id']], 3600))];
     } catch (Throwable $e) {
         q("UPDATE payments SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?", [substr('checkout: ' . $e->getMessage(), 0, 240), now_iso(), $p['id']]);
         error_log('[payments] checkout failed: ' . $e->getMessage());
@@ -181,9 +194,11 @@ function payment_apply(string $provider, string $reference, string $outcome, int
             }
             $now = now_iso();
             q("UPDATE payments SET status = 'confirmed', confirmed_at = ?, failure_reason = NULL, updated_at = ? WHERE id = ?", [$now, $now, $p['id']]);
+            if ($p['environment'] !== 'live') q('UPDATE orders SET test = 1 WHERE id = ?', [$p['order_id']]);
             $order = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
             ledger_payment($order, $p);
             payment_fulfil($order, $p);
+            if ((int) $order['test'] === 1) q('UPDATE tickets SET test = 1 WHERE order_id = ?', [$order['id']]);
             audit('payment.confirmed', ['entityType' => 'payment', 'entityId' => $p['id'], 'details' => ['order' => $order['reference'], 'amount' => (int) $p['amount_cents']]]);
             return 'confirmed';
         }
@@ -309,6 +324,8 @@ function refund_process(string $refundId, ?array $actor = null): array
     if (!$r || !in_array($r['status'], ['requested', 'processing', 'failed'], true)) throw conflict('This refund cannot be processed now.', 'bad_transition');
     $p = row('SELECT * FROM payments WHERE id = ?', [$r['payment_id']]);
     q("UPDATE refunds SET status = 'processing', decided_by = COALESCE(decided_by, ?), failure_reason = NULL, updated_at = ? WHERE id = ?", [$actor['id'] ?? null, now_iso(), $r['id']]);
+    // Sandbox money goes back at once: there is nobody to ask.
+    if ($p['provider'] === 'sandbox') return tx(fn() => refund_complete($r['id'], 'SANDBOX-' . $r['reference'], $actor));
     if ($p['provider'] !== 'yoco') {
         q("UPDATE refunds SET status = 'manual_pending', updated_at = ? WHERE id = ?", [now_iso(), $r['id']]);
         return row('SELECT * FROM refunds WHERE id = ?', [$r['id']]);
@@ -360,9 +377,11 @@ function refund_complete(string $refundId, string $providerRef, ?array $actor): 
 //            revenue:commission         TicketRoom's commission
 //            bank:payouts               money sent to organisers by EFT
 // Debits are positive, credits negative; every journal sums to zero.
-function ledger_post(string $kind, string $reference, array $lines): void
+function ledger_post(string $kind, string $reference, array $lines, bool $test = false): void
 {
     $lines = array_values(array_filter($lines, fn($l) => (int) $l[1] !== 0));
+    // Test-mode money lives in its own accounts, never mixed with real money.
+    if ($test) $lines = array_map(fn($l) => ['test:' . $l[0], $l[1]], $lines);
     if (!$lines) return;
     if (array_sum(array_map(fn($l) => (int) $l[1], $lines)) !== 0) throw new RuntimeException("ledger: journal $reference does not balance");
     q('INSERT INTO ledger_journals (kind, reference, created_at) VALUES (?,?,?)', [$kind, $reference, now_iso()]);
@@ -383,7 +402,7 @@ function ledger_payment(array $order, array $payment): void
         [ledger_org_account($order), -($net - $commission)],
         ['revenue:commission', -$commission],
         ['revenue:booking_fees', -((int) $payment['amount_cents'] - $net)],
-    ]);
+    ], $payment['environment'] !== 'live');
 }
 function ledger_refund(array $order, array $payment, array $refund): void
 {
@@ -395,21 +414,23 @@ function ledger_refund(array $order, array $payment, array $refund): void
         ['revenue:commission', $commission],
         ['revenue:booking_fees', (int) $refund['fee_refund_cents']],
         ['provider:' . $payment['provider'], -($amount + (int) $refund['fee_refund_cents'])],
-    ]);
+    ], $payment['environment'] !== 'live');
 }
 function ledger_balance(string $account): int { return (int) val('SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries WHERE account = ?', [$account]); }
 function ledger_check(): array
 {
     $bad = rows('SELECT journal_id, SUM(amount_cents) AS s FROM ledger_entries GROUP BY journal_id HAVING SUM(amount_cents) <> 0 LIMIT 20');
     $clearing = [];
-    foreach (rows("SELECT DISTINCT provider FROM payments") as $p) {
-        $expected = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE provider = ? AND status IN ('confirmed','partially_refunded','refunded')", [$p['provider']])
-            - (int) val("SELECT COALESCE(SUM(r.amount_cents + r.fee_refund_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = ? AND r.status = 'completed'", [$p['provider']]);
+    // Real money only: test-mode payments are booked to test: accounts.
+    foreach (rows("SELECT DISTINCT provider FROM payments WHERE environment = 'live'") as $p) {
+        $expected = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE provider = ? AND environment = 'live' AND status IN ('confirmed','partially_refunded','refunded')", [$p['provider']])
+            - (int) val("SELECT COALESCE(SUM(r.amount_cents + r.fee_refund_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = ? AND p.environment = 'live' AND r.status = 'completed'", [$p['provider']]);
         $ledger = ledger_balance("provider:{$p['provider']}");
         $clearing[] = ['account' => "provider:{$p['provider']}", 'ledgerCents' => $ledger, 'expectedCents' => $expected, 'ok' => $ledger === $expected];
     }
     $ok = !$bad && !array_filter($clearing, fn($c) => !$c['ok']);
-    return ['entries' => (int) val('SELECT count(*) FROM ledger_entries'), 'sumCents' => (int) val('SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries'),
+    return ['entries' => (int) val("SELECT count(*) FROM ledger_entries WHERE account NOT LIKE 'test:%'"), 'sumCents' => (int) val('SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries'),
+        'testEntries' => (int) val("SELECT count(*) FROM ledger_entries WHERE account LIKE 'test:%'"),
         'balanced' => $ok, 'unbalancedJournals' => array_column($bad, 'journal_id'), 'clearing' => $clearing];
 }
 
@@ -434,7 +455,46 @@ function organiser_money(array $org): array
     $paid = ledger_balance("organiser:{$org['id']}:payouts");
     $inFlight = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payouts WHERE organiser_id = ? AND status IN ('requested','approved')", [$org['id']]);
     $pendingRefunds = (int) val("SELECT COALESCE(SUM(r.amount_cents),0) FROM refunds r JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = o.event_id
-                                  WHERE e.organiser_id = ? AND r.status IN ('requested','processing','manual_pending','failed')", [$org['id']]);
+                                  WHERE e.organiser_id = ? AND o.test = 0 AND r.status IN ('requested','processing','manual_pending','failed')", [$org['id']]);
     return ['events' => $events, 'totalCents' => $total - $paid, 'availableCents' => max(0, $releasable - $paid - $inFlight - $pendingRefunds),
         'inFlightCents' => $inFlight, 'pendingRefundsCents' => $pendingRefunds];
+}
+
+// ============================================================== sandbox
+// TicketRoom's own practice payment page (/pay). The buyer chooses what the
+// "bank" says; the answer goes through exactly the same path as a real
+// provider's notification, so the whole flow can be tried end to end with
+// nothing real involved.
+function sandbox_payment(string $paymentId, ?string $key): array
+{
+    $d = verify_link($key);
+    if (!$d || ($d['p'] ?? '') !== $paymentId) throw not_found('This payment link has expired. Go back to your order and try again.');
+    $p = row("SELECT * FROM payments WHERE id = ? AND provider = 'sandbox'", [$paymentId]);
+    if (!$p) throw not_found('Payment not found.');
+    return $p;
+}
+function sandbox_answer(array $p, string $outcome): array
+{
+    if ($p['status'] !== 'pending') throw conflict('This payment is no longer open.', 'payment_closed');
+    $result = payment_apply('sandbox', $p['provider_reference'], $outcome, $outcome === 'paid' ? (int) $p['amount_cents'] : 0);
+    audit('payment.sandbox', ['entityType' => 'payment', 'entityId' => $p['id'], 'details' => ['outcome' => $outcome, 'result' => $result]]);
+    return ['result' => $result];
+}
+
+// Before going live: test orders are cancelled, their tickets stop working and
+// the places they held go back on sale. Test ledger entries stay, as history.
+function clear_test_orders(array $actor): array
+{
+    return tx(function () use ($actor) {
+        $now = now_iso();
+        $freed = 0;
+        foreach (rows("SELECT ticket_type_id, count(*) AS n FROM tickets WHERE test = 1 AND status IN ('valid','used') GROUP BY ticket_type_id") as $r) {
+            q('UPDATE ticket_types SET quantity_sold = MAX(quantity_sold - ?, 0) WHERE id = ?', [(int) $r['n'], $r['ticket_type_id']]);
+            $freed += (int) $r['n'];
+        }
+        q("UPDATE tickets SET status = 'revoked', revoked_reason = 'test order cleared', updated_at = ? WHERE test = 1 AND status IN ('valid','used')", [$now]);
+        $orders = affected("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE test = 1 AND status <> 'cancelled'", [$now]);
+        audit('payments.test_cleared', ['actor' => $actor, 'details' => ['orders' => $orders, 'tickets' => $freed]]);
+        return ['orders' => $orders, 'tickets' => $freed];
+    });
 }

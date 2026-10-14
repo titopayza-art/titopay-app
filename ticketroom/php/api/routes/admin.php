@@ -46,7 +46,7 @@ route('GET', '/api/admin/dashboard', function () {
     $since = iso_in(-86400);
     $sales = row("SELECT COALESCE(SUM(CASE WHEN paid_at > ? THEN total_cents ELSE 0 END),0) AS gmv24, COALESCE(SUM(total_cents),0) AS gmv_all,
                          COALESCE(SUM(CASE WHEN paid_at > ? THEN 1 ELSE 0 END),0) AS orders24
-                    FROM orders WHERE status IN ('paid','partially_refunded','refunded','paid_unfulfilled')", [$since, $since]);
+                    FROM orders WHERE test = 0 AND status IN ('paid','partially_refunded','refunded','paid_unfulfilled')", [$since, $since]);
     $ops = [
         'refunds_pending' => (int) val("SELECT count(*) FROM refunds WHERE status IN ('requested','manual_pending')"),
         'refunds_failed' => (int) val("SELECT count(*) FROM refunds WHERE status = 'failed'"),
@@ -57,6 +57,8 @@ route('GET', '/api/admin/dashboard', function () {
         'unfulfilled' => (int) val("SELECT count(*) FROM orders WHERE status = 'paid_unfulfilled'"),
         'messages_failed' => (int) val("SELECT count(*) FROM message_outbox WHERE status = 'failed'"),
         'stale_payments' => (int) val("SELECT count(*) FROM payments WHERE status = 'pending' AND created_at < ?", [iso_in(-3600)]),
+        'payments_test' => pay_ready() && pay_test() ? 1 : 0,
+        'test_orders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'"),
     ];
     $ints = fn(array $r) => array_map('intval', $r);
     return ['users' => $ints($users), 'organisers' => $ints($orgs), 'events' => $ints($events), 'sales' => $ints($sales), 'ops' => $ops, 'ledger' => adm_ledger()];

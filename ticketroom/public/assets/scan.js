@@ -7,7 +7,7 @@ const main = $("#main");
 let EVENT = null, cam = null, nfcAbort = null, mode = "gate", deskTicket = null;
 
 const VERDICT = {
-  admitted: ["ok", "ADMIT"], already_used: ["no", "ALREADY SCANNED"], invalid: ["no", "NOT VALID"], wrong_event: ["warn", "WRONG EVENT"],
+  admitted: ["ok", "ADMIT"], already_used: ["no", "ALREADY SCANNED"], invalid: ["no", "NOT VALID"], test_ticket: ["no", "TEST TICKET"], wrong_event: ["warn", "WRONG EVENT"],
   revoked: ["no", "REVOKED"], refunded: ["no", "REFUNDED"], event_not_live: ["warn", "NOT OPEN"], offline: ["warn", "NO CONNECTION"],
 };
 // No answer, or the server too busy to answer: check against the phone's list.

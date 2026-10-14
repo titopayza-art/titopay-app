@@ -553,3 +553,12 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
 .steps-list li.done .tick { background: var(--good); border-color: var(--good); color: #fff; }
 .steps-list li.done span:not(.tick) { color: var(--muted); text-decoration: line-through; }
 .steps-list a { font-weight: 700; }
+
+/* Sandbox payments: practice page, TEST tickets */
+.sandbox-pay { max-width: 460px; margin: 0 auto; display: grid; gap: 14px; }
+.sandbox-flag { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); font-size: .9rem; }
+.sandbox-flag strong { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 999px; background: var(--warn); color: #fff; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.sandbox-card { display: grid; gap: 10px; padding: 20px; border-radius: 16px; color: #fff; background: linear-gradient(135deg, #0B1A33, #23406E); box-shadow: 0 10px 30px rgba(11, 26, 51, .25); font-size: .78rem; letter-spacing: .08em; }
+.sandbox-card b { font-size: 1.2rem; letter-spacing: .14em; font-variant-numeric: tabular-nums; }
+.tk-test { margin: 0; padding: 8px 12px; text-align: center; font-weight: 700; letter-spacing: .1em; font-size: .78rem; color: #fff; background: repeating-linear-gradient(-45deg, #B4232A 0 12px, #9C1D23 12px 24px); }
+.ticket.is-test .t-qr img { opacity: .35; }

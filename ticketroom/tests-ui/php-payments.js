@@ -72,12 +72,12 @@ const ledgerOk = async (a, label) => {
     await adm.goto(`${BASE}/admin#/integrations`);
     const card = adm.locator('[data-integ="payments"]');
     await card.getByLabel("Payment provider").selectOption("yoco");
-    await card.getByLabel("Mode").selectOption("test");
+    await card.getByLabel("Mode").selectOption("live");
     // No password box sits on the page for the browser to fill: it is asked for on Save.
     assert.equal(await adm.locator("#main input[autocomplete='current-password']").count(), 0, "no password field on the page");
     assert.equal(await adm.locator("#main input[type=password]").evaluateAll((els) => els.filter((e) => e.value).length), 0, "write-only boxes start empty");
     await card.getByLabel(/Yoco secret key/).click();
-    await card.getByLabel(/Yoco secret key/).fill("sk_test_ticketroomTEST123");
+    await card.getByLabel(/Yoco secret key/).fill("sk_live_ticketroomLIVE123");
     const save = async (pw) => {
       await card.getByRole("button", { name: /Save card payments settings/ }).click();
       const dlg = adm.locator("dialog[open]");
@@ -87,20 +87,20 @@ const ledgerOk = async (a, label) => {
     await save("wrong-password");
     await adm.getByText(/password is incorrect/).first().waitFor();
     await save(ADMIN.password);
-    await adm.locator('[data-integ="payments"] .badge', { hasText: "test" }).waitFor();
+    await adm.locator('[data-integ="payments"] .badge', { hasText: "live" }).waitFor();
     const ig = await a.get("/api/admin/integrations");
     const text = JSON.stringify(ig.body);
-    assert.ok(!text.includes("sk_test_ticketroomTEST123"), "secret key never sent back");
+    assert.ok(!text.includes("sk_live_ticketroomLIVE123"), "secret key never sent back");
     assert.ok(!/whsec_/.test(text), "webhook secret never sent back");
     const stored = fs.readFileSync(path.join(dataDir, "ticketroom.sqlite"));
-    assert.ok(!stored.includes("sk_test_ticketroomTEST123"), "secret key stored encrypted");
+    assert.ok(!stored.includes("sk_live_ticketroomLIVE123"), "secret key stored encrypted");
     const pay = ig.body.integrations.find((i) => i.key === "payments");
     assert.equal(pay.status, "active");
     assert.equal(pay.fields.find((f) => f.name === "yocoWebhookSecret").set, true, "notification address registered with Yoco");
     assert.equal((await a.post("/api/admin/integrations/payments/health")).body.ok, true);
     assert.equal((await (await adm.request.get(`${BASE}/api/config`)).json()).cardPaymentsEnabled, true);
     const audit = sql("SELECT details FROM audit_log WHERE action = 'integration.updated' ORDER BY rowid DESC LIMIT 1")[0].details;
-    assert.ok(!audit.includes("sk_test_ticketroomTEST123"), "audit log names fields, never values");
+    assert.ok(!audit.includes("sk_live_ticketroomLIVE123"), "audit log names fields, never values");
     step("admin sets up Yoco: password needed, keys stored encrypted and never shown, notifications registered");
 
     // 3. A paid event.
@@ -216,7 +216,7 @@ const ledgerOk = async (a, label) => {
     php(`q('UPDATE events SET starts_at = ?, ends_at = ? WHERE id = ?', [iso_in(2 * 3600), iso_in(6 * 3600), '${ev.id}']);`);
     const r4 = await (await g.request.post(`${BASE}/api/public/orders`, { data: { eventSlug: ev.slug, items: [{ ticketTypeId: tt.id, quantity: 1 }], idempotencyKey: `pf-${Date.now()}`, guest: { fullName: "Pieter Payfast", email: "pieter@example.co.za" } } })).json();
     assert.match(r4.payment.redirectUrl, /\/pay\?p=/);
-    const u4 = new URL(r4.payment.redirectUrl);
+    const u4 = new URL(r4.payment.redirectUrl, BASE);
     const form = await (await fetch(`${BASE}/api/public/payments/${u4.searchParams.get("p")}/payfast?k=${encodeURIComponent(u4.searchParams.get("k"))}`)).json();
     const enc = (v) => encodeURIComponent(String(v).trim()).replace(/%20/g, "+").replace(/[!'()*~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
     const sign = (fields) => crypto.createHash("md5").update([...Object.entries(fields).filter(([k, v]) => k !== "signature" && String(v) !== "").map(([k, v]) => `${k}=${enc(v)}`), `passphrase=${enc("jt7NOE43FZPn")}`].join("&")).digest("hex");

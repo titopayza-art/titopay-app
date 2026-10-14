@@ -188,6 +188,7 @@ async function eventPage(slug) {
           <label class="check"><input type="checkbox" name="mEmail"><span>Email me about their future events</span></label>
           <label class="check"><input type="checkbox" name="mSms"><span>SMS me about their future events</span></label>
           <span class="tiny muted">Unsubscribe any time. We never sell your details.</span></fieldset>
+        ${cfg.paymentsTest && quote.totalCents > 0 ? html`<p class="callout warn mb-0"><strong>Test mode.</strong> Payments are being tested, so no real money moves and tickets are marked TEST. They will not get you in.</p>` : ""}
         <p class="callout warn mb-0" id="pay-wait" role="status" hidden></p>
         <button class="btn btn-primary btn-block" type="submit">${quote.totalCents === 0 ? "Get free tickets" : `Pay ${moneyExact(quote.totalCents)}`}</button>
         <button class="btn btn-link btn-block" type="button" data-back>Change tickets</button>
@@ -235,7 +236,9 @@ async function eventPage(slug) {
 function orderTicket(t, o) {
   const when = `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`;
   const live = t.status === "valid" && t.qrUrl;
-  return html`<div class="tk-wrap"><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"}" aria-label="Ticket ${t.code}">
+  const test = Number(t.test) === 1;
+  return html`<div class="tk-wrap"><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"} ${test ? "is-test" : ""}" aria-label="${test ? "Test ticket" : "Ticket"} ${t.code}">
+    ${test ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : ""}
     <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${o.event.title}</h3><p class="tk-when">${when}</p><p class="tk-where">${o.event.venue}, ${o.event.city}</p></header>
     <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || o.buyerName}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${o.reference}</dd></div></dl>
       <div class="t-qr">${live ? html`<img src="${t.qrUrl}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
@@ -262,7 +265,8 @@ async function orderPage(ref) {
     const pending = o.status === "pending_payment";
     const paid = o.status === "paid" || o.status === "partially_refunded";
     render(main, html`<div class="wrap section stack-lg"><div class="card pad-lg stack" aria-live="polite">
-      <div class="row between"><span class="muted small">Order ${o.reference}</span>${badge(o.status)}</div>
+      <div class="row between"><span class="muted small">Order ${o.reference}</span><span class="row">${o.test ? html`<span class="badge warn">Test</span>` : ""}${badge(o.status)}</span></div>
+      ${o.test ? html`<p class="callout warn mb-0"><strong>Test order.</strong> This was paid while TicketRoom payments were in test mode. No real money moved, and these tickets will not open the gate.</p>` : ""}
       ${paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you as well.</p>
           ${guest ? html`<div class="callout"><strong>Keep your tickets in one place.</strong> Create a free account with <strong>${email}</strong> and confirm it: these tickets, and any you buy later, will be waiting there. You can then pass a ticket to a friend or change the name on it.
             <div class="row mt"><button class="btn btn-primary btn-sm" data-make-account>Create my account</button></div></div>`
@@ -489,8 +493,9 @@ async function contact() {
 // PayFast takes payment on its own page, reached by posting a signed form.
 // This page fetches that form from TicketRoom and sends the buyer on.
 async function payPage() {
-  document.title = "Taking you to PayFast | TicketRoom";
   const q = new URLSearchParams(location.search);
+  if (q.get("m") === "sandbox") return sandboxPayPage(q);
+  document.title = "Taking you to PayFast | TicketRoom";
   render(main, html`<div class="wrap section"><section class="welcome card center"><span class="tk-label">Secure payment</span><h1>Taking you to PayFast…</h1><p class="lead">You'll pay on PayFast's secure page, then come straight back to your tickets.</p>${spinner()}</section></div>`);
   try {
     const f = await get(`/api/public/payments/${encodeURIComponent(q.get("p") || "")}/payfast?k=${encodeURIComponent(q.get("k") || "")}`);
@@ -502,6 +507,37 @@ async function payPage() {
   } catch (err) {
     render(main, html`<div class="wrap section"><section class="welcome card"><span class="tk-label">Payment</span><h1>We couldn't open the payment page</h1><p class="lead">${err.message}</p><a class="btn btn-primary" href="/">Back to events</a></section></div>`);
   }
+}
+
+// ---------------- sandbox payment ----------------
+// Practice payments while TicketRoom is in sandbox mode. The buyer picks what
+// the "bank" answers; the answer takes the same path as a real provider's
+// notification. Tickets bought here are marked TEST and refused at the gate.
+async function sandboxPayPage(q) {
+  document.title = "Practice payment | TicketRoom";
+  const id = encodeURIComponent(q.get("p") || ""), k = q.get("k") || "";
+  const fail = (msg) => render(main, html`<div class="wrap section"><section class="welcome card"><span class="tk-label">Practice payment</span><h1>We couldn't open the payment page</h1><p class="lead">${msg}</p><a class="btn btn-primary" href="/">Back to events</a></section></div>`);
+  let d;
+  try { d = await get(`/api/public/payments/${id}/sandbox?k=${encodeURIComponent(k)}`); } catch (err) { return fail(err.message); }
+  if (d.payment.status !== "pending") { location.replace(d.returnUrl); return; }
+  render(main, html`<div class="wrap section"><section class="sandbox-pay card">
+    <p class="sandbox-flag" role="note"><strong>Sandbox</strong> Practice payment. No real money moves and no card is charged.</p>
+    <span class="tk-label">Pay TicketRoom</span>
+    <h1 class="mb-0">${moneyExact(d.payment.amountCents)}</h1>
+    <p class="muted">${d.order.title} · Order ${d.order.reference}</p>
+    <div class="sandbox-card" aria-hidden="true"><span>TEST CARD</span><b>4242 4242 4242 4242</b><span>${d.order.buyer_name || "Practice buyer"} · 12/30</span></div>
+    <p class="small">Choose what the bank says. Tickets from an approved practice payment are marked <strong>TEST</strong> and will not open the gate.</p>
+    <div class="stack">
+      <button class="btn btn-primary btn-block" data-outcome="paid">Approve payment</button>
+      <button class="btn btn-ghost btn-block" data-outcome="failed">Decline (card refused)</button>
+      <button class="btn btn-ghost btn-block" data-outcome="cancelled">Cancel and go back</button>
+    </div></section></div>`);
+  $$("[data-outcome]").forEach((b) => b.addEventListener("click", async () => {
+    $$("[data-outcome]").forEach((x) => { x.disabled = true; });
+    b.setAttribute("aria-busy", "true");
+    try { const r = await post(`/api/public/payments/${id}/sandbox`, { k, outcome: b.dataset.outcome }); location.replace(r.returnUrl); }
+    catch (err) { toast(err.message, "bad"); $$("[data-outcome]").forEach((x) => { x.disabled = false; }); b.removeAttribute("aria-busy"); }
+  }));
 }
 
 // ---------------- gate pass ----------------

@@ -21,7 +21,7 @@ const INTEGRATION_FIELDS = [
         'fromName' => ['label' => 'Sender name', 'placeholder' => 'TicketRoom'],
     ],
     'payments' => [
-        'provider' => ['label' => 'Payment provider', 'options' => ['none' => 'Not set up (free events only)', 'yoco' => 'Yoco (cards, Apple Pay, Google Pay)', 'payfast' => 'PayFast (cards, instant EFT, SnapScan, Zapper)']],
+        'provider' => ['label' => 'Payment provider', 'options' => ['none' => 'Not set up (free events only)', 'sandbox' => 'TicketRoom sandbox (practice payments, no provider needed)', 'yoco' => 'Yoco (cards, Apple Pay, Google Pay)', 'payfast' => 'PayFast (cards, instant EFT, SnapScan, Zapper)']],
         'mode' => ['label' => 'Mode', 'options' => ['test' => 'Test (no real money)', 'live' => 'Live']],
         'yocoSecretKey' => ['label' => 'Yoco secret key', 'secret' => true, 'provider' => 'yoco', 'hint' => 'From the Yoco portal: Sales → Payment gateway → API keys. Starts with sk_test_ or sk_live_.'],
         'yocoWebhookSecret' => ['label' => 'Yoco webhook secret', 'secret' => true, 'provider' => 'yoco', 'hint' => 'Filled in for you when you save: TicketRoom registers its notification address with Yoco.'],

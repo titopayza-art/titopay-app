@@ -258,6 +258,7 @@ CREATE TABLE orders (
   paid_at             TEXT,
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL,
+  test                INTEGER NOT NULL DEFAULT 0,
   UNIQUE (user_id, idempotency_key)
 );
 CREATE INDEX orders_event_idx ON orders (event_id, status);
@@ -293,6 +294,7 @@ CREATE TABLE tickets (
   revoked_reason TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
+  test           INTEGER NOT NULL DEFAULT 0,
   CHECK (status <> 'used' OR admitted_at IS NOT NULL)
 );
 CREATE INDEX tickets_owner_idx ON tickets (owner_user_id);

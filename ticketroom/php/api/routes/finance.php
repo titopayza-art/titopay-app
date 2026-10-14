@@ -185,7 +185,8 @@ route('GET', '/api/admin/reconciliation', function () {
     adm_any();
     $runs = rows('SELECT r.*, u.full_name AS created_by_name FROM recon_runs r LEFT JOIN users u ON u.id = r.created_by ORDER BY r.created_at DESC LIMIT 50');
     foreach ($runs as &$r) { $r['summary'] = json_decode($r['summary'], true); $r['source'] = 'report'; }
-    $providers = array_values(array_unique(array_merge(array_column(rows('SELECT DISTINCT provider FROM payments'), 'provider'), pay_provider() === 'none' ? [] : [pay_provider()])));
+    $providers = array_values(array_unique(array_merge(array_column(rows('SELECT DISTINCT provider FROM payments'), 'provider'), in_array(pay_provider(), ['none', 'sandbox'], true) ? [] : [pay_provider()])));
+    $providers = array_values(array_diff($providers, ['sandbox']));
     return ['runs' => $runs, 'ledger' => ledger_check(), 'providers' => $providers];
 });
 route('POST', '/api/admin/reconciliation', function () {
@@ -317,8 +318,10 @@ function fin_integration(string $group): array
     if ($group === 'payments') {
         $p = pay_provider();
         return ['key' => 'payments', 'group' => 'payments', 'label' => 'Card payments', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : pay_mode(),
-            'status' => pay_ready() ? 'active' : 'not set up', 'endpoint' => $p === 'yoco' ? yoco_base() : ($p === 'payfast' ? payfast_host() : '—'),
-            'notifyUrl' => $p === 'none' ? null : base_url() . "/api/webhooks/$p", 'credentials' => $creds ?: (object) [], 'fields' => $form];
+            'status' => pay_ready() ? 'active' : 'not set up',
+            'endpoint' => $p === 'yoco' ? yoco_base() : ($p === 'payfast' ? payfast_host() : ($p === 'sandbox' ? 'TicketRoom practice payment page' : '—')),
+            'notifyUrl' => in_array($p, ['none', 'sandbox'], true) ? null : base_url() . "/api/webhooks/$p", 'credentials' => $creds ?: (object) [], 'fields' => $form,
+            'testOrders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'")];
     }
     $p = sms_provider();
     return ['key' => 'sms', 'group' => 'sms', 'label' => 'SMS', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : 'live', 'status' => sms_ready() ? 'active' : 'not set up',
@@ -340,6 +343,8 @@ route('PUT', '/api/admin/integrations/:key', function ($a) {
     $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'values' => R::obj([], ['optional' => true]), 'clear' => R::arr(R::str(['max' => 60]), ['optional' => true, 'max' => 20])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
     $values = is_array(body()['values'] ?? null) ? body()['values'] : [];
+    // The sandbox is practice only: it can never be put in live mode.
+    if ($group === 'payments' && ($values['provider'] ?? pay_provider()) === 'sandbox') $values['mode'] = 'test';
     $changed = tx(fn() => integration_save($group, $values, $b['clear'] ?? [], $u['id']));
     // New mail settings: try them straight away rather than after a pause.
     if ($group === 'mail') q("DELETE FROM meta WHERE key = 'mail_paused_until'");
@@ -372,6 +377,7 @@ function fin_payments_health(): array
 {
     $p = pay_provider();
     if ($p === 'none') return ['ok' => false, 'detail' => 'Choose Yoco or PayFast and enter its keys.'];
+    if ($p === 'sandbox') return ['ok' => true, 'detail' => 'The sandbox is ready. Buyers see a practice payment page and choose the outcome. No money moves and every ticket is marked TEST, which the gate refuses.'];
     if ($p === 'payfast') {
         if (!pay_ready()) return ['ok' => false, 'detail' => 'Enter the PayFast merchant ID and key.'];
         try { $r = http_request('GET', payfast_host() . '/eng/process', [], null, 10); } catch (Throwable $e) { return ['ok' => false, 'detail' => $e->getMessage()]; }
@@ -386,18 +392,31 @@ function fin_payments_health(): array
     if ((string) cfg('payments.yocoWebhookSecret', '') === '') return ['ok' => false, 'detail' => 'Key accepted, but the notification address is not registered yet. Save the settings again.'];
     return ['ok' => true, 'detail' => 'Yoco accepted the key and payment notifications are set up (' . pay_mode() . ').'];
 }
-// Test mode in one click: PayFast's shared sandbox account (published by
-// PayFast for testing; no real money moves). Needs the admin's password.
+// Test mode in one click. "ticketroom": TicketRoom's own sandbox, works
+// anywhere with no provider account. "payfast": PayFast's shared sandbox
+// account (published by PayFast for testing). Needs the admin's password.
 const PAYFAST_SANDBOX = ['payfastMerchantId' => '10000100', 'payfastMerchantKey' => '46f0cd694581a', 'payfastPassphrase' => 'jt7NOE43FZPn'];
 route('POST', '/api/admin/integrations/payments/sandbox', function () {
     $u = adm_admin();
     limit('integsave', 20, 3600, $u['id']);
+    $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'kind' => R::oneOf(['ticketroom', 'payfast'], ['optional' => true])]);
+    if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
+    if (pay_provider() !== 'none' && pay_mode() === 'live') throw conflict('Live payments are switched on. Switch Mode to Test first if you really want a test setup.', 'live_mode');
+    $kind = $b['kind'] ?? 'ticketroom';
+    $values = $kind === 'payfast' ? ['provider' => 'payfast', 'mode' => 'test'] + PAYFAST_SANDBOX : ['provider' => 'sandbox', 'mode' => 'test'];
+    $changed = tx(fn() => integration_save('payments', $values, [], $u['id']));
+    audit('integration.updated', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'payments', 'ip' => client_ip(), 'details' => ['fields' => $changed, 'sandbox' => $kind]]);
+    return ['ok' => true, 'integration' => fin_integration('payments'), 'message' => $kind === 'payfast'
+        ? 'Test payments are ready: PayFast test mode with PayFast\'s shared test account. Buy a ticket to try it; no real money moves.'
+        : 'The TicketRoom sandbox is on. Buy a ticket to try it: you choose whether the practice payment goes through. No real money moves.'];
+});
+// Removes every test order: tickets revoked, seats freed, test ledger kept for the record.
+route('POST', '/api/admin/payments/clear-test', function () {
+    $u = adm_admin();
     $b = check(body(), ['currentPassword' => R::str(['max' => 200])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
-    if (pay_provider() !== 'none' && pay_mode() === 'live') throw conflict('Live payments are switched on. Switch Mode to Test first if you really want the test account.', 'live_mode');
-    $changed = tx(fn() => integration_save('payments', ['provider' => 'payfast', 'mode' => 'test'] + PAYFAST_SANDBOX, [], $u['id']));
-    audit('integration.updated', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'payments', 'ip' => client_ip(), 'details' => ['fields' => $changed, 'sandbox' => true]]);
-    return ['ok' => true, 'message' => 'Test payments are ready: PayFast test mode with PayFast\'s shared test account. Buy a ticket to try it; no real money moves.'];
+    $n = clear_test_orders($u);
+    return ['ok' => true, 'cleared' => $n, 'integration' => fin_integration('payments')];
 });
 // Sends a test email or SMS straight away.
 route('POST', '/api/admin/integrations/:key/test', function ($a) {

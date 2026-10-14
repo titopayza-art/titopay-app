@@ -251,7 +251,7 @@ function fulfil_order(string $orderId): array
         for ($i = 0; $i < $it['quantity']; $i++) {
             insert('tickets', ['id' => uuid(), 'code' => random_code(10), 'qr_version' => 1, 'order_id' => $orderId, 'order_item_id' => $it['id'], 'event_id' => $order['event_id'],
                 'ticket_type_id' => $it['ticket_type_id'], 'owner_user_id' => $order['user_id'], 'holder_name' => $order['buyer_name'], 'price_cents' => $it['unit_price_cents'],
-                'fee_cents' => $it['unit_fee_cents'], 'status' => 'valid', 'created_at' => $now, 'updated_at' => $now]);
+                'fee_cents' => $it['unit_fee_cents'], 'status' => 'valid', 'test' => (int) ($order['test'] ?? 0), 'created_at' => $now, 'updated_at' => $now]);
             $n++;
         }
     }
@@ -374,7 +374,7 @@ const PASS_AFTER_H = 24;
 
 function tickets_for_user(string $userId): array
 {
-    $list = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents,
+    $list = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test,
                          tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
                          e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, o.reference AS order_reference
                     FROM tickets t JOIN events e ON e.id = t.event_id JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
@@ -468,6 +468,8 @@ function admit(array $staff, array $b): array
         if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) { $log('invalid', $t['id']); return ['outcome' => 'invalid', 'message' => 'This QR code was replaced (ticket transferred or reissued). Ask for the current ticket.']; }
         if ($t['event_id'] !== $eventId) { $log('wrong_event', $t['id']); return ['outcome' => 'wrong_event', 'message' => 'This ticket is for a different event.']; }
         if (in_array($t['status'], ['revoked', 'refunded'], true)) { $log($t['status'], $t['id']); return ['outcome' => $t['status'], 'message' => "This ticket was {$t['status']}."]; }
+        // Bought in test mode (sandbox): never valid for entry.
+        if ((int) $t['test'] === 1) { $log('invalid', $t['id']); return ['outcome' => 'test_ticket', 'message' => 'Test ticket, bought while payments were in test mode. Not valid for entry.', 'holderName' => $t['holder_name']]; }
         $tt = row('SELECT name, kind, admits FROM ticket_types WHERE id = ?', [$t['ticket_type_id']]);
         $type = gate_label($tt);
         // Offline scans synced later keep the time the fan actually walked in.
