@@ -63,7 +63,7 @@ async function organiserDashboard(organiserId) {
   const { rows } = await db.query(
     `SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.capacity,
             COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0)::int AS sold,
-            e.is_free,
+            e.is_free, (SELECT count(*) FROM ticket_types WHERE event_id = e.id)::int AS ticket_types,
             COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN ${PAID}),0)::bigint AS revenue_cents,
             COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN ${PAID}),0)::bigint AS organiser_fee_cents
        FROM events e WHERE e.organiser_id = $1 ORDER BY e.starts_at DESC`, [organiserId]);

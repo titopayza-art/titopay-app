@@ -195,9 +195,17 @@ async function signIn(p, email, password) {
     await dlg.getByText("I accept the").click();
     await dlg.getByRole("button", { name: "Create account" }).click();
     await dlg.getByRole("heading", { name: "Check your inbox" }).waitFor();
-    await confirmEmail(f, "sipho@example.co.za");
-    await f.getByText(/2 tickets you bought as a guest are now in your account/).waitFor();
-    await f.getByRole("button", { name: "Go to my tickets" }).click();
+    // The email has booked before, so it gets a choose-your-password link (nobody else can claim the tickets).
+    const fin = lastMail("sipho@example.co.za");
+    assert.match(fin.subject, /Finish creating/);
+    const rl = fin.body.match(/\/account#\/reset\/(\S+)/);
+    assert.ok(rl, "finish-account link");
+    await f.goto(`${BASE}/account#/reset/${rl[1]}`);
+    await f.getByRole("heading", { name: "Choose your password" }).waitFor();
+    await f.getByLabel("New password", { exact: true }).fill("fan-password-123");
+    await f.getByLabel("Confirm new password").fill("fan-password-123");
+    await f.getByRole("button", { name: "Save password" }).click();
+    await f.waitForURL(/\/account#\/tickets/);
     await f.locator(".portal-bar.pb-customer").getByText("Customer portal").waitFor();
     await f.locator(".t-qr img").first().waitFor();
     const qrOk = await f.locator(".t-qr img").first().evaluate((img) => img.complete && img.naturalWidth > 0);

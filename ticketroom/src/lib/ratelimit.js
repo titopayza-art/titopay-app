@@ -28,5 +28,18 @@ function limit(bucket, max, windowMs, keyFn = (req) => req.ip) {
   };
 }
 
+// The same limit, applied inside a handler (when the key depends on the request body or the outcome).
+function enforce(bucket, max, windowMs, key) {
+  if (process.env.RATE_LIMIT_DISABLED === "true") return;
+  if (!hit(`${bucket}:${key}`, max, windowMs)) throw tooMany();
+}
+
+// Has this counter reached its limit? Looks without counting.
+function reached(key, limit) {
+  const w = windows.get(key);
+  return !!w && w.reset >= Date.now() && w.count >= limit;
+}
+const clear = (key) => windows.delete(key);
+
 const reset = () => windows.clear();
-module.exports = { limit, hit, reset };
+module.exports = { limit, hit, enforce, reset, reached, clear };

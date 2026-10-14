@@ -287,6 +287,9 @@ function tpl(string $name, array $a): array
         case 'verifyEmail':
             return ['subject' => 'Please confirm your email address',
                 'body' => $hi . "Thanks for signing up to TicketRoom. Please confirm your email address so your tickets and updates reach you.\n\nConfirm my email: {$a['url']}\n\nIf you didn't create a TicketRoom account, you can ignore this email." . FOOTER];
+        case 'finishAccount':
+            return ['subject' => 'Finish creating your TicketRoom account',
+                'body' => $hi . "Someone, hopefully you, asked to create a TicketRoom account with this email. You've booked with us before, so your tickets are already waiting: choose a password to open them. This link works for 24 hours.\n\nChoose my password: {$a['url']}\n\nIf it wasn't you, ignore this email. Nothing changes until a password is chosen from this link." . FOOTER];
         case 'passwordReset':
             return ['subject' => 'Reset your TicketRoom password',
                 'body' => $hi . "Someone, hopefully you, asked to reset the password on your TicketRoom account. This link works for one hour.\n\nChoose a new password: {$a['url']}\n\nIf it wasn't you, ignore this email and your password will stay the same." . FOOTER];

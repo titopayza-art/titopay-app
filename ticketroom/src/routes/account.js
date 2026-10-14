@@ -129,6 +129,14 @@ router.get("/refunds", wrap(async (req, res) => {
   res.json({ refunds: rows });
 }));
 
+// One of my questions and the replies emailed to me.
+router.get("/support/:ref", wrap(async (req, res) => {
+  const { rows: [c] } = await db.query("SELECT id, reference, subject, body, status, created_at FROM support_cases WHERE reference = $1 AND user_id = $2", [String(req.params.ref).slice(0, 40), req.user.id]);
+  if (!c) throw require("../lib/errors").notFound("Case not found.");
+  const msgs = await require("../modules/support/service").messages(c.id, true);
+  res.json({ case: c, messages: msgs.map((m) => ({ from: m.author_kind === "organiser" ? "organiser" : "ticketroom", body: m.body, created_at: m.created_at })) });
+}));
+
 router.get("/support", wrap(async (req, res) => {
   const { rows } = await db.query("SELECT reference, category, subject, status, resolution, created_at, updated_at FROM support_cases WHERE user_id = $1 ORDER BY created_at DESC", [req.user.id]);
   res.json({ cases: rows });

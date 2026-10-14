@@ -242,7 +242,8 @@ function payment_webhook(string $provider, string $raw, array $headers): array
     try {
         $evt = $provider === 'yoco' ? yoco_verify($raw, $headers) : payfast_verify($raw);
     } catch (Throwable $e) {
-        q('INSERT INTO webhook_events (provider, event_id, status, error, received_at) VALUES (?,?,?,?,?)', [$provider, 'rejected:' . bin2hex(random_bytes(8)), 'rejected', substr($e->getMessage(), 0, 200), now_iso()]);
+        // Kept for finance to see, but not without limit: junk can't fill the database.
+        if (limit_ok('webhookreject', 100, 3600)) q('INSERT INTO webhook_events (provider, event_id, status, error, received_at) VALUES (?,?,?,?,?)', [$provider, 'rejected:' . bin2hex(random_bytes(8)), 'rejected', substr($e->getMessage(), 0, 200), now_iso()]);
         throw $e instanceof AppError ? $e : bad('Invalid notification.');
     }
     $existing = row('SELECT * FROM webhook_events WHERE provider = ? AND event_id = ?', [$provider, $evt['id']]);
@@ -404,9 +405,10 @@ function ledger_check(): array
     foreach (rows("SELECT DISTINCT provider FROM payments") as $p) {
         $expected = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE provider = ? AND status IN ('confirmed','partially_refunded','refunded')", [$p['provider']])
             - (int) val("SELECT COALESCE(SUM(r.amount_cents + r.fee_refund_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = ? AND r.status = 'completed'", [$p['provider']]);
-        $clearing[] = ['account' => "provider:{$p['provider']}", 'ledgerCents' => ledger_balance("provider:{$p['provider']}"), 'expectedCents' => $expected];
+        $ledger = ledger_balance("provider:{$p['provider']}");
+        $clearing[] = ['account' => "provider:{$p['provider']}", 'ledgerCents' => $ledger, 'expectedCents' => $expected, 'ok' => $ledger === $expected];
     }
-    $ok = !$bad && !array_filter($clearing, fn($c) => $c['ledgerCents'] !== $c['expectedCents']);
+    $ok = !$bad && !array_filter($clearing, fn($c) => !$c['ok']);
     return ['entries' => (int) val('SELECT count(*) FROM ledger_entries'), 'sumCents' => (int) val('SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries'),
         'balanced' => $ok, 'unbalancedJournals' => array_column($bad, 'journal_id'), 'clearing' => $clearing];
 }

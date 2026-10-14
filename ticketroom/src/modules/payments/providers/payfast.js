@@ -40,9 +40,11 @@ function formFields(payment, ctx, buyer) {
 }
 
 // The redirect goes to TicketRoom's own page, which renders the signed form.
+// The short-lived key lets a guest (no session) open it too.
 async function createCheckout({ payment }) {
   if (!c().merchantId || !c().merchantKey) throw new AppError(502, "provider_not_configured", "PayFast is not configured.");
-  return { providerReference: payment.id, redirectUrl: `${config.publicBaseUrl}/pay/payfast/${payment.id}` };
+  const key = require("../../../lib/crypto").signLink({ p: payment.id }, 2 * 3600);
+  return { providerReference: payment.id, redirectUrl: `${config.publicBaseUrl}/pay/payfast/${payment.id}?k=${encodeURIComponent(key)}` };
 }
 
 const fetchStatus = async () => ({ status: "unknown" });

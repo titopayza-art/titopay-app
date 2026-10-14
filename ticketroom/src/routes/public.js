@@ -2,13 +2,15 @@
 const express = require("express");
 const db = require("../lib/db");
 const { r, check } = require("../lib/validate");
-const { limit } = require("../lib/ratelimit");
+const { limit, enforce } = require("../lib/ratelimit");
 const { verifyLink, reference } = require("../lib/crypto");
 const { notFound, bad } = require("../lib/errors");
 const { wrap, requireAuth } = require("../middleware/http");
 const orders = require("../modules/orders/service");
 const marketing = require("../modules/marketing/service");
 const passes = require("../modules/tickets/passes");
+const tickets = require("../modules/tickets/service");
+const { emailKey } = require("../lib/accounts");
 const { AGE_GROUPS } = require("../modules/tickets/kinds");
 const { sha256 } = require("../lib/crypto");
 
@@ -82,51 +84,85 @@ router.post("/checkout/quote", limit("quote", 120, 60e3), wrap(async (req, res) 
   res.json({ quote: orders.publicQuote(await orders.quote(db, rows[0], b.items, b.promoCode)) });
 }));
 
-router.post("/orders", requireAuth, limit("order", 20, 60e3, (q) => q.user.id), wrap(async (req, res) => {
+const guestRule = r.object({ fullName: r.str({ min: 2, max: 120 }), email: r.email(), phone: r.phone({ optional: true }) }, { optional: true });
+const paymentView = (p) => (p ? { status: p.status, method: p.method, redirectUrl: p.redirectUrl || null, awaitingApproval: !!p.awaitingApproval } : null);
+const keyOf = (req) => (typeof req.query.k === "string" ? req.query.k.slice(0, 600) : null);
+
+// Booking. Signed in, or as a guest with a name and email: no account needed.
+router.post("/orders", wrap(async (req, res) => {
   const b = check(req.body, {
     eventSlug: r.str({ max: 120 }), items: itemsRule, promoCode: r.str({ optional: true, max: 40 }),
     ref: r.str({ optional: true, max: 40, pattern: /^[A-Za-z0-9_-]+$/ }), buyerPhone: r.phone({ optional: true }),
     marketingOptIn: r.object({ email: r.bool(), sms: r.bool() }, { optional: true }), idempotencyKey: r.idemKey(),
     paymentMethod: r.oneOf(["card", "titopay_wallet"], { optional: true, fallback: "card" }),
+    guest: guestRule,
   });
-  const result = await orders.createOrder(req.user, b);
+  let buyer = req.user;
+  if (buyer) enforce("order", 20, 60e3, buyer.id);
+  else {
+    if (!b.guest) throw bad("Tell us your name and email so we can send your tickets.", { guest: "Required." });
+    // Many phones share one address (mobile networks, venue Wi-Fi): a roomy
+    // limit per address, a tight one per email.
+    enforce("guestorder", 120, 60 * 60e3, req.ip);
+    enforce("guestordermail", 15, 60 * 60e3, emailKey(b.guest.email));
+    buyer = await db.withTx((c) => orders.guestBuyer(c, b.guest, req.ip));
+  }
+  const result = await orders.createOrder(buyer, b);
   res.status(result.replay ? 200 : 201).json({
     order: { reference: result.order.reference, status: result.order.status, totalCents: result.order.total_cents, expiresAt: result.order.expires_at },
-    payment: result.payment ? { status: result.payment.status, method: result.payment.method, redirectUrl: result.payment.redirectUrl || null, awaitingApproval: !!result.payment.awaitingApproval } : null,
+    accessKey: req.user ? null : orders.orderKey(result.order.id),
+    payment: paymentView(result.payment),
   });
 }));
 
-router.get("/orders/:ref", requireAuth, wrap(async (req, res) => {
-  const { order, items, payment } = await orders.getForUser(req.user, req.params.ref);
-  const { rows: tks } = await db.query("SELECT id, code, status FROM tickets WHERE order_id = $1 AND owner_user_id = $2", [order.id, req.user.id]);
+// An order and its tickets, for the buyer (signed in, or with the private link).
+router.get("/orders/:ref", limit("orderview", 120, 60e3), wrap(async (req, res) => {
+  const key = keyOf(req);
+  const { order, items, payment } = await orders.getForUser(req.user, req.params.ref, key);
+  const { rows: [owner] } = await db.query("SELECT email, guest FROM users WHERE id = $1", [order.user_id]);
+  const { rows: tks } = await db.query(
+    `SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
+      WHERE t.order_id = $1 AND t.owner_user_id = $2 ORDER BY t.created_at`, [order.id, order.user_id]);
+  const k = orders.keyOpens(key, order.id) ? key : orders.orderKey(order.id);
+  for (const t of tks) t.qrUrl = t.status === "valid" ? `/api/public/orders/${order.reference}/tickets/${t.id}/qr.svg?k=${encodeURIComponent(k)}` : null;
+  res.setHeader("Cache-Control", "no-store");
   res.json({
     order: {
       reference: order.reference, status: order.status, subtotalCents: order.subtotal_cents, discountCents: order.discount_cents,
       feeCents: order.fee_cents, totalCents: order.total_cents, refundedCents: order.refunded_cents, expiresAt: order.expires_at, paidAt: order.paid_at,
-      event: { title: order.title, slug: order.slug, startsAt: order.starts_at, venue: order.venue_name, city: order.city },
+      buyerName: order.buyer_name,
+      event: { title: order.title, slug: order.slug, startsAt: order.starts_at, endsAt: order.ends_at, venue: order.venue_name, city: order.city },
     },
+    guest: !!owner?.guest, email: owner?.guest ? owner.email : null,
     items, tickets: tks, payment: payment ? { status: payment.status, method: payment.method } : null,
   });
 }));
 
+router.get("/orders/:ref/tickets/:id/qr.svg", limit("orderqr", 240, 60e3), wrap(async (req, res) => {
+  const order = await orders.orderAccess(req.user, req.params.ref, keyOf(req));
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) throw notFound("Ticket not found.");
+  const { rows: [t] } = await db.query("SELECT * FROM tickets WHERE id = $1 AND order_id = $2 AND owner_user_id = $3 AND status = 'valid'", [req.params.id, order.id, order.user_id]);
+  if (!t) throw notFound("Ticket not found.");
+  res.setHeader("Cache-Control", "no-store");
+  res.type("image/svg+xml").send(await tickets.qrSvg(t));
+}));
+
 // Re-open the hosted checkout for an unpaid order (e.g. the buyer closed the tab).
-router.post("/orders/:ref/pay", requireAuth, limit("pay", 10, 60e3, (q) => q.user.id), wrap(async (req, res) => {
-  const { order } = await orders.getForUser(req.user, req.params.ref);
+router.post("/orders/:ref/pay", limit("pay", 10, 60e3, (q) => q.user?.id || q.ip), wrap(async (req, res) => {
+  const order = await orders.orderAccess(req.user, req.params.ref, keyOf(req));
   if (order.status !== "pending_payment" || new Date(order.expires_at) < new Date()) throw bad("This order can no longer be paid. Start a new order.");
   const payments = require("../modules/payments/service");
-  const config = require("../config");
-  const { rows } = await db.query("UPDATE payments SET status = 'cancelled', updated_at = now() WHERE order_id = $1 AND status IN ('initiated') RETURNING id", [order.id]);
-  void rows;
+  await db.query("UPDATE payments SET status = 'cancelled', updated_at = now() WHERE order_id = $1 AND status IN ('initiated')", [order.id]);
   const prev = await db.query("SELECT method FROM payments WHERE order_id = $1 ORDER BY created_at DESC LIMIT 1", [order.id]);
   const method = prev.rows[0]?.method || "card";
   const { providerForMethod } = require("../modules/payments/providers");
   const { rows: p } = await db.query("INSERT INTO payments (purpose, order_id, user_id, provider, method, amount_cents) VALUES ('order',$1,$2,$3,$4,$5) RETURNING *",
-    [order.id, req.user.id, providerForMethod(method), method, order.total_cents]);
-  const started = await payments.start(p[0], { description: `${order.title} — ${order.reference}`, returnPath: `/orders/${order.reference}` });
+    [order.id, order.user_id, providerForMethod(method), method, order.total_cents]);
+  const started = await payments.start(p[0], { description: `${order.title} — ${order.reference}`, returnPath: orders.orderPath(order) });
   res.json({ payment: { status: started.status, method, redirectUrl: started.redirectUrl, awaitingApproval: !!started.awaitingApproval } });
 }));
 
-router.post("/orders/:ref/cancel", requireAuth, wrap(async (req, res) => res.json(await orders.cancelPending(req.user, req.params.ref))));
+router.post("/orders/:ref/cancel", wrap(async (req, res) => res.json(await orders.cancelPending(req.user, req.params.ref, keyOf(req)))));
 
 // One-click unsubscribe from a signed link. POST so link scanners cannot opt people out.
 router.post("/unsubscribe", limit("unsub", 30, 60e3), wrap(async (req, res) => {

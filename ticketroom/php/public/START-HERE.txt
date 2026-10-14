@@ -30,6 +30,15 @@ THE THREE PORTALS
 
 IN THE ADMIN PORTAL (ticketroom.co.za/admin)
 -----------------------------------------
+  Integrations      Set up email, card payments (Yoco or PayFast) and SMS
+                    yourself. Keys are stored encrypted and never shown
+                    again; saving asks for your password.
+  Support           Every question is a conversation: reply to the
+                    customer by email, or send it to the event's organiser
+                    (they reply from their portal). "Take it back" any time.
+  Refunds, Payouts, Payments, Reconciliation, Ledger
+                    Every rand in and out. Refunds and payouts need finance
+                    approval; the ledger must always balance.
   Staff & roles     Add people to the team and choose what each may do:
                     Admin, Finance or Support. New people get an email to
                     set their password.
@@ -52,6 +61,16 @@ They choose which age groups an event is for, and visitors can filter by
 age group. Crew, artists, media, vendors and guests get gate passes from
 the event's Gate passes tab: each has its own QR code and private link,
 can allow re-entry or one entry, and can be cancelled or replaced.
+
+Customers can buy without an account: they give a name and email, and
+their tickets arrive by email with a private link. If they create an
+account later with the same email (and confirm it), the tickets are already
+in it. Every account confirms its email before it can sign in, and one
+email or mobile number can only have one account.
+
+New organisers sign up in one step from /sell (their account and their
+organisation together), then a checklist on their dashboard walks them to
+their first live event.
 
 Customers can like events (saved under Saved events), share them on
 WhatsApp, Facebook, X or email, add them to their calendar, and save each

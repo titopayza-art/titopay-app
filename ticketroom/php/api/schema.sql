@@ -21,8 +21,7 @@ CREATE TABLE users (
   updated_at        TEXT NOT NULL,
   deleted_at        TEXT,
   email_key         TEXT,
-  guest             INTEGER NOT NULL DEFAULT 0,
-  pending_password_hash TEXT
+  guest             INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX users_email_uq ON users (lower(email));
 CREATE INDEX users_email_key_idx ON users (email_key);

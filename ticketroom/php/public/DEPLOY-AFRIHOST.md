@@ -61,9 +61,12 @@ a different user). Right-click → **Change Permissions**.
 cPanel → **Email Accounts** → **Create** → `hello@ticketroom.co.za`. Give it a
 real password and keep it.
 
-Then **File Manager** → `ticketroom-data/config.php` (the folder next to
-`public_html`, not inside it) → **Edit**, and put that
-password between the quotes on the `smtpPass` line. Save.
+You'll type that password into the admin portal in step 8 (Admin portal →
+**Integrations** → Email). It is stored encrypted and never shown again.
+
+(Prefer files? **File Manager** → `ticketroom-data/config.php` (the folder
+next to `public_html`, not inside it) → **Edit**, and put the password
+between the quotes on the `smtpPass` line. The admin portal wins if both are set.)
 
 (`ticketroom-data` and its `config.php` appear the first time the site is
 opened. If your host does not allow that folder, they are in `public_html/data`
@@ -118,12 +121,57 @@ lists the other portals a person may open, by these names. The admin portal
 is never linked anywhere on the site: staff open it by typing
 ticketroom.co.za/admin, and to anyone else that address shows "Page not found".
 
-## 8. Prove that email works
+## 8. Set up email and prove it works
 
-Admin portal → **Email templates** → send yourself a test, or create a free test
-event and book a ticket for yourself. The ticket email should arrive within
-a minute or two. If it does not, run the deploy check again: the Email
-section says what is wrong.
+Admin portal → **Integrations** → **Email**: choose "SMTP mailbox", check
+the server (`mail.ticketroom.co.za`, port `465`) and username
+(`hello@ticketroom.co.za`), type the mailbox password, then your own admin
+password, and **Save**. Press **Send me a test email**: it should arrive
+within a minute. If not, **Check connection** says what is wrong.
+
+## 9. Switch on card payments
+
+Free events work without this. For paid tickets, TicketRoom uses your own
+Yoco or PayFast merchant account; the money goes to that account, and
+TicketRoom pays organisers from it.
+
+**Yoco (recommended: refunds happen with one click)**
+1. Sign in at portal.yoco.com → **Sales** → **Payment gateway** → **API keys**.
+   Copy the **test secret key** (starts with `sk_test_`).
+2. Admin portal → **Integrations** → **Card payments**: provider **Yoco**,
+   mode **Test**, paste the key, type your admin password, **Save**.
+   TicketRoom registers its notification address with Yoco for you.
+3. **Check connection**. Then make a R10 test event and buy a ticket with
+   Yoco's test card (4111 1111 1111 1111, any future date, any CVV).
+4. When that works: change the mode to **Live**, paste the **live** key
+   (`sk_live_`), **Save**, and **Check connection** again.
+
+**PayFast (cards, instant EFT, SnapScan, Zapper)**
+1. PayFast dashboard → **Settings** → **Developer settings**: note the
+   merchant ID and merchant key, and set a **passphrase**.
+2. Admin portal → **Integrations** → **Card payments**: provider **PayFast**,
+   mode **Test** for the sandbox or **Live**, enter the three values, **Save**.
+3. PayFast refunds are made in the PayFast dashboard; then record the
+   reference in Admin portal → **Refunds** ("Mark paid manually").
+
+Keys are stored encrypted and never shown again; the page only says
+whether each one is saved. Changing them needs your admin password and is
+written to the audit log.
+
+**How the money moves**
+- A ticket is issued only when Yoco or PayFast confirms the payment to
+  TicketRoom directly (a signed notification). Coming back to the website
+  proves nothing on its own.
+- Every payment, refund and payout is written to the **Ledger**, which must
+  always balance. **Reconciliation** compares TicketRoom with the
+  provider's report (export it as CSV from the provider's portal).
+- **Refunds**: customer care or an organiser asks; finance approves (a
+  second person, unless only one person has the finance role). Yoco
+  refunds go straight back to the card.
+- **Payouts**: an organiser's money becomes available a few days after
+  their event (3 by default). They ask from their portal; finance approves,
+  makes the EFT from TicketRoom's bank, and records the bank reference.
+  The organiser is emailed at each step.
 
 ---
 
@@ -136,6 +184,7 @@ section says what is wrong.
 - [ ] The padlock shows, and http:// goes to https://
 - [ ] The temporary admin password has been changed
 - [ ] A test ticket email arrived
+- [ ] Card payments: a test purchase and a test refund worked, then switched to Live
 - [ ] cPanel → **Backup** includes `ticketroom-data` (keep a copy off the server)
 
 ## Big matches (up to 100,000 fans)

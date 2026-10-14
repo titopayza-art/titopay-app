@@ -163,25 +163,26 @@ function nav(counts = {}) {
 async function overview() {
   const d = await get("/api/admin/dashboard");
   nav({ orgs: d.organisers.pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open });
-  const alert = (n, text, href, kind = "warn") => n ? html`<a class="callout ${kind} row between" href="${href}"><span><strong>${n}</strong> ${text}</span><span>→</span></a>` : "";
+  // text is [one, many]: "1 refund awaiting…", "3 refunds awaiting…".
+  const alert = (n, text, href, kind = "warn") => n ? html`<a class="callout ${kind} row between" href="${href}"><span><strong>${n}</strong> ${n === 1 ? text[0] : text[1]}</span><span>→</span></a>` : "";
   render(main, html`${head("Overview", `Signed in as ${[...R].join(", ")}.`)}
     <div class="kpis"><div class="kpi"><div class="k">GMV (24h)</div><div class="v">${money(d.sales.gmv24)}</div><div class="s">${d.sales.orders24} orders</div></div>
       <div class="kpi"><div class="k">GMV (all time)</div><div class="v">${money(d.sales.gmv_all)}</div></div>
       <div class="kpi"><div class="k">Users</div><div class="v">${d.users.total}</div><div class="s">+${d.users.new7} this week</div></div>
       <div class="kpi"><div class="k">Live events</div><div class="v">${d.events.live}</div><div class="s">${d.organisers.approved} approved organisers</div></div></div>
     <section class="card mt"><h2>Needs attention</h2><div class="stack">
-      ${alert(d.organisers.pending, "organisers awaiting approval", "#/organisers")}
-      ${alert(d.events.pending, "events awaiting approval", "#/events")}
-      ${alert(d.events.cancel_requests, "event cancellation requests", "#/events")}
-      ${alert(d.ops.refunds_pending, "refunds awaiting finance approval", "#/refunds")}
-      ${alert(d.ops.refunds_failed, "refunds failed at the provider", "#/refunds", "bad")}
-      ${alert(d.ops.payouts_open, "payouts open", "#/payouts")}
-      ${alert(d.ops.unfulfilled, "paid orders without tickets (refund raised)", "#/lookup", "bad")}
-      ${alert(d.ops.webhook_problems, "webhook failures / rejections in 24h", "#/payments", "bad")}
-      ${alert(d.ops.stale_payments, "payments pending for more than 30 minutes. Check them with the provider", "#/payments")}
-      ${alert(d.ops.recon_exceptions, "unresolved reconciliation exceptions", "#/reconciliation", "bad")}
-      ${alert(d.ops.messages_failed, "messages failed to send", "#/outbox", "bad")}
-      ${alert(d.ops.support_open, "open support cases", "#/support")}
+      ${alert(d.organisers.pending, ["organiser awaiting approval", "organisers awaiting approval"], "#/organisers")}
+      ${alert(d.events.pending, ["event awaiting approval", "events awaiting approval"], "#/events")}
+      ${alert(d.events.cancel_requests, ["event cancellation request", "event cancellation requests"], "#/events")}
+      ${alert(d.ops.refunds_pending, ["refund awaiting finance approval", "refunds awaiting finance approval"], "#/refunds")}
+      ${alert(d.ops.refunds_failed, ["refund failed at the provider", "refunds failed at the provider"], "#/refunds", "bad")}
+      ${alert(d.ops.payouts_open, ["payout open", "payouts open"], "#/payouts")}
+      ${alert(d.ops.unfulfilled, ["paid order without tickets (refund raised)", "paid orders without tickets (refund raised)"], "#/lookup", "bad")}
+      ${alert(d.ops.webhook_problems, ["payment notification failed or rejected in 24h", "payment notifications failed or rejected in 24h"], "#/payments", "bad")}
+      ${alert(d.ops.stale_payments, ["payment pending for more than 30 minutes. Check it with the provider", "payments pending for more than 30 minutes. Check them with the provider"], "#/payments")}
+      ${alert(d.ops.recon_exceptions, ["unresolved reconciliation exception", "unresolved reconciliation exceptions"], "#/reconciliation", "bad")}
+      ${alert(d.ops.messages_failed, ["message failed to send", "messages failed to send"], "#/outbox", "bad")}
+      ${alert(d.ops.support_open, ["open support case", "open support cases"], "#/support")}
       ${Object.values(d.ops).every((x) => !x) && !d.organisers.pending && !d.events.pending ? html`<p class="callout good mb-0">All clear.</p>` : ""}</div></section>
     <section class="card mt"><h2>Ledger integrity</h2><p class="${d.ledger.balanced ? "callout good" : "callout bad"}">${d.ledger.balanced ? `Balanced: ${d.ledger.entries} entries sum to R0.00.` : `UNBALANCED. Investigate journals ${d.ledger.unbalancedJournals.join(", ")}`}</p>
       ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td class="mono">${c.account}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}</section>`);

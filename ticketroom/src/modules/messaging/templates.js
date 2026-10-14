@@ -21,12 +21,16 @@ const place = (e) => [e.venue_name, e.address, e.city].filter(Boolean).join(", "
 
 module.exports = {
   // ---------------------------------------------------------------- attendees
-  orderConfirmed: ({ order, event, ticketCount }) => {
+  // guestLink: the private order link for someone who bought without an account.
+  orderConfirmed: ({ order, event, ticketCount, guestLink }) => {
     const free = Number(order.total_cents) === 0;
     const isAre = ticketCount === 1 ? "is" : "are";
+    const open = guestLink
+      ? `View your tickets: ${guestLink}\n\nKeep this email: the link opens your tickets on any phone. Want them all in one place? Create a free account with this email address at ${base()}/account and confirm it. Your tickets will be waiting.`
+      : `Open my tickets: ${base()}/account#/tickets`;
     return {
       subject: free ? `Your free ${ticketCount === 1 ? "ticket" : "tickets"} for ${event.title}` : `Your tickets for ${event.title} (${order.reference})`,
-      body: `Hi ${first(order.buyer_name)},\n\n${free ? `You're booked for ${event.title}. Your ${plural(ticketCount, "free ticket")} ${isAre} waiting in your TicketRoom account.` : `Thanks for your order. Your ${plural(ticketCount, "ticket")} for ${event.title} ${isAre} ready.`}\n\n${place(event)}\n${when(event.starts_at)}\nOrder ${order.reference}${free ? "" : ` · ${formatZar(order.total_cents)}`}\n\nOpen my tickets: ${base()}/account#/tickets\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in.${free ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : ""}${FOOTER}`,
+      body: `Hi ${first(order.buyer_name)},\n\n${free ? `You're booked for ${event.title}. Your ${plural(ticketCount, "free ticket")} ${isAre} waiting in your TicketRoom account.` : `Thanks for your order. Your ${plural(ticketCount, "ticket")} for ${event.title} ${isAre} ready.`}\n\n${place(event)}\n${when(event.starts_at)}\nOrder ${order.reference}${free ? "" : ` · ${formatZar(order.total_cents)}`}\n\n${open}\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in.${free && !guestLink ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : ""}${FOOTER}`,
     };
   },
   eventReminder: ({ name, event, ticketCount, soon }) => {
@@ -124,6 +128,24 @@ module.exports = {
   gatePass: ({ name, organiser, role, event, url, reentry }) => ({
     subject: `Your gate pass for ${event.title}`,
     body: `Hi ${first(name)},\n\n${organiser} has given you a ${role} pass for ${event.title} (${shortWhen(event.starts_at)}, ${[event.venue_name, event.city].filter(Boolean).join(", ")}).\n\nOpen your pass: ${url}\n\nShow the QR code at the gate. ${reentry ? "It lets you in and out as often as you need." : "It works for one entry."} Keep the link to yourself: anyone with it can use your pass.${FOOTER}`,
+  }),
+  // ---------------------------------------------------------------- accounts
+  finishAccount: ({ name, url }) => ({
+    subject: "Finish creating your TicketRoom account",
+    body: `Hi ${first(name)},\n\nSomeone, hopefully you, asked to create a TicketRoom account with this email. You've booked with us before, so your tickets are already waiting: choose a password to open them. This link works for 24 hours.\n\nChoose my password: ${url}\n\nIf it wasn't you, ignore this email. Nothing changes until a password is chosen from this link.${FOOTER}`,
+  }),
+  // ---------------------------------------------------------------- customer care
+  supportReply: ({ name, subject, reference, message, from }) => ({
+    subject: `Re: ${subject} (${reference})`,
+    body: `Hi ${first(name)},\n\n${message}\n\n${from || "The TicketRoom team"}\n\nTo add anything, reply to this email or write to hello@ticketroom.co.za and mention ${reference}.${FOOTER}`,
+  }),
+  queryPassedOn: ({ name, organiser, reference }) => ({
+    subject: `Your question is with ${organiser} (${reference})`,
+    body: `Hi ${first(name)},\n\nThanks for your patience. Your question is about an event run by ${organiser}, so we've passed it to them with everything you told us. They'll reply to you by email.\n\nIf you don't hear from them within two working days, reply to this email and we'll follow up.${FOOTER}`,
+  }),
+  queryForOrganiser: ({ organiser, reference, customer, event, subject, body, note }) => ({
+    subject: `Customer question for ${organiser} (${reference})`,
+    body: `Hi ${organiser},\n\nTicketRoom customer care has passed you a question from ${customer}${event ? ` about ${event}` : ""}.\n\n"${subject}"\n${body}\n${note ? `\nNote from customer care: ${note}\n` : ""}\nPlease reply within two working days: ${base()}/organisers#/queries\n\nYour reply is emailed to the customer from TicketRoom. If it isn't yours to answer, send it back to TicketRoom from the same page.${FOOTER}`,
   }),
   footer: FOOTER,
 };

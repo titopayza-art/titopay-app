@@ -85,9 +85,13 @@ function tr_write_local_config(string $dir): void
  * Your TicketRoom settings. Uploading a new version of the site never
  * touches this file. Anything here overrides the defaults in api/config.php.
  *
- * EMAIL: tickets, confirmations and password resets go out from
- * hello@ticketroom.co.za. Until a mailbox password is filled in below, the
- * hosting server's built-in mail is used, which often lands in spam.
+ * The easy way: sign in to the admin portal → Integrations, and set up
+ * email, card payments (Yoco or PayFast) and SMS there. What you save
+ * there is stored encrypted and wins over this file.
+ *
+ * EMAIL (if you prefer this file): tickets, confirmations and password
+ * resets go out from hello@ticketroom.co.za. Until a mailbox password is
+ * set, the hosting server's built-in mail is used, which often lands in spam.
  *   1. cPanel → Email Accounts: make sure hello@ticketroom.co.za exists.
  *   2. Put its password between the quotes on the smtpPass line and save.
  * For big events (thousands of tickets) use an email relay such as Amazon
@@ -196,7 +200,6 @@ const UPGRADES = [
     7 => [
         'ALTER TABLE users ADD COLUMN email_key TEXT',
         'ALTER TABLE users ADD COLUMN guest INTEGER NOT NULL DEFAULT 0',
-        'ALTER TABLE users ADD COLUMN pending_password_hash TEXT',
         'CREATE INDEX IF NOT EXISTS users_email_key_idx ON users (email_key)',
         'CREATE INDEX IF NOT EXISTS users_phone_idx ON users (phone)',
         '@emailkeys',

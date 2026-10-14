@@ -555,6 +555,16 @@ function limit(string $bucket, int $max, int $windowSeconds, ?string $key = null
     });
     if ($hit > $max) throw too_many();
 }
+// Has this counter already reached its limit? Looks without counting.
+function limit_reached(string $bucket, int $max, ?string $key = null): bool
+{
+    if (cfg('rateLimitDisabled', false)) return false;
+    return (int) val('SELECT count FROM rate_limits WHERE key = ? AND reset_at >= ?', [$bucket . ':' . ($key ?? client_ip()), time()]) >= $max;
+}
+function limit_clear(string $bucket, ?string $key = null): void
+{
+    q('DELETE FROM rate_limits WHERE key = ?', [$bucket . ':' . ($key ?? client_ip())]);
+}
 // The same counter, for things that should quietly stop rather than fail (resending an email).
 function limit_ok(string $bucket, int $max, int $windowSeconds, ?string $key = null): bool
 {

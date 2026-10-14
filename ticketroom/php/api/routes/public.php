@@ -94,7 +94,10 @@ route('POST', '/api/public/orders', function () {
     if ($u) limit('order', 20, 60, $u['id']);
     else {
         if (empty($b['guest'])) throw bad('Tell us your name and email so we can send your tickets.', ['guest' => 'Required.']);
-        limit('guestorder', 15, 3600);
+        // Many phones share one address (mobile networks, venue Wi-Fi): a roomy
+        // limit per address, a tight one per email.
+        limit('guestorder', 120, 3600);
+        limit('guestordermail', 15, 3600, email_key((string) ($b['guest']['email'] ?? '')));
         $u = tx(fn() => guest_buyer($b['guest']));
     }
     $r = create_order($u, $b);

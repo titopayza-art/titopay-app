@@ -3,13 +3,14 @@ const config = require("../config");
 const db = require("../lib/db");
 const audit = require("../lib/audit");
 const { r, check } = require("../lib/validate");
-const { hit, limit } = require("../lib/ratelimit");
+const { hit, limit, reached, clear } = require("../lib/ratelimit");
 const { randomToken, sha256, hashSecret, verifySecret, DUMMY_HASH, signLink, verifyLink } = require("../lib/crypto");
 const { AppError, conflict, bad, tooMany } = require("../lib/errors");
 const { wrap, requireAuth, setSessionCookie, clearSessionCookie } = require("../middleware/http");
 const outbox = require("../modules/messaging/outbox");
 const templates = require("../modules/messaging/templates");
 const marketing = require("../modules/marketing/service");
+const { userByEmail, phoneTaken } = require("../lib/accounts");
 
 const router = express.Router();
 const LOCK_AFTER = 30;
@@ -41,48 +42,82 @@ function sendVerification(q, user) {
   return outbox.enqueue(q, { to: user.email, userId: user.id, ...templates.verifyEmail({ name: user.full_name, url }) });
 }
 
-router.post("/register", limit("register", 10, 60 * 60e3), wrap(async (req, res) => {
+// Someone signs up with an email that has only bought as a guest. The
+// password is chosen from a link sent to that inbox, never typed into the
+// sign-up form, so nobody can pick a password for someone else's tickets.
+async function sendFinishAccount(q, user) {
+  const token = randomToken(32);
+  await q.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '24 hours')", [sha256(token), user.id]);
+  await outbox.enqueue(q, { to: user.email, userId: user.id, ...templates.finishAccount({ name: user.full_name, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+}
+
+// Sign-up. Every account confirms its email before it can sign in, and one
+// email (or mobile number) belongs to one account. Someone who bought as a
+// guest signs up with the same email: they get a link to choose a password,
+// and the guest account (with every ticket in it) becomes theirs.
+router.post("/register", limit("register", 60, 60 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, {
     fullName: r.str({ min: 2, max: 120 }), email: r.email(), phone: r.phone({ optional: true }),
     password: r.password(), marketingOptIn: r.bool(), acceptTerms: r.bool(),
   });
   if (!b.acceptTerms) throw bad("Please accept the Terms and Privacy Notice.", { acceptTerms: "Required." });
-  const user = await db.withTx(async (c) => {
-    const { rows: exists } = await c.query("SELECT 1 FROM users WHERE lower(email) = $1", [b.email]);
-    if (exists[0]) throw conflict("An account with this email already exists. Sign in instead.", "email_taken");
-    const { rows } = await c.query("INSERT INTO users (email, phone, full_name, password_hash) VALUES ($1,$2,$3,$4) RETURNING *",
-      [b.email, b.phone || null, b.fullName, hashSecret(b.password)]);
-    if (b.marketingOptIn) await marketing.setConsent(c, rows[0].id, null, "email", true, "signup");
-    await sendVerification(c, rows[0]);
-    await audit.record(c, { actor: { id: rows[0].id }, action: "user.registered", entityType: "user", entityId: rows[0].id, ip: req.ip });
-    await createSession(res, req, rows[0].id, c);
-    return rows[0];
+  await db.withTx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('signup:' || tr.email_key($1)))", [b.email]);
+    const existing = await userByEmail(c, b.email);
+    if (existing && !existing.guest) {
+      throw conflict('An account with this email already exists. Sign in, or use "Forgot password?" if you can\'t remember it.', "email_taken", { email: "Already has an account." });
+    }
+    if (await phoneTaken(c, b.phone, existing?.id)) {
+      throw conflict("This mobile number is already on another TicketRoom account. Sign in to that account, or leave the number out.", "phone_taken", { phone: "Already on another account." });
+    }
+    let u;
+    if (existing) {
+      // A guest's account: they choose the password from their inbox.
+      u = existing;
+      if (hit(`finishsend:${u.id}`, 3, 60 * 60e3)) await sendFinishAccount(c, u);
+    } else {
+      ({ rows: [u] } = await c.query("INSERT INTO users (email, phone, full_name, password_hash) VALUES ($1,$2,$3,$4) RETURNING *",
+        [b.email, b.phone || null, b.fullName, hashSecret(b.password)]));
+      await sendVerification(c, u);
+    }
+    if (b.marketingOptIn) await marketing.setConsent(c, u.id, null, "email", true, "signup");
+    await audit.record(c, { actor: { id: u.id }, action: "user.registered", entityType: "user", entityId: u.id, ip: req.ip, details: { fromGuest: !!existing } });
   });
-  res.status(201).json({ user: await profile(user.id) });
+  res.status(201).json({ needsVerification: true, email: b.email, message: `We've sent a confirmation link to ${b.email}. Open it to finish creating your account.` });
 }));
 
-router.post("/login", limit("login", 20, 15 * 60e3), wrap(async (req, res) => {
+router.post("/login", limit("login", 120, 15 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, { email: r.email(), password: r.str({ min: 1, max: 200 }) });
-  const { rows } = await db.query("SELECT * FROM users WHERE lower(email) = $1", [b.email]);
-  const u = rows[0];
+  const { rows } = await db.query("SELECT * FROM users WHERE lower(email) = $1 AND status <> 'deleted'", [b.email]);
+  const u = rows[0] || await userByEmail(db, b.email);
   const ok = verifySecret(b.password, u?.password_hash || DUMMY_HASH);
-  // The same answer for an unknown email, a wrong password and a locked
-  // account, so the sign-in box never reveals who has an account.
+  // The same answer for an unknown email, a wrong password, a guest account
+  // (no password) and a locked account, so the sign-in box never reveals who
+  // has an account.
   const generic = new AppError(401, "bad_credentials", 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
   if (!u || u.status === "deleted") throw generic;
-  // 5 tries per email from one connection every 15 minutes, and a pause for
-  // the whole account only after 30 failures from anywhere, which then clears
-  // itself: nobody can keep someone else locked out for long.
-  if (!hit(`loginpair:${b.email}|${req.ip}`, 5, 15 * 60e3)) throw tooMany();
+  // 5 wrong passwords per email from one connection every 15 minutes, and a
+  // pause for the whole account only after 30 failures from anywhere, which
+  // then clears itself: nobody can keep someone else locked out for long.
+  // Signing in correctly never counts, so several devices are fine.
+  const pair = `loginpair:${b.email}|${req.ip}`;
+  if (reached(pair, 5)) throw tooMany();
   const locked = u.locked_until && new Date(u.locked_until) > new Date();
   if (u.locked_until && !locked) await db.query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1", [u.id]);
   if (locked) throw generic;
   if (!ok) {
+    hit(pair, 5, 15 * 60e3);
     await db.query("UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= $2 THEN now() + interval '15 minutes' END WHERE id = $1", [u.id, LOCK_AFTER]);
     throw generic;
   }
   if (u.status === "suspended") throw new AppError(403, "suspended", "This account is suspended. Contact hello@ticketroom.co.za.");
+  // Right password, email not confirmed yet: send a fresh link (a few per hour at most).
+  if (!u.email_verified_at) {
+    if (hit(`verifysend:${u.id}`, 3, 60 * 60e3)) await db.withTx((c) => sendVerification(c, u));
+    throw new AppError(403, "email_not_verified", `Please confirm your email first. We've sent a link to ${u.email}: open it and you're in.`);
+  }
   await db.query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1", [u.id]);
+  clear(pair);
   await createSession(res, req, u.id);
   res.json({ user: await profile(u.id) });
 }));
@@ -125,24 +160,53 @@ router.post("/me/pin", requireAuth, limit("pin", 10, 15 * 60e3, (q) => q.user.id
   res.json({ ok: true });
 }));
 
-router.post("/verify-email", wrap(async (req, res) => {
+// The link in the confirmation email. The first time it is used it confirms
+// the address and signs the person in (proof enough: only the inbox's owner
+// has the link); a guest account becomes a full one, tickets and all.
+router.post("/verify-email", limit("verifylink", 30, 60 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, { token: r.str({ max: 600 }) });
   const data = verifyLink(b.token);
-  if (!data?.v) throw bad("This verification link is invalid or has expired.");
-  await db.query("UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1 AND lower(email) = lower($2)", [data.v, data.e]);
-  res.json({ ok: true });
+  if (!data?.v) throw bad("This confirmation link is invalid or has expired.");
+  if (!/^[0-9a-f-]{36}$/i.test(String(data.v))) throw bad("This confirmation link is invalid or has expired.");
+  const result = await db.withTx(async (c) => {
+    const { rows: [u] } = await c.query("SELECT * FROM users WHERE id = $1 AND lower(email) = lower($2) AND status = 'active' FOR UPDATE", [data.v, data.e || ""]);
+    if (!u) throw bad("This confirmation link is invalid or has expired.");
+    // A guest account has no password yet: it is finished from the
+    // choose-a-password email, never from a confirmation link.
+    if (u.guest) {
+      if (hit(`finishsend:${u.id}`, 3, 60 * 60e3)) await sendFinishAccount(c, u);
+      return { user: u, guest: true };
+    }
+    if (u.email_verified_at) return { user: u, first: false };
+    await c.query("UPDATE users SET email_verified_at = now(), updated_at = now() WHERE id = $1", [u.id]);
+    await audit.record(c, { actor: { id: u.id }, action: "user.email_verified", entityType: "user", entityId: u.id, ip: req.ip });
+    await createSession(res, req, u.id, c);
+    return { user: u, first: true };
+  });
+  if (result.guest) throw bad(`This link has been replaced. We've emailed ${result.user.email} a link to choose your password: open the newest email from us.`);
+  const { rows: [{ n }] } = await db.query("SELECT count(*)::int AS n FROM tickets WHERE owner_user_id = $1 AND status = 'valid'", [result.user.id]);
+  const { rows: org } = await db.query("SELECT 1 FROM organiser_members WHERE user_id = $1 LIMIT 1", [result.user.id]);
+  res.json({ ok: true, signedIn: result.first, firstName: String(result.user.full_name || "").trim().split(/\s+/)[0], tickets: n, organiser: !!org[0] });
 }));
 
-router.post("/verify-email/resend", requireAuth, limit("verify", 3, 60 * 60e3, (q) => q.user.id), wrap(async (req, res) => {
-  const { rows } = await db.query("SELECT * FROM users WHERE id = $1", [req.user.id]);
-  await db.withTx((c) => sendVerification(c, rows[0]));
-  res.json({ ok: true });
+// "Didn't get the email?" Same answer whether or not the address has an account.
+router.post("/verify-email/resend", limit("verifyresend", 5, 60 * 60e3), wrap(async (req, res) => {
+  const b = check(req.body, { email: r.email({ optional: true }) });
+  let u = null;
+  if (req.user) u = (await db.query("SELECT * FROM users WHERE id = $1", [req.user.id])).rows[0];
+  else if (b.email) u = await userByEmail(db, b.email);
+  // A guest account has no password yet: it gets the link to choose one instead.
+  if (u && u.status === "active" && (!u.email_verified_at || u.guest) && hit(`verifysend:${u.id}`, 3, 60 * 60e3)) {
+    await db.withTx((c) => (u.guest ? sendFinishAccount(c, u) : sendVerification(c, u)));
+  }
+  res.json({ ok: true, message: "If that email is waiting to be confirmed, a new link is on its way." });
 }));
 
 // Always answers the same way, whether or not the email exists.
 router.post("/password/forgot", limit("forgot", 5, 60 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, { email: r.email() });
-  const { rows } = await db.query("SELECT * FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
+  const found = await userByEmail(db, b.email);
+  const rows = found && found.status === "active" ? [found] : [];
   if (rows[0]) {
     const token = randomToken(32);
     await db.withTx(async (c) => {
@@ -156,14 +220,25 @@ router.post("/password/forgot", limit("forgot", 5, 60 * 60e3), wrap(async (req, 
 
 router.post("/password/reset", limit("reset", 10, 60 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, { token: r.str({ max: 100 }), password: r.password() });
-  await db.withTx(async (c) => {
+  const userId = await db.withTx(async (c) => {
     const { rows } = await c.query("UPDATE password_resets SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id", [sha256(b.token)]);
     if (!rows[0]) throw bad("This reset link is invalid or has expired.");
-    await c.query("UPDATE users SET password_hash = $2, failed_logins = 0, locked_until = NULL, updated_at = now() WHERE id = $1", [rows[0].user_id, hashSecret(b.password)]);
+    // A reset link proves the inbox too: the email is confirmed (a staff invite
+    // doubles as email proof), and a guest account becomes a full one.
+    await c.query(
+      `UPDATE users SET password_hash = $2, guest = false, failed_logins = 0, locked_until = NULL,
+              email_verified_at = COALESCE(email_verified_at, now()), updated_at = now() WHERE id = $1`, [rows[0].user_id, hashSecret(b.password)]);
     await c.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [rows[0].user_id]);
     await audit.record(c, { actor: { id: rows[0].user_id }, action: "user.password_reset", entityType: "user", entityId: rows[0].user_id, ip: req.ip });
+    return rows[0].user_id;
   });
-  res.json({ ok: true });
+  // The link proved the inbox, so the new password signs them straight in.
+  const { rows: [u] } = await db.query(
+    `SELECT u.status, (SELECT count(*) FROM tickets WHERE owner_user_id = u.id AND status = 'valid')::int AS tickets,
+            EXISTS (SELECT 1 FROM platform_roles WHERE user_id = u.id) AS staff, EXISTS (SELECT 1 FROM organiser_members WHERE user_id = u.id) AS organiser
+       FROM users u WHERE u.id = $1`, [userId]);
+  if (u.status === "active") await createSession(res, req, userId);
+  res.json({ ok: true, signedIn: u.status === "active", tickets: u.tickets, staff: u.staff, organiser: u.organiser });
 }));
 
 // POPIA: access to personal information.

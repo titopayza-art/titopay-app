@@ -2,9 +2,10 @@ const config = require("../../config");
 const db = require("../../lib/db");
 const audit = require("../../lib/audit");
 const ledger = require("../../lib/ledger");
-const { reference } = require("../../lib/crypto");
+const { reference, signLink, verifyLink } = require("../../lib/crypto");
+const { userByEmail } = require("../../lib/accounts");
 const { ticketFee, bpsOf } = require("../../lib/money");
-const { bad, conflict, notFound } = require("../../lib/errors");
+const { AppError, bad, conflict, notFound, unauthenticated } = require("../../lib/errors");
 const tickets = require("../tickets/service");
 const outbox = require("../messaging/outbox");
 const { providerForMethod } = require("../payments/providers");
@@ -162,7 +163,7 @@ async function createOrder(user, input) {
     const payments = require("../payments/service");
     result.payment = await payments.start(result.payment, {
       description: `${result.event.title} — ${result.order.reference}`,
-      returnPath: `/orders/${result.order.reference}`,
+      returnPath: orderPath(result.order),
     });
   }
   return result;
@@ -229,7 +230,9 @@ async function fulfil(c, orderId, payment) {
 
   if (fulfilled) {
     const issued = await tickets.issueForOrder(c, upd[0]);
-    await outbox.enqueue(c, { to: order.buyer_email, userId: order.user_id, ...templates.orderConfirmed({ order: upd[0], event, ticketCount: issued.length }) });
+    const { rows: [owner] } = await c.query("SELECT guest FROM users WHERE id = $1", [order.user_id]);
+    await outbox.enqueue(c, { to: order.buyer_email, userId: order.user_id,
+      ...templates.orderConfirmed({ order: upd[0], event, ticketCount: issued.length, guestLink: owner?.guest ? orderLink(upd[0]) : null }) });
   } else {
     const { rows: r } = await c.query(
       `INSERT INTO refunds (reference, kind, order_id, event_id, user_id, amount_cents, fee_refund_cents, organiser_fee_cents, reason, requested_by)
@@ -247,11 +250,11 @@ async function releaseHolds(c, order) {
   if (order.promo_code_id) await c.query("UPDATE promo_codes SET used_count = used_count - 1 WHERE id = $1 AND used_count > 0", [order.promo_code_id]);
 }
 
-async function cancelPending(user, ref) {
+async function cancelPending(user, ref, key) {
   return db.withTx(async (c) => {
-    const { rows } = await c.query("SELECT * FROM orders WHERE reference = $1 AND user_id = $2 FOR UPDATE", [ref, user.id]);
+    const { id } = await orderAccess(user, ref, key, c);
+    const { rows } = await c.query("SELECT * FROM orders WHERE id = $1 FOR UPDATE", [id]);
     const order = rows[0];
-    if (!order) throw notFound("Order not found.");
     if (order.status !== "pending_payment") throw conflict("Only unpaid orders can be cancelled.", "order_not_pending");
     await releaseHolds(c, order);
     await c.query("UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1", [order.id]);
@@ -292,15 +295,52 @@ async function expireDue() {
   return expired;
 }
 
-async function getForUser(user, ref) {
-  const { rows } = await db.query(
-    `SELECT o.*, e.title, e.slug, e.starts_at, e.venue_name, e.city FROM orders o JOIN events e ON e.id = o.event_id
-      WHERE o.reference = $1 AND o.user_id = $2`, [ref, user.id]);
-  if (!rows[0]) throw notFound("Order not found.");
-  const { rows: items } = await db.query(
-    `SELECT oi.quantity, oi.unit_price_cents, oi.unit_fee_cents, tt.name FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = $1`, [rows[0].id]);
-  const payment = await latestPayment(rows[0].id);
-  return { order: rows[0], items, payment };
+// ---------------------------------------------------------------- guest checkout
+// Someone buying without signing in. Their email gets a quiet "guest" account
+// with no password: the tickets live there. If they sign up later with the
+// same email (and choose a password from their inbox), that account and its
+// tickets are theirs. An email that already has an account books into it.
+async function guestBuyer(c, g, ip) {
+  let u = await userByEmail(c, g.email);
+  if (u && u.status === "suspended") throw new AppError(403, "suspended", "The account for this email is suspended. Contact hello@ticketroom.co.za.");
+  if (!u) {
+    ({ rows: [u] } = await c.query(
+      "INSERT INTO users (email, phone, full_name, password_hash, guest) VALUES ($1,$2,$3,'!',true) RETURNING *", [g.email, g.phone || null, g.fullName]));
+    await audit.record(c, { actor: { id: u.id }, action: "user.guest_created", entityType: "user", entityId: u.id, ip });
+  }
+  return { id: u.id, fullName: g.fullName, email: u.email, phone: g.phone || u.phone, guest: u.guest };
 }
 
-module.exports = { commissionBps, quote, publicQuote, createOrder, fulfil, cancelPending, expireDue, getForUser, salesOpen, releaseHolds, latestPayment };
+// A private link to one order, for buyers without an account (and the order
+// email). Signed, so it cannot be guessed or edited; valid for 13 months.
+const orderKey = (orderId) => signLink({ o: orderId }, 400 * 86400);
+const orderPath = (order) => `/orders/${order.reference}?k=${encodeURIComponent(orderKey(order.id))}`;
+const orderLink = (order) => `${config.publicBaseUrl}${orderPath(order)}`;
+// Is this key the private link of this order?
+const keyOpens = (key, orderId) => !!key && verifyLink(key)?.o === orderId;
+
+// The order behind a reference, for its owner or for the holder of its
+// private link. Without either: 401 when signed out with no key, else 404.
+async function orderAccess(user, ref, key, q = db) {
+  const { rows: [o] } = await q.query(
+    `SELECT o.*, e.title, e.slug, e.starts_at, e.ends_at, e.venue_name, e.city FROM orders o JOIN events e ON e.id = o.event_id
+      WHERE o.reference = $1`, [String(ref || "").slice(0, 40)]);
+  if (!o || !(keyOpens(key, o.id) || (user && user.id === o.user_id))) {
+    if (!user && !key) throw unauthenticated();
+    throw notFound("Order not found.");
+  }
+  return o;
+}
+
+async function getForUser(user, ref, key) {
+  const order = await orderAccess(user, ref, key);
+  const { rows: items } = await db.query(
+    `SELECT oi.quantity, oi.unit_price_cents, oi.unit_fee_cents, tt.name FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = $1`, [order.id]);
+  const payment = await latestPayment(order.id);
+  return { order, items, payment };
+}
+
+module.exports = {
+  commissionBps, quote, publicQuote, createOrder, fulfil, cancelPending, expireDue, getForUser, salesOpen, releaseHolds, latestPayment,
+  guestBuyer, orderKey, orderPath, orderLink, keyOpens, orderAccess,
+};

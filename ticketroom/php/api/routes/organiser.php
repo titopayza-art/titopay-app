@@ -340,7 +340,7 @@ route('POST', '/api/organiser/apply', function () {
 // One step for someone new: their account and their organisation together.
 // Same rules as any sign-up: one account per email, confirmed before use.
 route('POST', '/api/organiser/signup', function () {
-    limit('register', 10, 3600);
+    limit('register', 60, 3600);
     $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true]), 'password' => R::password(),
         'organisation' => R::str(['min' => 2, 'max' => 120]), 'description' => R::text(['optional' => true, 'max' => 2000]), 'acceptTerms' => R::bool()]);
     if (!$b['acceptTerms']) throw bad('Please accept the Terms and Privacy Notice.', ['acceptTerms' => 'Required.']);
@@ -353,9 +353,13 @@ route('POST', '/api/organiser/signup', function () {
         if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0 AND id <> ?", [$b['phone'], $existing['id'] ?? ''])) {
             throw conflict('This mobile number is already on another TicketRoom account.', 'phone_taken', ['phone' => 'Already on another account.']);
         }
+        // An email that has only bought as a guest: nothing is created for it
+        // until the inbox owner acts. They choose a password from the email
+        // (see send_finish_account), then set up the organisation signed in.
         if ($existing) {
-            q('UPDATE users SET pending_password_hash = ?, full_name = ?, phone = COALESCE(phone, ?), updated_at = ? WHERE id = ?', [hash_secret($b['password']), $b['fullName'], $b['phone'] ?? null, $now, $existing['id']]);
-            $u = row('SELECT * FROM users WHERE id = ?', [$existing['id']]);
+            if (limit_ok('finishsend', 3, 3600, $existing['id'])) send_finish_account($existing);
+            audit('user.finish_account_sent', ['actor' => ['id' => $existing['id']], 'entityType' => 'user', 'entityId' => $existing['id'], 'ip' => client_ip(), 'details' => ['from' => 'organiser_signup']]);
+            return;
         } else {
             $u = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'phone' => $b['phone'] ?? null, 'full_name' => $b['fullName'],
                 'password_hash' => hash_secret($b['password']), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);

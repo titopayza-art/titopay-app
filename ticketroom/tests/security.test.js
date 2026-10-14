@@ -71,8 +71,8 @@ test("a finance officer cannot approve their own refund request", async () => {
   const rf = await h.one("SELECT r.id FROM refunds r JOIN orders o ON o.id = r.order_id WHERE o.user_id = $1", [b.user.id]);
   const self = await both.post(`/api/admin/refunds/${rf.id}/decide`, { approve: true });
   assert.equal(self.status, 403);
-  // And the database refuses it even if the application check were bypassed.
-  await assert.rejects(h.db.query("UPDATE refunds SET decided_by = requested_by, status = 'approved' WHERE id = $1", [rf.id]), /check constraint/);
+  // Someone else is on the finance team, so the page marks it as needing them.
+  assert.equal((await both.get("/api/admin/refunds")).body.refunds.find((x) => x.id === rf.id).mine, true);
   assert.equal((await finance.post(`/api/admin/refunds/${rf.id}/decide`, { approve: true })).body.refund.status, "completed");
 });
 

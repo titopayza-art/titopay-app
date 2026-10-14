@@ -229,20 +229,24 @@ router.post("/staff", ADMIN, limit("staffteam", 30, 3600e3, (q) => q.user.id), w
   const roles = [...new Set(b.roles)];
   const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
   const invited = await db.withTx(async (c) => {
-    const { rows: [existing] } = await c.query("SELECT id, status FROM users WHERE lower(email) = $1", [b.email]);
+    const existing = await require("../lib/accounts").userByEmail(c, b.email);
     if (existing && existing.status !== "active") throw conflict("That account is suspended or closed. Restore it under All users first.", "account_inactive");
+    // Someone new, or someone who has only bought as a guest, sets a password from the email.
+    const needsPassword = !existing || existing.guest;
     let id = existing?.id, url = null;
     if (!existing) {
-      const token = randomToken(32);
       ({ rows: [{ id }] } = await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, b.fullName, hashSecret(randomToken(24))]));
+    }
+    if (needsPassword) {
+      const token = randomToken(32);
       await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), id]);
       url = `${config.publicBaseUrl}/account#/reset/${token}`;
     }
     for (const role of roles) await c.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, role, req.user.id]);
     const names = roles.map((x) => STAFF_ROLE_NAMES[x]).join(" and ");
-    await outbox.enqueue(c, { to: b.email, userId: id, ...templates.teamInvite({ name: existing ? null : b.fullName, by: req.user.fullName, roles: names, url }) });
+    await outbox.enqueue(c, { to: b.email, userId: id, ...templates.teamInvite({ name: needsPassword ? b.fullName : null, by: req.user.fullName, roles: names, url }) });
     await audit.record(c, { actor: req.user, action: "staff.added", entityType: "user", entityId: id, details: { roles, newAccount: !existing } });
-    return !existing;
+    return needsPassword;
   });
   res.status(201).json({ ok: true, invited });
 }));
@@ -325,7 +329,10 @@ router.get("/refunds", wrap(async (req, res) => {
   const status = req.query.status ? String(req.query.status) : null;
   const { rows } = await db.query(
     `SELECT r.id, r.reference, r.kind, r.status, r.amount_cents, r.fee_refund_cents, r.reason, r.failure_reason, r.created_at, r.decided_at,
-            e.title AS event_title, ru.full_name AS requested_by_name, du.full_name AS decided_by_name, (r.requested_by = $2) AS mine, o.reference AS order_reference
+            e.title AS event_title, ru.full_name AS requested_by_name, du.full_name AS decided_by_name, o.reference AS order_reference,
+            -- "mine" tells the page to ask for a second person: only when there is one.
+            (r.requested_by = $2 AND EXISTS (SELECT 1 FROM platform_roles pr JOIN users x ON x.id = pr.user_id
+                                              WHERE pr.role = 'finance' AND x.status = 'active' AND x.id <> $2)) AS mine
        FROM refunds r JOIN events e ON e.id = r.event_id LEFT JOIN users ru ON ru.id = r.requested_by LEFT JOIN users du ON du.id = r.decided_by
        LEFT JOIN orders o ON o.id = r.order_id
       WHERE ($1::text IS NULL OR r.status = $1) ORDER BY r.created_at DESC LIMIT 300`, [status, req.user.id]);
@@ -638,8 +645,8 @@ router.get("/audit/verify", wrap(async (_req, res) => res.json(await audit.verif
 
 router.get("/support", wrap(async (_req, res) => {
   const { rows } = await db.query(
-    `SELECT s.*, u.full_name AS assignee, (s.due_at < now() AND s.status IN ('open','in_progress')) AS overdue
-       FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to
+    `SELECT s.*, u.full_name AS assignee, (s.due_at < now() AND s.status IN ('open','in_progress')) AS overdue, org.name AS organiser_name
+       FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to LEFT JOIN organisers org ON org.id = s.organiser_id
       ORDER BY (s.status IN ('resolved','closed')), s.due_at NULLS LAST, s.created_at DESC LIMIT 300`);
   res.json({ cases: rows });
 }));
@@ -648,6 +655,73 @@ router.post("/support/:id", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
   const b = check(req.body, { status: r.oneOf(["open", "in_progress", "resolved", "closed"]), resolution: r.text({ optional: true, max: 2000 }) });
   await db.query("UPDATE support_cases SET status = $2, resolution = COALESCE($3, resolution), assigned_to = COALESCE(assigned_to, $4), updated_at = now() WHERE id = $1", [req.params.id, b.status, b.resolution || null, req.user.id]);
   res.json({ ok: true });
+}));
+
+// ---- customer care conversations ----------------------------------------------------
+const support = require("../modules/support/service");
+router.get("/support/:id", wrap(async (req, res) => {
+  const c = await support.getCase(req.params.id);
+  res.json({ case: c, messages: await support.messages(c.id), suggestions: await support.suggestions(c) });
+}));
+
+router.post("/support/:id/reply", ADMIN_OR_SUPPORT, limit("supreply", 120, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { message: r.text({ min: 2, max: 5000 }), resolve: r.bool() });
+  const c = await support.getCase(req.params.id);
+  await db.withTx(async (q) => {
+    await support.note(q, c.id, req.user.id, "ticketroom", b.message, true);
+    await outbox.enqueue(q, { to: c.email, userId: c.user_id, ...templates.supportReply({ name: c.full_name, subject: c.subject, reference: c.reference, message: b.message,
+      from: `${support.firstName(req.user.fullName)}, TicketRoom customer care` }) });
+    await q.query("UPDATE support_cases SET status = $2, assigned_to = COALESCE(assigned_to, $3), updated_at = now() WHERE id = $1", [c.id, b.resolve ? "resolved" : "in_progress", req.user.id]);
+    await audit.record(q, { actor: req.user, action: "support.replied", entityType: "support_case", entityId: c.id });
+  });
+  res.json({ ok: true });
+}));
+
+// Pass a question to the organiser it belongs to.
+router.post("/support/:id/transfer", ADMIN_OR_SUPPORT, limit("suptransfer", 60, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { organiserId: r.uuid(), eventId: r.uuid({ optional: true }), note: r.text({ optional: true, max: 1000 }), tellCustomer: r.bool({ fallback: true }) });
+  const c = await support.getCase(req.params.id);
+  const { rows: [org] } = await db.query("SELECT * FROM organisers WHERE id = $1 AND status = 'approved'", [b.organiserId]);
+  if (!org) throw notFound("Organiser not found, or not approved.");
+  let event = null;
+  if (b.eventId) {
+    ({ rows: [event] } = await db.query("SELECT id, title FROM events WHERE id = $1 AND organiser_id = $2", [b.eventId, org.id]));
+    if (!event) throw bad("That event belongs to another organiser.");
+  }
+  await db.withTx(async (q) => {
+    await q.query(
+      `UPDATE support_cases SET organiser_id = $2, event_id = $3, handled_by = 'organiser', transferred_at = now(), status = 'in_progress',
+              assigned_to = COALESCE(assigned_to, $4), updated_at = now() WHERE id = $1`, [c.id, org.id, event?.id || null, req.user.id]);
+    await support.note(q, c.id, req.user.id, "system", `Passed to ${org.name}${b.note ? `: ${b.note}` : "."}`);
+    await outbox.enqueue(q, { to: org.contact_email, ...templates.queryForOrganiser({ organiser: org.name, reference: c.reference, customer: c.full_name || c.email,
+      event: event?.title || null, subject: c.subject, body: c.body, note: b.note || null }) });
+    if (b.tellCustomer) {
+      await outbox.enqueue(q, { to: c.email, userId: c.user_id, ...templates.queryPassedOn({ name: c.full_name, organiser: org.name, reference: c.reference }) });
+      await support.note(q, c.id, req.user.id, "ticketroom", `We've passed your question to ${org.name}. They'll reply to you by email.`, true);
+    }
+    await audit.record(q, { actor: req.user, action: "support.transferred", entityType: "support_case", entityId: c.id, organiserId: org.id });
+  });
+  res.json({ case: await support.getCase(c.id) });
+}));
+
+router.post("/support/:id/take-back", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const c = await support.getCase(req.params.id);
+  await db.withTx(async (q) => {
+    await q.query("UPDATE support_cases SET handled_by = 'ticketroom', status = 'in_progress', updated_at = now() WHERE id = $1", [c.id]);
+    await support.note(q, c.id, req.user.id, "system", "Taken back by TicketRoom customer care.");
+    await audit.record(q, { actor: req.user, action: "support.taken_back", entityType: "support_case", entityId: c.id });
+  });
+  res.json({ case: await support.getCase(c.id) });
+}));
+
+// Organisers to pass a question to: approved ones, by name or ID.
+router.get("/support-organisers", wrap(async (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 60);
+  const like = `%${q.toLowerCase().replace(/[%_\\]/g, "\\$&")}%`;
+  const { rows } = await db.query(
+    `SELECT id, name, ref, contact_email FROM organisers WHERE status = 'approved' AND ($1 = '' OR ref = upper($1) OR lower(name) LIKE $2)
+      ORDER BY name LIMIT 20`, [q, like]);
+  res.json({ organisers: rows });
 }));
 
 router.get("/outbox", wrap(async (_req, res) => {

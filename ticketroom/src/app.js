@@ -54,11 +54,16 @@ function createApp() {
 
   // PayFast hand-off: renders the signed form the buyer's browser posts to PayFast.
   app.get("/pay/payfast/:paymentId", wrap(async (req, res) => {
-    if (!req.user) return res.redirect(302, "/signin");
-    const { rows } = await db.query("SELECT * FROM payments WHERE id = $1 AND user_id = $2 AND provider = 'payfast' AND status = 'pending'", [req.params.paymentId, req.user.id]);
+    // The buyer's session, or the short-lived key in the link (guest checkout).
+    const keyed = require("./lib/crypto").verifyLink(String(req.query.k || "").slice(0, 600))?.p === req.params.paymentId;
+    if (!req.user && !keyed) return res.redirect(302, "/signin");
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.paymentId)) throw notFound("Payment not found or already completed.");
+    const { rows } = await db.query(
+      `SELECT p.*, u.full_name AS buyer_full_name, u.email AS buyer_email FROM payments p JOIN users u ON u.id = p.user_id
+        WHERE p.id = $1 AND ($2::boolean OR p.user_id = $3::uuid) AND p.provider = 'payfast' AND p.status = 'pending'`, [req.params.paymentId, keyed, req.user?.id || null]);
     if (!rows[0] || !rows[0].checkout_context) throw notFound("Payment not found or already completed.");
     const payfast = require("./modules/payments/providers/payfast");
-    const fields = payfast.formFields(rows[0], rows[0].checkout_context, { full_name: req.user.fullName, email: req.user.email });
+    const fields = payfast.formFields(rows[0], rows[0].checkout_context, { full_name: rows[0].buyer_full_name, email: rows[0].buyer_email });
     const action = config.integrations.payfast.processUrl;
     const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
     res.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self'; form-action 'self' ${new URL(action).origin}; frame-ancestors 'none'; base-uri 'none'`);

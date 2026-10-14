@@ -25,9 +25,10 @@ const r = {
     if (pattern && !pattern.test(s)) fail(message || "Invalid format.");
     return s;
   }, o),
-  text: ({ max = 5000, ...o } = {}) => rule((v) => {
+  text: ({ max = 5000, min = 0, ...o } = {}) => rule((v) => {
     if (typeof v !== "string") fail("Must be text.");
     const s = v.replace(/\r\n/g, "\n").trim();
+    if (s.length < min) fail(`Must be at least ${min} characters.`);
     if (s.length > max) fail(`Must be at most ${max} characters.`);
     return s;
   }, o),

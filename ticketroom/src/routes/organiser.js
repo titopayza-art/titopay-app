@@ -5,7 +5,7 @@ const config = require("../config");
 const db = require("../lib/db");
 const audit = require("../lib/audit");
 const { r, check } = require("../lib/validate");
-const { limit } = require("../lib/ratelimit");
+const { limit, hit } = require("../lib/ratelimit");
 const { randomCode, encrypt } = require("../lib/crypto");
 const { AppError, conflict, bad, notFound } = require("../lib/errors");
 const { wrap, requireAuth } = require("../middleware/http");
@@ -21,9 +21,11 @@ const templates = require("../modules/messaging/templates");
 const passes = require("../modules/tickets/passes");
 const { TICKET_KINDS, AGE_GROUPS } = require("../modules/tickets/kinds");
 const { newRef } = require("../lib/refs");
+const { signLink } = require("../lib/crypto");
+const { userByEmail, phoneTaken } = require("../lib/accounts");
+const support = require("../modules/support/service");
 
 const router = express.Router();
-router.use(requireAuth);
 
 const ALL = ["owner", "manager", "marketing", "finance", "viewer"];
 const EDIT = ["owner", "manager"];
@@ -31,6 +33,50 @@ const MONEY = ["owner", "finance"];
 const MKT = ["owner", "manager", "marketing"];
 
 const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "event";
+
+// One step for someone new: their account and their organisation together.
+// Same rules as any sign-up: one account per email, confirmed before use. An
+// email that has only bought as a guest chooses its password from the inbox.
+router.post("/signup", limit("register", 60, 60 * 60e3), wrap(async (req, res) => {
+  const b = check(req.body, {
+    fullName: r.str({ min: 2, max: 120 }), email: r.email(), phone: r.phone({ optional: true }), password: r.password(),
+    organisation: r.str({ min: 2, max: 120 }), description: r.text({ optional: true, max: 2000 }), acceptTerms: r.bool(),
+  });
+  if (!b.acceptTerms) throw bad("Please accept the Terms and Privacy Notice.", { acceptTerms: "Required." });
+  const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
+  await db.withTx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('signup:' || tr.email_key($1)))", [b.email]);
+    const existing = await userByEmail(c, b.email);
+    if (existing && !existing.guest) {
+      throw conflict("You already have a TicketRoom account with this email. Sign in, then set up your organisation from the organiser portal.", "email_taken", { email: "Already has an account." });
+    }
+    if (await phoneTaken(c, b.phone, existing?.id)) throw conflict("This mobile number is already on another TicketRoom account.", "phone_taken", { phone: "Already on another account." });
+    // An email that has only bought as a guest: nothing is created for it
+    // until the inbox owner acts. They choose a password from the email, then
+    // set up the organisation signed in.
+    if (existing) {
+      if (hit(`finishsend:${existing.id}`, 3, 60 * 60e3)) {
+        const token = randomToken(32);
+        await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '24 hours')", [sha256(token), existing.id]);
+        await outbox.enqueue(c, { to: existing.email, userId: existing.id, ...templates.finishAccount({ name: existing.full_name, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+      }
+      await audit.record(c, { actor: { id: existing.id }, action: "user.finish_account_sent", entityType: "user", entityId: existing.id, ip: req.ip, details: { from: "organiser_signup" } });
+      return;
+    }
+    const { rows: [u] } = await c.query("INSERT INTO users (email, phone, full_name, password_hash) VALUES ($1,$2,$3,$4) RETURNING *",
+      [b.email, b.phone || null, b.fullName, hashSecret(b.password)]);
+    const { rows: [o] } = await c.query(
+      "INSERT INTO organisers (ref, name, slug, contact_email, contact_phone, description) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+      [await newRef(c, "organisers"), b.organisation, `${slugify(b.organisation)}-${randomCode(4).toLowerCase()}`, b.email, b.phone || null, b.description || null]);
+    await c.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'owner')", [o.id, u.id]);
+    const url = `${config.publicBaseUrl}/account#/verify/${signLink({ v: u.id, e: u.email }, 7 * 86400)}`;
+    await outbox.enqueue(c, { to: u.email, userId: u.id, ...templates.verifyEmail({ name: u.full_name, url }) });
+    await audit.record(c, { actor: { id: u.id }, action: "organiser.applied", entityType: "organiser", entityId: o.id, organiserId: o.id, ip: req.ip, details: { withAccount: true } });
+  });
+  res.status(201).json({ needsVerification: true, email: b.email, message: `We've sent a confirmation link to ${b.email}. Open it and your organiser portal is ready.` });
+}));
+
+router.use(requireAuth);
 
 // ---- organiser account -------------------------------------------------------
 router.post("/apply", limit("orgapply", 5, 24 * 3600e3, (q) => q.user.id), wrap(async (req, res) => {
@@ -108,8 +154,9 @@ function requireApproved(org) {
 router.post("/:orgId/members", limit("orgmember", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
   requireApproved((await organiserAccess(req.user, req.params.orgId, ["owner"])).organiser);
   const b = check(req.body, { email: r.email(), role: r.oneOf(["manager", "marketing", "finance", "viewer"]) });
-  const { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
-  if (!rows[0]) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
+  const f = await userByEmail(db, b.email);
+  if (!f || f.status !== "active" || f.guest) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
+  const rows = [f];
   await db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT (organiser_id, user_id) DO UPDATE SET role = EXCLUDED.role", [req.params.orgId, rows[0].id, b.role]);
   await audit.record(null, { actor: req.user, action: "organiser.member_set", entityType: "user", entityId: rows[0].id, organiserId: req.params.orgId, details: { role: b.role } });
   res.status(201).json({ ok: true });
@@ -402,7 +449,9 @@ router.get("/:orgId/refunds", wrap(async (req, res) => {
   await organiserAccess(req.user, req.params.orgId, ["owner", "manager", "finance"]);
   const { rows } = await db.query(
     `SELECT r.id, r.reference, r.kind, r.status, r.amount_cents, r.fee_refund_cents, r.reason, r.created_at, r.decided_at, e.title AS event_title,
-            ru.full_name AS requested_by_name, (r.requested_by = $2) AS mine, v.name AS vendor_name
+            ru.full_name AS requested_by_name, v.name AS vendor_name,
+            (r.requested_by = $2 AND EXISTS (SELECT 1 FROM platform_roles pr JOIN users x ON x.id = pr.user_id
+                                              WHERE pr.role = 'finance' AND x.status = 'active' AND x.id <> $2)) AS mine
        FROM refunds r JOIN events e ON e.id = r.event_id LEFT JOIN users ru ON ru.id = r.requested_by
        LEFT JOIN pos_sales s ON s.id = r.pos_sale_id LEFT JOIN vendors v ON v.id = s.vendor_id
       WHERE e.organiser_id = $1 ORDER BY r.created_at DESC LIMIT 200`, [req.params.orgId, req.user.id]);
@@ -416,6 +465,52 @@ router.post("/:orgId/refunds/:refundId/decide", wrap(async (req, res) => {
   const { rows } = await db.query("SELECT r.id FROM refunds r JOIN events e ON e.id = r.event_id WHERE r.id = $1 AND e.organiser_id = $2 AND r.kind = 'pos_sale'", [req.params.refundId, req.params.orgId]);
   if (!rows[0]) throw notFound("Refund not found.");
   res.json({ refund: await refunds.decide(req.user, rows[0].id, b.approve, b.note) });
+}));
+
+// ---- customer queries passed on by TicketRoom customer care -----------------------
+router.get("/:orgId/queries", wrap(async (req, res) => {
+  await organiserAccess(req.user, req.params.orgId, EDIT);
+  const { rows } = await db.query(
+    `SELECT s.id, s.reference, s.subject, s.full_name, s.email, s.status, s.handled_by, s.transferred_at, s.updated_at, e.title AS event_title
+       FROM support_cases s LEFT JOIN events e ON e.id = s.event_id WHERE s.organiser_id = $1
+      ORDER BY (s.handled_by = 'organiser' AND s.status IN ('open','in_progress')) DESC, s.updated_at DESC LIMIT 200`, [req.params.orgId]);
+  const open = rows.filter((c) => c.handled_by === "organiser" && ["open", "in_progress"].includes(c.status)).length;
+  res.json({ queries: rows, open });
+}));
+
+const QUERY_FIELDS = ["id", "reference", "subject", "body", "full_name", "email", "phone", "status", "handled_by", "transferred_at", "created_at", "event_title", "category"];
+router.get("/:orgId/queries/:id", wrap(async (req, res) => {
+  const { organiser } = await organiserAccess(req.user, req.params.orgId, EDIT);
+  const c = await support.organiserCase(organiser.id, req.params.id);
+  const msgs = (await support.messages(c.id)).filter((m) => m.author_kind !== "system" || m.body.startsWith("Passed to"));
+  res.json({ query: Object.fromEntries(QUERY_FIELDS.map((k) => [k, c[k] ?? null])), messages: msgs });
+}));
+
+router.post("/:orgId/queries/:id/reply", limit("orgreply", 120, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const { organiser } = await organiserAccess(req.user, req.params.orgId, EDIT);
+  const b = check(req.body, { message: r.text({ min: 2, max: 5000 }), resolve: r.bool() });
+  const c = await support.organiserCase(organiser.id, req.params.id);
+  if (c.handled_by !== "organiser") throw conflict("TicketRoom has taken this query back.", "not_yours");
+  await db.withTx(async (q) => {
+    await support.note(q, c.id, req.user.id, "organiser", b.message, true);
+    await outbox.enqueue(q, { to: c.email, userId: c.user_id, ...templates.supportReply({ name: c.full_name, subject: c.subject, reference: c.reference, message: b.message,
+      from: `${support.firstName(req.user.fullName)}, ${organiser.name}` }) });
+    await q.query("UPDATE support_cases SET status = $2, updated_at = now() WHERE id = $1", [c.id, b.resolve ? "resolved" : "in_progress"]);
+    await audit.record(q, { actor: req.user, action: "support.organiser_replied", entityType: "support_case", entityId: c.id, organiserId: organiser.id });
+  });
+  res.json({ ok: true });
+}));
+
+router.post("/:orgId/queries/:id/return", wrap(async (req, res) => {
+  const { organiser } = await organiserAccess(req.user, req.params.orgId, EDIT);
+  const b = check(req.body, { note: r.text({ min: 3, max: 1000 }) });
+  const c = await support.organiserCase(organiser.id, req.params.id);
+  await db.withTx(async (q) => {
+    await q.query("UPDATE support_cases SET handled_by = 'ticketroom', status = 'open', updated_at = now() WHERE id = $1", [c.id]);
+    await support.note(q, c.id, req.user.id, "system", `Sent back by ${organiser.name}: ${b.note}`);
+    await audit.record(q, { actor: req.user, action: "support.returned", entityType: "support_case", entityId: c.id, organiserId: organiser.id });
+  });
+  res.json({ ok: true });
 }));
 
 // ---- event staff ---------------------------------------------------------------
@@ -434,18 +529,21 @@ router.post("/:orgId/events/:eventId/staff", limit("staffadd", 30, 3600e3, (q) =
   const { event, organiser } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
   requireApproved(organiser);
   const b = check(req.body, { email: r.email(), fullName: r.str({ optional: true, min: 2, max: 120 }), canScan: r.bool({ fallback: true }), canManageTags: r.bool() });
-  let { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
+  const found = await userByEmail(db, b.email);
+  if (found && found.status !== "active") throw conflict("That account is suspended or closed, so it cannot scan tickets.", "account_inactive");
+  let rows = found ? [found] : [];
   let invited = false;
-  if (!rows[0]) {
+  // Someone new, or someone who has only bought tickets as a guest, gets an email to set a password.
+  if (!found || found.guest) {
     const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
     const token = randomToken(32);
-    const name = b.fullName || b.email.split("@")[0];
+    const name = b.fullName || found?.full_name || b.email.split("@")[0];
     rows = await db.withTx(async (c) => {
-      const u = await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, name, hashSecret(randomToken(24))]);
-      await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), u.rows[0].id]);
-      await outbox.enqueue(c, { to: b.email, userId: u.rows[0].id, ...templates.staffInvite({ name, organiser: organiser.name, event: event.title, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
-      await audit.record(c, { actor: req.user, action: "staff.invited", entityType: "user", entityId: u.rows[0].id, organiserId: event.organiser_id, details: { eventId: event.id } });
-      return u.rows;
+      const id = found?.id || (await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, name, hashSecret(randomToken(24))])).rows[0].id;
+      await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), id]);
+      await outbox.enqueue(c, { to: b.email, userId: id, ...templates.staffInvite({ name, organiser: organiser.name, event: event.title, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+      await audit.record(c, { actor: req.user, action: "staff.invited", entityType: "user", entityId: id, organiserId: event.organiser_id, details: { eventId: event.id } });
+      return [{ id }];
     });
     invited = true;
   }
@@ -520,8 +618,9 @@ router.post("/:orgId/events/:eventId/vendors/:vendorId/members", wrap(async (req
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
   const v = await eventVendor(event, req.params.vendorId);
   const b = check(req.body, { email: r.email(), role: r.oneOf(["manager", "cashier"]) });
-  const { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
-  if (!rows[0]) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
+  const f = await userByEmail(db, b.email);
+  if (!f || f.status !== "active" || f.guest) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
+  const rows = [f];
   await db.query("INSERT INTO vendor_members (vendor_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT (vendor_id, user_id) DO UPDATE SET role = EXCLUDED.role", [v.id, rows[0].id, b.role]);
   await audit.record(null, { actor: req.user, action: "vendor.member_set", entityType: "user", entityId: rows[0].id, organiserId: event.organiser_id, details: { vendorId: v.id, role: b.role } });
   res.status(201).json({ ok: true });

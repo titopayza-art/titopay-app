@@ -207,7 +207,12 @@ test("registration, password reset and session revocation", async () => {
   const c = new h.HttpClient();
   const reg = await c.post("/api/auth/register", { fullName: "New Person", email: "New.Person@Test.Local", password: "long-enough-pass", acceptTerms: true });
   assert.equal(reg.status, 201);
-  assert.equal(reg.body.user.email, "new.person@test.local");
+  assert.equal(reg.body.needsVerification, true);
+  assert.equal(reg.body.email, "new.person@test.local");
+  // Signed in only once the email is confirmed.
+  const { rows: [m] } = await h.db.query("SELECT body FROM message_outbox WHERE to_address = 'new.person@test.local' ORDER BY created_at DESC LIMIT 1");
+  assert.equal((await c.post("/api/auth/verify-email", { token: m.body.match(/#\/verify\/(\S+)/)[1] })).body.signedIn, true);
+  assert.equal((await c.get("/api/auth/me")).body.user.email, "new.person@test.local");
   assert.equal((await new h.HttpClient().post("/api/auth/register", { fullName: "Dup", email: "new.person@test.local", password: "long-enough-pass", acceptTerms: true })).status, 409);
   assert.equal((await new h.HttpClient().post("/api/auth/register", { fullName: "Short", email: "s@test.local", password: "short", acceptTerms: true })).status, 422);
   const f = await new h.HttpClient().post("/api/auth/password/forgot", { email: "new.person@test.local" });

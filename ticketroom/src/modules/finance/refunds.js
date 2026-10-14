@@ -1,7 +1,7 @@
 // Refund lifecycle: requested -> approved -> processing -> completed | failed
 //                   requested -> rejected
-// The approver must be a different person from the requester (also enforced
-// by a CHECK constraint). Provider refunds use the refund id as idempotency
+// The approver must be a different person from the requester, unless the
+// requester is the only active finance person (see decide()). Provider refunds use the refund id as idempotency
 // key, so retrying a failed or uncertain refund can never pay out twice.
 const db = require("../../lib/db");
 const audit = require("../../lib/audit");
@@ -103,7 +103,13 @@ async function decide(actor, refundId, approve, note) {
     if (!r) throw notFound("Refund not found.");
     if (!(await canDecide(c, actor, r))) throw forbidden("You cannot approve this refund.");
     if (r.status !== "requested") throw conflict(`This refund is already ${r.status}.`, "bad_transition");
-    if (r.requested_by === actor.id) throw forbidden("You cannot approve or reject a refund you requested.");
+    // Two people for every refund: whoever asked for it can't also decide it,
+    // unless they are the only active person on the finance team.
+    if (r.requested_by === actor.id) {
+      const { rows: others } = await c.query(
+        "SELECT 1 FROM platform_roles pr JOIN users x ON x.id = pr.user_id WHERE pr.role = 'finance' AND x.status = 'active' AND x.id <> $1 LIMIT 1", [actor.id]);
+      if (others[0]) throw forbidden("You asked for this refund, so someone else in finance must approve it.");
+    }
     const status = approve ? "approved" : "rejected";
     const { rows: u } = await c.query("UPDATE refunds SET status = $2, decided_by = $3, decided_at = now(), decision_note = $4, updated_at = now() WHERE id = $1 RETURNING *", [refundId, status, actor.id, note || null]);
     await audit.record(c, { actor, action: `refund.${status}`, entityType: "refund", entityId: refundId, details: { note } });

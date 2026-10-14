@@ -337,8 +337,13 @@ async function verify({ token }) {
 }
 
 function reset({ token }) {
-  render(main, html`${head("Choose a new password")}<div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"><span class="hint">At least 10 characters.</span></div><div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
-  onSubmit($("#rs"), async (v) => { matchPasswords(v, "password", "passwordConfirm"); await post("/api/auth/password/reset", { token, password: v.password }); toast("Password changed. Please sign in.", "good"); location.href = "/signin"; });
+  render(main, html`${head("Choose your password", "Use at least 10 characters. You'll be signed in straight away.")}<div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"><span class="hint">At least 10 characters.</span></div><div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
+  onSubmit($("#rs"), async (v) => { matchPasswords(v, "password", "passwordConfirm"); const r = await post("/api/auth/password/reset", { token, password: v.password });
+    // The emailed link proved who you are: straight in, to the right portal.
+    toast("Password saved. You're signed in.", "good");
+    location.replace(r.staff ? "/admin" : r.organiser ? "/organisers" : "/account#/tickets");
+    if (!r.staff && !r.organiser) location.reload();
+  });
 }
 
 // Signed out: a calm welcome instead of a sign-in box over an empty page.
