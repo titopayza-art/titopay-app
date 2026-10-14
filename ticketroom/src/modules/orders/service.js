@@ -84,8 +84,9 @@ async function createOrder(user, input) {
     if (!event) throw notFound("Event not found.");
     const qt = await quote(c, event, input.items, input.promoCode, { lockPromo: true });
 
-    const { rows: cap } = await c.query("SELECT COALESCE(SUM(quantity_sold + quantity_held),0)::int AS used FROM ticket_types WHERE event_id = $1", [event.id]);
-    const wanted = qt.lines.reduce((s, l) => s + l.quantity, 0);
+    // Capacity counts people: a couple ticket uses two places.
+    const { rows: cap } = await c.query("SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0)::int AS used FROM ticket_types WHERE event_id = $1", [event.id]);
+    const wanted = qt.lines.reduce((s, l) => s + l.quantity * Math.max(1, l.ticketType.admits || 1), 0);
     if (cap[0].used + wanted > event.capacity) throw conflict("Not enough tickets left for this event.", "sold_out");
     const { rows: orgRows } = await c.query("SELECT commission_bps FROM organisers WHERE id = $1", [event.organiser_id]);
     const organiserFee = bpsOf(qt.subtotal - qt.discount, commissionBps(orgRows[0]));
@@ -191,8 +192,9 @@ async function fulfil(c, orderId, payment) {
   } else {
     // expired / cancelled / failed: inventory was released; try to take it again.
     await c.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [order.event_id]);
-    const { rows: cap } = await c.query("SELECT COALESCE(SUM(quantity_sold + quantity_held),0)::int AS used FROM ticket_types WHERE event_id = $1", [order.event_id]);
-    const wanted = items.reduce((s, i) => s + i.quantity, 0);
+    const { rows: cap } = await c.query("SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0)::int AS used FROM ticket_types WHERE event_id = $1", [order.event_id]);
+    const { rows: [{ wanted }] } = await c.query(
+      "SELECT COALESCE(SUM(oi.quantity * tt.admits),0)::int AS wanted FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = $1", [orderId]);
     if (cap[0].used + wanted > event.capacity || ["cancelled", "suspended"].includes(event.status)) fulfilled = false;
     await c.query("SAVEPOINT rereserve");
     if (fulfilled) {

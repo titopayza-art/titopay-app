@@ -168,7 +168,7 @@ route('GET', '/api/public/pass', function () {
     $g = row('SELECT * FROM gate_passes WHERE link_token_hash = ?', [sha256($t)]);
     if (!$g) throw not_found('This pass link is not valid. If the organiser sent you a new one, use that.');
     $e = row('SELECT e.title, e.ref, e.starts_at, e.ends_at, e.venue_name, e.city, e.status, o.name AS organiser FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.id = ?', [$g['event_id']]);
-    $live = $g['status'] === 'active' && !in_array($e['status'], ['cancelled'], true);
+    $live = $g['status'] === 'active' && !in_array($e['status'], ['cancelled', 'suspended'], true);
     return [
         'pass' => ['holderName' => $g['holder_name'], 'role' => PASS_ROLES[$g['role']] ?? $g['role'], 'accessNote' => $g['access_note'], 'reentry' => (bool) $g['reentry'],
             'status' => $live ? 'active' : 'revoked', 'code' => $g['code'], 'used' => !$g['reentry'] && (int) $g['scans'] > 0],

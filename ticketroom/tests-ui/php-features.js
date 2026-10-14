@@ -223,7 +223,7 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     const stranger = await page(browser, { email: "sipho@example.co.za", password: "fan-password-123" });
     assert.equal((await stranger.request.get(`${BASE}/api/organiser/${orgId}/events/${evId}/passes`)).status(), 404, "passes are private to the organiser");
     const pack = await (await o.request.get(`${BASE}/api/staff/events/${evId}/offline-pack`)).json();
-    assert.ok(pack.tickets.some((t) => t[3] === "Lerato Crew" && t[5] === 1), "re-entry passes are in the offline list");
+    assert.ok(pack.tickets.some((t) => t[3] === "Lerato C." && t[5] === 1), "re-entry passes are in the offline list");
     step("gate passes: re-entry crew, one-entry guest list (5 phones, 1 admit), forged, replaced and cancelled passes refused; offline list");
 
     // The organiser screens and the pass page in a browser.

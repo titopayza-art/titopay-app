@@ -50,14 +50,23 @@ router.get("/dashboard", wrap(async (_req, res) => {
 }));
 
 // ---- organisers ------------------------------------------------------------
+// ?q= searches by ID (EV-…, ORG-…, matched upper-cased) or name.
+function searchTerms(req) {
+  const q = String(req.query.q || "").slice(0, 80).trim();
+  return q ? { ref: q.toUpperCase(), like: `%${q.toLowerCase().replace(/[%_\\]/g, "\\$&")}%` } : { ref: null, like: null };
+}
+
 router.get("/organisers", wrap(async (req, res) => {
   const status = req.query.status ? String(req.query.status) : null;
+  const f = searchTerms(req);
   const { rows } = await db.query(
-    `SELECT o.id, o.name, o.status, o.contact_email, o.contact_phone, o.created_at, o.bank_account_last4,
+    `SELECT o.id, o.ref, o.name, o.status, o.contact_email, o.contact_phone, o.created_at, o.bank_account_last4,
             (SELECT count(*) FROM events WHERE organiser_id = o.id)::int AS events,
             o.commission_bps,
             (SELECT u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = o.id AND m.role = 'owner' LIMIT 1) AS owner_name
-       FROM organisers o WHERE ($1::text IS NULL OR o.status = $1) ORDER BY o.created_at DESC LIMIT 200`, [status]);
+       FROM organisers o WHERE ($1::text IS NULL OR o.status = $1)
+        AND ($2::text IS NULL OR o.ref = $2 OR lower(o.name) LIKE $3 OR lower(o.contact_email) LIKE $3)
+      ORDER BY o.created_at DESC LIMIT 200`, [status, f.ref, f.like]);
   res.json({ organisers: rows });
 }));
 
@@ -93,13 +102,15 @@ router.post("/organisers/:id/commission", ADMIN, wrap(async (req, res) => {
 // ---- events ------------------------------------------------------------------
 router.get("/events", wrap(async (req, res) => {
   const status = req.query.status ? String(req.query.status) : null;
+  const f = searchTerms(req);
   const { rows } = await db.query(
-    `SELECT e.id, e.title, e.slug, e.status, e.starts_at, e.city, e.capacity, e.featured, e.cashless_enabled, e.cancellation_requested_at, e.cancellation_reason, e.status_reason,
-            o.name AS organiser_name, o.id AS organiser_id,
+    `SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.city, e.capacity, e.featured, e.cashless_enabled, e.cancellation_requested_at, e.cancellation_reason, e.status_reason,
+            o.name AS organiser_name, o.id AS organiser_id, o.ref AS organiser_ref,
             (SELECT COALESCE(SUM(quantity_sold),0) FROM ticket_types WHERE event_id = e.id)::int AS sold
        FROM events e JOIN organisers o ON o.id = e.organiser_id
       WHERE ($1::text IS NULL OR e.status = $1 OR ($1 = 'cancel_requests' AND e.cancellation_requested_at IS NOT NULL AND e.status <> 'cancelled'))
-      ORDER BY e.starts_at DESC LIMIT 300`, [status]);
+        AND ($2::text IS NULL OR e.ref = $2 OR o.ref = $2 OR lower(e.title) LIKE $3 OR lower(o.name) LIKE $3)
+      ORDER BY e.starts_at DESC LIMIT 300`, [status, f.ref, f.like]);
   res.json({ events: rows });
 }));
 

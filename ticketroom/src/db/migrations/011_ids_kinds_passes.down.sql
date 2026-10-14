@@ -1,0 +1,10 @@
+SET search_path TO tr;
+ALTER TABLE admission_log DROP COLUMN IF EXISTS pass_id;
+DROP TABLE IF EXISTS gate_passes;
+ALTER TABLE ticket_types DROP COLUMN IF EXISTS admits;
+ALTER TABLE ticket_types DROP COLUMN IF EXISTS kind;
+ALTER TABLE events DROP COLUMN IF EXISTS age_groups;
+DROP INDEX IF EXISTS events_ref_uq;
+DROP INDEX IF EXISTS organisers_ref_uq;
+ALTER TABLE events DROP COLUMN IF EXISTS ref;
+ALTER TABLE organisers DROP COLUMN IF EXISTS ref;

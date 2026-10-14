@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const config = require("../config");
 const db = require("../lib/db");
 const { hashSecret, randomCode } = require("../lib/crypto");
+const { newRef } = require("../lib/refs");
 const tagsSvc = require("../modules/tags/service");
 const pos = require("../modules/pos/service");
 
@@ -48,9 +49,9 @@ async function main() {
   const fan = await user("fan@ticketroom.test", "Thandi Fan", "+27820000007");
 
   const { rows: org } = await db.query(
-    `INSERT INTO organisers (name, slug, contact_email, contact_phone, description, status, approved_at, approved_by, bank_name, bank_account_holder, bank_account_enc, bank_account_last4, bank_branch_code)
+    `INSERT INTO organisers (name, slug, contact_email, contact_phone, description, status, approved_at, approved_by, bank_name, bank_account_holder, bank_account_enc, bank_account_last4, bank_branch_code, ref)
      VALUES ('Jozi Live Events','jozi-live-demo','hello@jozilive.test','+27110000000','Live music and festivals across Gauteng.','approved', now(), $1,
-             'FNB','Jozi Live Events (Pty) Ltd', $2, '4321', '250655') RETURNING *`, [admin.id, require("../lib/crypto").encrypt("62000004321")]);
+             'FNB','Jozi Live Events (Pty) Ltd', $2, '4321', '250655', $3) RETURNING *`, [admin.id, require("../lib/crypto").encrypt("62000004321"), await newRef(db, "organisers")]);
   const orgId = org[0].id;
   await db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'owner')", [orgId, owner.id]);
 
@@ -72,13 +73,13 @@ async function main() {
   for (const e of events) {
     const imageId = await image(orgId, owner.id, e.img);
     const { rows } = await db.query(
-      `INSERT INTO events (organiser_id, slug, title, summary, description, category, venue_name, city, province, starts_at, ends_at, capacity, status, published_at, featured, cashless_enabled, image_upload_id, created_by, accessibility_info, refund_policy)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'published', now(), $13,$14,$15,$16,$17,$18) RETURNING *`,
+      `INSERT INTO events (organiser_id, slug, title, summary, description, category, venue_name, city, province, starts_at, ends_at, capacity, status, published_at, featured, cashless_enabled, image_upload_id, created_by, accessibility_info, refund_policy, ref)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'published', now(), $13,$14,$15,$16,$17,$18,$19) RETURNING *`,
       [orgId, `${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${randomCode(4).toLowerCase()}`, e.title, e.summary,
         `${e.summary}\n\nGates open one hour before the start. Bring your ticket on your phone — screenshots are not accepted once the original has been scanned.\n\nThis is demo data generated for TicketRoom development.`,
         e.category, e.venue, e.city, e.province, at(e.start), at(e.start, 18 + e.hours), e.cap, !!e.featured, !!e.cashless, imageId, owner.id,
         "Wheelchair-accessible entrance and viewing area. Accessible toilets on site. Contact the organiser for companion tickets.",
-        "Tickets are non-refundable unless the event is cancelled or materially changed. Transfers are free until the event starts."]);
+        "Tickets are non-refundable unless the event is cancelled or materially changed. Transfers are free until the event starts.", await newRef(db, "events")]);
     let i = 0;
     for (const [name, price, qty] of e.types) {
       await db.query("INSERT INTO ticket_types (event_id, name, price_cents, quantity_total, sort_order, per_order_limit) VALUES ($1,$2,$3,$4,$5,$6)", [rows[0].id, name, price, qty, i++, price === 0 ? 2 : 10]);

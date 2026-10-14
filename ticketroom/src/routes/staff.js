@@ -7,6 +7,9 @@ const { wrap, requireAuth } = require("../middleware/http");
 const { eventStaffAccess, isStaffRole } = require("../middleware/access");
 const tickets = require("../modules/tickets/service");
 const tags = require("../modules/tags/service");
+const passes = require("../modules/tickets/passes");
+const audit = require("../lib/audit");
+const { gateLabel } = require("../modules/tickets/kinds");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -37,13 +40,40 @@ router.post("/scan", limit("scan", 240, 60e3, (q) => q.user.id), wrap(async (req
 
 router.get("/events/:eventId/stats", wrap(async (req, res) => {
   await eventStaffAccess(req.user, req.params.eventId, "can_scan");
+  // People, not tickets: a couple ticket lets two in.
   const { rows } = await db.query(
-    `SELECT COUNT(*) FILTER (WHERE status = 'used')::int AS admitted, COUNT(*) FILTER (WHERE status IN ('valid','used'))::int AS issued FROM tickets WHERE event_id = $1`, [req.params.eventId]);
+    `SELECT COALESCE(SUM(tt.admits) FILTER (WHERE t.status = 'used'),0)::int AS admitted, COALESCE(SUM(tt.admits) FILTER (WHERE t.status IN ('valid','used')),0)::int AS issued
+       FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id WHERE t.event_id = $1`, [req.params.eventId]);
   const { rows: mine } = await db.query("SELECT count(*)::int AS n FROM admission_log WHERE event_id = $1 AND scanned_by = $2 AND outcome = 'admitted'", [req.params.eventId, req.user.id]);
   const { rows: recent } = await db.query(
-    `SELECT a.outcome, a.occurred_at, a.gate, t.holder_name FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id
+    `SELECT a.outcome, a.occurred_at, a.gate, COALESCE(t.holder_name, g.holder_name) AS holder_name
+       FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN gate_passes g ON g.id = a.pass_id
       WHERE a.event_id = $1 AND a.scanned_by = $2 ORDER BY a.id DESC LIMIT 15`, [req.params.eventId, req.user.id]);
   res.json({ ...rows[0], mine: mine[0].n, recent });
+}));
+
+// Offline scanning. Before the gates open, each scanner phone downloads the
+// event's ticket list (code, QR version, status 1 valid / 2 used / 0 void,
+// holder first name, type) so it can keep checking tickets if the venue's
+// mobile data fails. With ?since= it only returns what changed.
+router.get("/events/:eventId/offline-pack", limit("offlinepack", 60, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const ev = await eventStaffAccess(req.user, req.params.eventId, "can_scan");
+  const sinceDate = req.query.since ? new Date(String(req.query.since)) : null;
+  const since = sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate.toISOString() : null;
+  const { rows: types } = await db.query("SELECT id, name, kind, admits FROM ticket_types WHERE event_id = $1", [ev.id]);
+  const label = Object.fromEntries(types.map((t) => [t.id, gateLabel(t)]));
+  const generatedAt = new Date().toISOString();
+  const { rows: tks } = await db.query(
+    `SELECT code, qr_version, status, holder_name, ticket_type_id FROM tickets WHERE event_id = $1 ${since ? "AND updated_at >= $2" : ""}`, since ? [ev.id, since] : [ev.id]);
+  // "Lerato Mokoena" travels as "Lerato M.".
+  const short = (name) => { const [f, ...rest] = String(name || "").trim().split(/\s+/); return f ? (rest.length ? `${f} ${rest.join(" ").slice(0, 1)}.` : f) : ""; };
+  const list = tks.map((t) => [t.code, t.qr_version, t.status === "valid" ? 1 : t.status === "used" ? 2 : 0, short(t.holder_name), label[t.ticket_type_id] || ""]);
+  // Gate passes ride along; the sixth field marks a re-entry pass.
+  const { rows: gps } = await db.query(
+    `SELECT code, qr_version, status, holder_name, role, access_note, reentry, scans FROM gate_passes WHERE event_id = $1 ${since ? "AND updated_at >= $2" : ""}`, since ? [ev.id, since] : [ev.id]);
+  for (const g of gps) list.push([g.code, g.qr_version, g.status !== "active" ? 0 : !g.reentry && g.scans > 0 ? 2 : 1, short(g.holder_name), passes.passLabel(g), g.reentry ? 1 : 0]);
+  await audit.record(null, { actor: req.user, action: "scan.offline_pack", entityType: "event", entityId: ev.id, organiserId: ev.organiser_id, details: { tickets: list.length, incremental: !!since } });
+  res.json({ event: { id: ev.id, title: ev.title, starts_at: ev.starts_at, ends_at: ev.ends_at }, generatedAt, full: !since, tickets: list });
 }));
 
 // --- tag desk

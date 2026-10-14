@@ -8,6 +8,12 @@ const { formatZar } = require("../../lib/money");
 const FOOTER = `\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. 2026811077`;
 const when = (d) => new Date(d).toLocaleString("en-ZA", { dateStyle: "full", timeStyle: "short", timeZone: "Africa/Johannesburg" });
 const time = (d) => new Date(d).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Johannesburg" });
+// "Sat 21 Nov 2026, 15:00", Johannesburg time.
+const shortWhen = (d) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Africa/Johannesburg" })
+    .formatToParts(new Date(d)).map((x) => [x.type, x.value]));
+  return `${p.weekday} ${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute}`;
+};
 const first = (name) => String(name || "there").trim().split(/\s+/)[0];
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const base = () => config.publicBaseUrl;
@@ -114,6 +120,10 @@ module.exports = {
   staffInvite: ({ name, organiser, event, url }) => ({
     subject: `${organiser} added you as a ticket scanner on TicketRoom`,
     body: `Hi ${first(name)},\n\n${organiser} has added you as a ticket scanner for ${event}. Set a password to get started. The link works for 7 days.\n\nSet my password: ${url}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket.${FOOTER}`,
+  }),
+  gatePass: ({ name, organiser, role, event, url, reentry }) => ({
+    subject: `Your gate pass for ${event.title}`,
+    body: `Hi ${first(name)},\n\n${organiser} has given you a ${role} pass for ${event.title} (${shortWhen(event.starts_at)}, ${[event.venue_name, event.city].filter(Boolean).join(", ")}).\n\nOpen your pass: ${url}\n\nShow the QR code at the gate. ${reentry ? "It lets you in and out as often as you need." : "It works for one entry."} Keep the link to yourself: anyone with it can use your pass.${FOOTER}`,
   }),
   footer: FOOTER,
 };

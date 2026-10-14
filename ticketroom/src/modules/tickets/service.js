@@ -7,6 +7,8 @@ const { conflict, notFound, bad, forbidden } = require("../../lib/errors");
 const outbox = require("../messaging/outbox");
 const templates = require("../messaging/templates");
 const qr = require("./qr");
+const passes = require("./passes");
+const { gateLabel } = require("./kinds");
 
 async function issueForOrder(client, order) {
   const { rows: items } = await client.query("SELECT * FROM order_items WHERE order_id = $1", [order.id]);
@@ -30,7 +32,7 @@ async function qrSvg(ticket) {
 async function listForUser(userId) {
   const { rows } = await db.query(
     `SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents,
-            tt.name AS ticket_type, e.id AS event_id, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
+            tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
             e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, o.reference AS order_reference,
             (SELECT json_build_object('id', tr.id, 'toEmail', tr.to_email, 'expiresAt', tr.expires_at)
                FROM ticket_transfers tr WHERE tr.ticket_id = t.id AND tr.status = 'pending') AS pending_transfer
@@ -125,11 +127,20 @@ async function admit(staff, { eventId, payload, tagInput, gate }) {
     const log = async (outcome, ticketId = null) => {
       await c.query("INSERT INTO admission_log (event_id, ticket_id, scanned_by, outcome, gate) VALUES ($1,$2,$3,$4,$5)", [eventId, ticketId, staff.id, outcome, gate || null]);
     };
-    const now = Date.now();
-    if (ev.status !== "published" || now < new Date(ev.starts_at).getTime() - ADMIT_WINDOW_BEFORE_H * 3600e3 || now > new Date(ev.ends_at).getTime() + ADMIT_WINDOW_AFTER_H * 3600e3) {
+    const notLive = async () => {
       await log("event_not_live");
       return { outcome: "event_not_live", message: "This event is not open for entry right now." };
+    };
+    if (ev.status !== "published") return notLive();
+    // Gate passes have their own, longer window (setup and strike days).
+    const isPass = !tagInput && String(payload || "").trim().startsWith("TP1.");
+    const now = Date.now();
+    if (!isPass && (now < new Date(ev.starts_at).getTime() - ADMIT_WINDOW_BEFORE_H * 3600e3 || now > new Date(ev.ends_at).getTime() + ADMIT_WINDOW_AFTER_H * 3600e3)) {
+      // A typed code outside the ticket window may still be a gate pass.
+      const typed = tagInput ? null : qr.parse(payload);
+      if (!typed || typed.signed || !(await c.query("SELECT 1 FROM gate_passes WHERE code = $1", [typed.code])).rows[0]) return notLive();
     }
+    if (isPass) return passes.admit(c, staff, ev, { payload, gate });
 
     let ticket;
     if (tagInput) {
@@ -143,6 +154,11 @@ async function admit(staff, { eventId, payload, tagInput, gate }) {
       const parsed = qr.parse(payload);
       if (!parsed) { await log("invalid"); return { outcome: "invalid", message: "Not a TicketRoom ticket, or the code has been altered." }; }
       ticket = (await c.query("SELECT * FROM tickets WHERE code = $1", [parsed.code])).rows[0];
+      // A typed code may belong to a gate pass.
+      if (!ticket && !parsed.signed) {
+        const pass = (await c.query("SELECT * FROM gate_passes WHERE code = $1", [parsed.code])).rows[0];
+        if (pass) return passes.admit(c, staff, ev, { gate, typed: pass });
+      }
       if (!ticket) { await log("invalid"); return { outcome: "invalid", message: "Ticket not found." }; }
       if (parsed.signed && parsed.version !== ticket.qr_version) {
         await log("invalid", ticket.id);
@@ -156,13 +172,14 @@ async function admit(staff, { eventId, payload, tagInput, gate }) {
     const { rows } = await c.query(
       `UPDATE tickets SET status = 'used', admitted_at = now(), admitted_by = $2, updated_at = now()
         WHERE id = $1 AND status = 'valid' RETURNING admitted_at`, [ticket.id, staff.id]);
-    const { rows: info } = await c.query("SELECT tt.name AS ticket_type FROM ticket_types tt WHERE tt.id = $1", [ticket.ticket_type_id]);
+    const { rows: [tt] } = await c.query("SELECT name, kind, admits FROM ticket_types WHERE id = $1", [ticket.ticket_type_id]);
+    const type = gateLabel(tt);
     if (!rows[0]) {
       await log("already_used", ticket.id);
-      return { outcome: "already_used", message: "Already scanned.", admittedAt: ticket.admitted_at, holderName: ticket.holder_name, ticketType: info[0]?.ticket_type };
+      return { outcome: "already_used", message: "Already scanned.", admittedAt: ticket.admitted_at, holderName: ticket.holder_name, ticketType: type };
     }
     await log("admitted", ticket.id);
-    return { outcome: "admitted", message: "Admit", holderName: ticket.holder_name, ticketType: info[0]?.ticket_type, code: ticket.code };
+    return { outcome: "admitted", message: "Admit", holderName: ticket.holder_name, ticketType: type, code: ticket.code, admits: tt.admits };
   });
 }
 

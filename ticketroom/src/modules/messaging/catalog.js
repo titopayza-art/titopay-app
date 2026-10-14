@@ -45,6 +45,8 @@ const CATALOG = [
     sample: () => templates.eventChangesRequested({ name: "Naledi Dlamini", event: event(), reason: "Please add the full venue address and a poster image." }) },
   { key: "teamInvite", name: "Added to the TicketRoom team", audience: "Staff", trigger: "When an admin adds a staff member",
     sample: () => templates.teamInvite({ name: "Ayanda Khumalo", by: "Thuso Tshiloane", roles: "Support", url: `${B()}/account#/reset/sample` }) },
+  { key: "gatePass", name: "Gate pass", audience: "Crew and guests", trigger: "When an organiser issues a gate pass with an email address",
+    sample: () => templates.gatePass({ name: "Lerato", organiser: "Soweto Community Arts", role: "Crew", event: event(), url: `${B()}/pass?t=sample`, reentry: true }) },
   { key: "staffInvite", name: "Scanner staff invite", audience: "Staff", trigger: "When an organiser adds a new scanner",
     sample: () => templates.staffInvite({ name: "Sipho", organiser: "Soweto Community Arts", event: "Soweto Sunset Sessions", url: `${B()}/account#/reset/sample` }) },
   { key: "refundCompleted", name: "Refund processed", audience: "Attendee", trigger: "When a refund is paid (paid events)",

@@ -20,4 +20,17 @@ function parse(input) {
   return null;
 }
 
-module.exports = { payloadFor, parse };
+// Gate passes use their own prefix and signing label, so a pass code can never
+// be passed off as a ticket or the other way round: TP1.<code>.<version>.<sig>
+const passSig = (code, version) => hmac(config.keys.qr, `P|${code}|${version}`).toString("base64url").slice(0, 22);
+
+const passPayloadFor = (pass) => `TP1.${pass.code}.${pass.qr_version}.${passSig(pass.code, pass.qr_version)}`;
+
+// Returns { code, version, signed: true } for a valid signed pass payload, or null.
+function parsePass(input) {
+  const m = String(input || "").trim().match(/^TP1\.([2-9A-HJ-NP-TV-Z]{10})\.(\d{1,6})\.([A-Za-z0-9_-]{22})$/);
+  if (!m) return null;
+  return safeEqual(m[3], passSig(m[1], Number(m[2]))) ? { code: m[1], version: Number(m[2]), signed: true } : null;
+}
+
+module.exports = { payloadFor, parse, passPayloadFor, parsePass };

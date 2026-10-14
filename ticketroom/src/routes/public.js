@@ -8,11 +8,14 @@ const { notFound, bad } = require("../lib/errors");
 const { wrap, requireAuth } = require("../middleware/http");
 const orders = require("../modules/orders/service");
 const marketing = require("../modules/marketing/service");
+const passes = require("../modules/tickets/passes");
+const { AGE_GROUPS } = require("../modules/tickets/kinds");
+const { sha256 } = require("../lib/crypto");
 
 const router = express.Router();
 
 const PUBLIC_EVENT = `e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
-  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name,
+  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name, o.ref AS organiser_ref,
   (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
   (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale')::int AS remaining,
   (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id)::int AS likes`;
@@ -24,6 +27,8 @@ router.get("/events", limit("browse", 300, 60e3), wrap(async (req, res) => {
   if (q) { params.push(`%${q.replace(/[%_\\]/g, "\\$&")}%`); where.push(`(e.title ILIKE $${params.length} OR e.venue_name ILIKE $${params.length} OR e.city ILIKE $${params.length} OR o.name ILIKE $${params.length})`); }
   if (req.query.category) { params.push(String(req.query.category)); where.push(`e.category = $${params.length}`); }
   if (req.query.city) { params.push(String(req.query.city)); where.push(`e.city = $${params.length}`); }
+  // An age group also matches events for all ages.
+  if (Object.hasOwn(AGE_GROUPS, String(req.query.age || ""))) { params.push(`%,${req.query.age},%`); where.push(`(',' || COALESCE(e.age_groups, '') || ',' LIKE $${params.length} OR e.age_groups = 'all')`); }
   if (req.query.free === "1") where.push("(e.is_free OR NOT EXISTS (SELECT 1 FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale' AND tt.price_cents > 0))");
   if (req.query.when === "weekend") where.push("e.starts_at < date_trunc('week', now()) + interval '7 days' AND e.starts_at > date_trunc('week', now()) + interval '4 days'");
   if (req.query.when === "month") where.push("e.starts_at < now() + interval '30 days'");
@@ -42,7 +47,7 @@ router.get("/events/:slug", wrap(async (req, res) => {
   const ev = rows[0];
   if (!ev) throw notFound("Event not found.");
   const { rows: types } = await db.query(
-    `SELECT id, name, description, price_cents, per_order_limit, sales_start_at, sales_end_at,
+    `SELECT id, name, description, kind, admits, price_cents, per_order_limit, sales_start_at, sales_end_at,
             GREATEST(quantity_total - quantity_sold - quantity_held, 0)::int AS remaining
        FROM ticket_types WHERE event_id = $1 AND status = 'on_sale' ORDER BY sort_order, price_cents`, [ev.id]);
   const { ticketFee } = require("../lib/money");
@@ -158,6 +163,25 @@ router.post("/support", limit("support", 5, 60 * 60e3), wrap(async (req, res) =>
     "INSERT INTO support_cases (reference, user_id, email, category, subject, body) VALUES ($1,$2,$3,$4,$5,$6) RETURNING reference",
     [reference("SC"), req.user?.id || null, req.user?.email || b.email, b.category, b.subject, b.body]);
   res.status(201).json({ reference: rows[0].reference });
+}));
+
+// A gate pass opened from its private link (no account needed).
+router.get("/pass", limit("passview", 60, 60e3), wrap(async (req, res) => {
+  const t = String(req.query.t || "");
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(t)) throw notFound("This pass link is not valid.");
+  const { rows: [g] } = await db.query("SELECT * FROM gate_passes WHERE link_token_hash = $1", [sha256(t)]);
+  if (!g) throw notFound("This pass link is not valid. If the organiser sent you a new one, use that.");
+  const { rows: [e] } = await db.query(
+    `SELECT e.title, e.ref, e.starts_at, e.ends_at, e.venue_name, e.city, e.status, o.name AS organiser
+       FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.id = $1`, [g.event_id]);
+  const live = g.status === "active" && !["cancelled", "suspended"].includes(e.status);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    pass: { holderName: g.holder_name, role: passes.roleLabel(g.role), accessNote: g.access_note, reentry: g.reentry,
+      status: live ? "active" : "revoked", code: g.code, used: !g.reentry && g.scans > 0 },
+    event: e,
+    svg: live ? await passes.svg(g) : null,
+  });
 }));
 
 router.PUBLIC_EVENT = PUBLIC_EVENT;

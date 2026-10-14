@@ -18,6 +18,9 @@ const pos = require("../modules/pos/service");
 const images = require("../lib/images");
 const outbox = require("../modules/messaging/outbox");
 const templates = require("../modules/messaging/templates");
+const passes = require("../modules/tickets/passes");
+const { TICKET_KINDS, AGE_GROUPS } = require("../modules/tickets/kinds");
+const { newRef } = require("../lib/refs");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -36,8 +39,8 @@ router.post("/apply", limit("orgapply", 5, 24 * 3600e3, (q) => q.user.id), wrap(
   const b = check(req.body, { name: r.str({ min: 2, max: 120 }), contactEmail: r.email(), contactPhone: r.phone({ optional: true }), description: r.text({ optional: true, max: 2000 }) });
   const org = await db.withTx(async (c) => {
     const { rows } = await c.query(
-      "INSERT INTO organisers (name, slug, contact_email, contact_phone, description) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-      [b.name, `${slugify(b.name)}-${randomCode(4).toLowerCase()}`, b.contactEmail, b.contactPhone || null, b.description || null]);
+      "INSERT INTO organisers (ref, name, slug, contact_email, contact_phone, description) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+      [await newRef(c, "organisers"), b.name, `${slugify(b.name)}-${randomCode(4).toLowerCase()}`, b.contactEmail, b.contactPhone || null, b.description || null]);
     await c.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'owner')", [rows[0].id, req.user.id]);
     await audit.record(c, { actor: req.user, action: "organiser.applied", entityType: "organiser", entityId: rows[0].id, organiserId: rows[0].id });
     return rows[0];
@@ -52,7 +55,7 @@ router.get("/orgs", wrap(async (req, res) => {
 }));
 
 const orgView = (o, role) => ({
-  id: o.id, name: o.name, slug: o.slug, status: o.status, contactEmail: o.contact_email, contactPhone: o.contact_phone, description: o.description,
+  id: o.id, ref: o.ref, name: o.name, slug: o.slug, status: o.status, contactEmail: o.contact_email, contactPhone: o.contact_phone, description: o.description,
   payoutHoldDays: o.payout_hold_days, role,
   bank: MONEY.includes(role) || role === "admin" ? { bankName: o.bank_name, accountHolder: o.bank_account_holder, last4: o.bank_account_last4, branchCode: o.bank_branch_code } : null,
 });
@@ -143,13 +146,25 @@ const eventShape = (partial = false) => {
     salesStartAt: r.date({ optional: true }), salesEndAt: r.date({ optional: true }),
     refundPolicy: r.text({ optional: true, max: 2000 }), accessibilityInfo: r.text({ optional: true, max: 2000 }), ageRestriction: r.str({ optional: true, max: 60 }),
     transfersEnabled: r.bool({ optional: true, fallback: undefined }), cashlessEnabled: r.bool({ optional: true, fallback: undefined }), imageUploadId: r.uuid({ optional: true }),
-    isFree: r.bool({ optional: true, fallback: undefined }),
+    isFree: r.bool({ optional: true, fallback: undefined }), ageGroups: r.array(r.oneOf(Object.keys(AGE_GROUPS)), { optional: true, max: 8 }),
   };
 };
 const COLS = { title: "title", summary: "summary", description: "description", category: "category", venueName: "venue_name", address: "address", city: "city", province: "province",
   startsAt: "starts_at", endsAt: "ends_at", doorsOpenAt: "doors_open_at", capacity: "capacity", salesStartAt: "sales_start_at", salesEndAt: "sales_end_at",
   refundPolicy: "refund_policy", accessibilityInfo: "accessibility_info", ageRestriction: "age_restriction", transfersEnabled: "transfers_enabled",
-  cashlessEnabled: "cashless_enabled", imageUploadId: "image_upload_id", isFree: "is_free" };
+  cashlessEnabled: "cashless_enabled", imageUploadId: "image_upload_id", isFree: "is_free", ageGroups: "age_groups" };
+
+// Target age groups are stored as "18_24,25_34"; an empty list clears them
+// (null). An 18+ event cannot be aimed at children, which would only confuse buyers.
+function ageGroups(b, restriction) {
+  if (b.ageGroups === undefined) return b;
+  let g = Object.keys(AGE_GROUPS).filter((k) => b.ageGroups.includes(k));
+  if (g.includes("all")) g = ["all"];
+  if (/\b(16|18|21)\s*\+/.test(String(restriction || "")) && g.some((k) => ["all", "kids", "teens", "families"].includes(k))) {
+    throw bad("This event has an age restriction, so it cannot be aimed at children, teens or families.", { ageGroups: "Remove the under-18 groups, or the age restriction." });
+  }
+  return { ...b, ageGroups: g.length ? g.join(",") : null };
+}
 
 async function assertUpload(orgId, uploadId) {
   if (!uploadId) return;
@@ -164,18 +179,19 @@ router.get("/:orgId/events", wrap(async (req, res) => {
 
 router.post("/:orgId/events", wrap(async (req, res) => {
   const { organiser } = await organiserAccess(req.user, req.params.orgId, EDIT);
-  const b = check(req.body, eventShape());
+  const checked = check(req.body, eventShape());
+  const b = ageGroups(checked, checked.ageRestriction);
   if (new Date(b.endsAt) <= new Date(b.startsAt)) throw bad("The event must end after it starts.", { endsAt: "Must be after the start." });
   await assertUpload(organiser.id, b.imageUploadId);
   // The same event twice (same name, same start) is almost always a double
   // click or a copy made by mistake; listings and tickets would be split.
   const { rows: dup } = await db.query("SELECT id FROM events WHERE organiser_id = $1 AND lower(trim(title)) = lower(trim($2)) AND starts_at = $3 AND status <> 'cancelled'", [organiser.id, b.title, b.startsAt]);
   if (dup.length) throw conflict("You already have an event with this name starting at this time. Open it from My events instead of creating it again.", "duplicate_event", { eventId: dup[0].id });
-  const cols = Object.keys(b).filter((k) => b[k] !== undefined);
+  const cols = Object.keys(b).filter((k) => b[k] !== undefined && b[k] !== null);
   const { rows } = await db.query(
-    `INSERT INTO events (organiser_id, slug, created_by, ${cols.map((k) => COLS[k]).join(", ")})
-     VALUES ($1,$2,$3, ${cols.map((_, i) => `$${i + 4}`).join(", ")}) RETURNING *`,
-    [organiser.id, `${slugify(b.title)}-${randomCode(4).toLowerCase()}`, req.user.id, ...cols.map((k) => b[k])]);
+    `INSERT INTO events (organiser_id, slug, created_by, ref, ${cols.map((k) => COLS[k]).join(", ")})
+     VALUES ($1,$2,$3,$4, ${cols.map((_, i) => `$${i + 5}`).join(", ")}) RETURNING *`,
+    [organiser.id, `${slugify(b.title)}-${randomCode(4).toLowerCase()}`, req.user.id, await newRef(db, "events"), ...cols.map((k) => b[k])]);
   // A free event starts with one free registration type covering its capacity.
   if (b.isFree) {
     await db.query("INSERT INTO ticket_types (event_id, name, description, price_cents, quantity_total, per_order_limit) VALUES ($1,'Free admission','Free entry. No payment needed.',0,$2,4)", [rows[0].id, b.capacity]);
@@ -196,10 +212,12 @@ router.get("/:orgId/events/:eventId", wrap(async (req, res) => {
 
 router.patch("/:orgId/events/:eventId", wrap(async (req, res) => {
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
-  const b = check(req.body, eventShape(true));
+  const checked = check(req.body, eventShape(true));
+  const b = ageGroups(checked, checked.ageRestriction !== undefined ? checked.ageRestriction : event.age_restriction);
   if (["cancelled", "completed"].includes(event.status)) throw conflict("This event can no longer be edited.", "event_locked");
   await assertUpload(event.organiser_id, b.imageUploadId);
-  const { rows: sold } = await db.query("SELECT COALESCE(SUM(quantity_sold + quantity_held),0)::int AS n FROM ticket_types WHERE event_id = $1", [event.id]);
+  // Counted in people: a couple ticket uses two places.
+  const { rows: sold } = await db.query("SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0)::int AS n FROM ticket_types WHERE event_id = $1", [event.id]);
   // Material changes after tickets are sold go through TicketRoom support so buyers can be notified and offered refunds (CPA s47).
   const material = ["startsAt", "endsAt", "venueName", "city", "address"].filter((k) => b[k] !== undefined && String(b[k]) !== String(event[COLS[k]] instanceof Date ? event[COLS[k]].toISOString() : event[COLS[k]]));
   if (sold[0].n > 0 && material.length) throw conflict("Tickets have been sold, so date and venue changes must go through TicketRoom support so buyers are told and offered refunds.", "material_change", { fields: material });
@@ -259,14 +277,19 @@ const ttShape = (o = {}) => ({
   name: r.str({ min: 1, max: 80, ...o }), description: r.str({ optional: true, max: 240 }), priceCents: r.int({ min: 0, max: 10000000, ...o }),
   quantityTotal: r.int({ min: 0, max: 200000, ...o }), perOrderLimit: r.int({ min: 1, max: 50, optional: true }),
   salesStartAt: r.date({ optional: true }), salesEndAt: r.date({ optional: true }), status: r.oneOf(["on_sale", "paused", "hidden"], { optional: true }), sortOrder: r.int({ optional: true, min: 0, max: 1000 }),
+  kind: r.oneOf(Object.keys(TICKET_KINDS), { optional: true }), admits: r.int({ optional: true, min: 1, max: 20 }),
 });
-const TT_COLS = { name: "name", description: "description", priceCents: "price_cents", quantityTotal: "quantity_total", perOrderLimit: "per_order_limit", salesStartAt: "sales_start_at", salesEndAt: "sales_end_at", status: "status", sortOrder: "sort_order" };
+const TT_COLS = { name: "name", description: "description", priceCents: "price_cents", quantityTotal: "quantity_total", perOrderLimit: "per_order_limit", salesStartAt: "sales_start_at", salesEndAt: "sales_end_at", status: "status", sortOrder: "sort_order",
+  kind: "kind", admits: "admits" };
 
 router.post("/:orgId/events/:eventId/ticket-types", wrap(async (req, res) => {
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
   const b = check(req.body, ttShape());
   if (event.is_free && b.priceCents > 0) throw conflict("This is a free event, so every ticket type costs R0.", "free_event");
   if (b.priceCents > 0 && b.priceCents < 1000) throw bad("Paid tickets must cost at least R10.", { priceCents: "Minimum R10, or R0 for free." });
+  // People per ticket defaults to the kind's usual number (a couple ticket admits two).
+  b.kind ??= "general";
+  b.admits ??= TICKET_KINDS[b.kind].admits || 1;
   const keys = Object.keys(b);
   const { rows } = await db.query(`INSERT INTO ticket_types (event_id, ${keys.map((k) => TT_COLS[k]).join(", ")}) VALUES ($1, ${keys.map((_, i) => `$${i + 2}`).join(", ")}) RETURNING *`, [event.id, ...keys.map((k) => b[k])]);
   await audit.record(null, { actor: req.user, action: "ticket_type.created", entityType: "ticket_type", entityId: rows[0].id, organiserId: event.organiser_id, details: { price: b.priceCents, qty: b.quantityTotal } });
@@ -282,6 +305,7 @@ router.patch("/:orgId/events/:eventId/ticket-types/:ttId", wrap(async (req, res)
   if (b.priceCents > 0 && b.priceCents < 1000) throw bad("Paid tickets must cost at least R10.", { priceCents: "Minimum R10, or R0 for free." });
   if (b.priceCents !== undefined && b.priceCents !== cur[0].price_cents && cur[0].quantity_sold + cur[0].quantity_held > 0) throw conflict("Price cannot change after tickets of this type are sold. Create a new ticket type (e.g. a new release) instead.", "price_locked");
   if (b.quantityTotal !== undefined && b.quantityTotal < cur[0].quantity_sold + cur[0].quantity_held) throw conflict(`Quantity cannot go below ${cur[0].quantity_sold + cur[0].quantity_held} (sold + reserved).`, "quantity_below_sold");
+  if (b.admits !== undefined && b.admits !== cur[0].admits && cur[0].quantity_sold + cur[0].quantity_held > 0) throw conflict("People per ticket cannot change after tickets of this type are sold. Create a new ticket type instead.", "admits_locked");
   const keys = Object.keys(b).filter((k) => b[k] !== undefined);
   if (!keys.length) return res.json({ ticketType: cur[0] });
   const { rows } = await db.query(`UPDATE ticket_types SET ${keys.map((k, i) => `${TT_COLS[k]} = $${i + 2}`).join(", ")} WHERE id = $1 RETURNING *`, [cur[0].id, ...keys.map((k) => b[k])]);
@@ -437,13 +461,14 @@ router.post("/:orgId/events/:eventId/staff", limit("staffadd", 30, 3600e3, (q) =
 router.get("/:orgId/events/:eventId/checkins/live", wrap(async (req, res) => {
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, ALL);
   const [tot, scanners, recent, rate] = await Promise.all([
-    db.query("SELECT count(*) FILTER (WHERE status = 'used')::int AS admitted, count(*) FILTER (WHERE status IN ('valid','used'))::int AS issued FROM tickets WHERE event_id = $1", [event.id]),
+    // People, not tickets: a couple ticket lets two in.
+    db.query("SELECT COALESCE(SUM(tt.admits) FILTER (WHERE t.status = 'used'),0)::int AS admitted, COALESCE(SUM(tt.admits) FILTER (WHERE t.status IN ('valid','used')),0)::int AS issued FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id WHERE t.event_id = $1", [event.id]),
     db.query(
       `SELECT u.full_name, count(*) FILTER (WHERE a.outcome = 'admitted')::int AS admitted, count(*) FILTER (WHERE a.outcome <> 'admitted')::int AS refused, max(a.occurred_at) AS last_scan
          FROM admission_log a JOIN users u ON u.id = a.scanned_by WHERE a.event_id = $1 GROUP BY u.id ORDER BY admitted DESC`, [event.id]),
     db.query(
-      `SELECT a.outcome, a.occurred_at, a.gate, t.holder_name, u.full_name AS scanner
-         FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id JOIN users u ON u.id = a.scanned_by WHERE a.event_id = $1 ORDER BY a.id DESC LIMIT 20`, [event.id]),
+      `SELECT a.outcome, a.occurred_at, a.gate, COALESCE(t.holder_name, g.holder_name) AS holder_name, u.full_name AS scanner
+         FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN gate_passes g ON g.id = a.pass_id JOIN users u ON u.id = a.scanned_by WHERE a.event_id = $1 ORDER BY a.id DESC LIMIT 20`, [event.id]),
     db.query("SELECT count(*)::int AS n FROM admission_log WHERE event_id = $1 AND outcome = 'admitted' AND occurred_at > now() - interval '15 minutes'", [event.id]),
   ]);
   res.setHeader("Cache-Control", "no-store");
@@ -627,6 +652,61 @@ router.get("/:orgId/events/:eventId/qr", wrap(async (req, res) => {
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, ["owner", "manager", "marketing", "finance", "viewer"]);
   const url = `${require("../config").publicBaseUrl}/events/${event.slug}`;
   res.json({ url, title: event.title, status: event.status, svg: await require("../lib/qr-people").qrForPeople(url, { dark: req.query.dark, light: req.query.light, ecc: req.query.ecc || "Q" }) });
+}));
+
+// ---- gate passes -----------------------------------------------------------------
+// Crew, artists, media, vendors and guests get a gate pass instead of a
+// ticket (see modules/tickets/passes.js). Passes sent by email wait, like
+// other invitations, until TicketRoom has approved the organiser.
+const passShape = () => ({ role: r.oneOf(Object.keys(passes.PASS_ROLES)), accessNote: r.str({ optional: true, max: 60 }), reentry: r.bool({ fallback: true }) });
+const personShape = () => ({ holderName: r.str({ min: 2, max: 120 }), email: r.email({ optional: true }) });
+
+function passesOpen(event) {
+  if (["cancelled", "completed"].includes(event.status)) throw conflict("This event has ended or was cancelled.", "event_locked");
+}
+
+router.get("/:orgId/events/:eventId/passes", wrap(async (req, res) => {
+  const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, ALL);
+  const { rows } = await db.query("SELECT * FROM gate_passes WHERE event_id = $1 ORDER BY created_at DESC, holder_name", [event.id]);
+  res.json({ passes: rows.map(passes.view), roles: passes.PASS_ROLES });
+}));
+
+router.post("/:orgId/events/:eventId/passes", limit("gatepass", 300, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const { event, organiser } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  passesOpen(event);
+  const b = check(req.body, { ...personShape(), ...passShape() });
+  if (b.email) requireApproved(organiser);
+  const [out] = await passes.issue(req.user, event, [b], b);
+  res.status(201).json(out);
+}));
+
+router.post("/:orgId/events/:eventId/passes/bulk", limit("gatepass", 300, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const { event, organiser } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  passesOpen(event);
+  const b = check(req.body, { people: r.array(r.object(personShape()), { min: 1, max: 200 }), ...passShape() });
+  if (b.people.some((p) => p.email)) requireApproved(organiser);
+  res.status(201).json({ passes: await passes.issue(req.user, event, b.people, b) });
+}));
+
+// The pass's QR code, for printing a badge or sending it another way.
+router.get("/:orgId/events/:eventId/passes/:passId", wrap(async (req, res) => {
+  const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  const g = await passes.get(event, req.params.passId);
+  res.json({ pass: passes.view(g), svg: g.status === "active" ? await passes.svg(g) : null });
+}));
+
+router.post("/:orgId/events/:eventId/passes/:passId/revoke", wrap(async (req, res) => {
+  const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  res.json({ pass: passes.view(await passes.revoke(req.user, event, req.params.passId)) });
+}));
+
+// New link and QR code (lost phone, link shared by mistake). Old copies stop working.
+router.post("/:orgId/events/:eventId/passes/:passId/reissue", limit("gatepass", 300, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const { event, organiser } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  const g = await passes.get(event, req.params.passId);
+  if (g.status !== "active") throw conflict("This pass was cancelled. Issue a new one instead.", "pass_revoked");
+  if (g.email) requireApproved(organiser);
+  res.json(await passes.reissue(req.user, event, g.id));
 }));
 
 module.exports = router;

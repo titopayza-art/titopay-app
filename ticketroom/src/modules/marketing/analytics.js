@@ -25,7 +25,7 @@ async function eventAnalytics(event) {
                          WHERE o.event_id = $1 AND o.status IN ${PAID} AND o.paid_at::date = d::date),0)::bigint AS revenue_cents
          FROM generate_series((now() - interval '29 days')::date, now()::date, interval '1 day') d ORDER BY d`, [id]),
     db.query(
-      `SELECT tt.id, tt.name, tt.price_cents, tt.quantity_total, tt.quantity_sold, tt.quantity_held,
+      `SELECT tt.id, tt.name, tt.kind, tt.admits, tt.price_cents, tt.quantity_total, tt.quantity_sold, tt.quantity_held,
               (SELECT count(*) FROM tickets t WHERE t.ticket_type_id = tt.id AND t.status = 'used')::int AS checked_in
          FROM ticket_types tt WHERE tt.event_id = $1 ORDER BY tt.sort_order, tt.price_cents`, [id]),
     db.query(
@@ -61,7 +61,7 @@ async function eventAnalytics(event) {
 
 async function organiserDashboard(organiserId) {
   const { rows } = await db.query(
-    `SELECT e.id, e.title, e.slug, e.status, e.starts_at, e.capacity,
+    `SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.capacity,
             COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0)::int AS sold,
             e.is_free,
             COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN ${PAID}),0)::bigint AS revenue_cents,

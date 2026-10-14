@@ -61,7 +61,7 @@ function org_mask(?string $addr): string
 // ============================================================== analytics
 function org_dashboard(string $orgId): array
 {
-    $events = rows("SELECT e.id, e.title, e.slug, e.status, e.starts_at, e.capacity,
+    $events = rows("SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.capacity,
                            COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0) AS sold,
                            e.is_free,
                            COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . "),0) AS revenue_cents,
@@ -731,8 +731,8 @@ route('GET', '/api/organiser/:orgId/events/:eventId/checkins/live', function ($a
     $scanners = rows("SELECT u.full_name, COALESCE(SUM(CASE WHEN a.outcome = 'admitted' THEN 1 ELSE 0 END),0) AS admitted,
                              COALESCE(SUM(CASE WHEN a.outcome <> 'admitted' THEN 1 ELSE 0 END),0) AS refused, max(a.occurred_at) AS last_scan
                         FROM admission_log a JOIN users u ON u.id = a.scanned_by WHERE a.event_id = ? GROUP BY u.id ORDER BY admitted DESC", [$event['id']]);
-    $recent = rows('SELECT a.outcome, a.occurred_at, a.gate, t.holder_name, u.full_name AS scanner
-                      FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id JOIN users u ON u.id = a.scanned_by WHERE a.event_id = ? ORDER BY a.id DESC LIMIT 20', [$event['id']]);
+    $recent = rows('SELECT a.outcome, a.occurred_at, a.gate, COALESCE(t.holder_name, g.holder_name) AS holder_name, u.full_name AS scanner
+                      FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN gate_passes g ON g.id = a.pass_id JOIN users u ON u.id = a.scanned_by WHERE a.event_id = ? ORDER BY a.id DESC LIMIT 20', [$event['id']]);
     $rate = (int) val("SELECT count(*) FROM admission_log WHERE event_id = ? AND outcome = 'admitted' AND occurred_at > ?", [$event['id'], iso_in(-15 * 60)]);
     return ['admitted' => (int) $tot['admitted'], 'issued' => (int) $tot['issued'], 'last15min' => $rate, 'scanners' => $scanners, 'recent' => $recent, 'at' => now_iso()];
 });
@@ -893,9 +893,10 @@ function org_pass_send(array $g, array $event, string $url): void
 function org_issue_passes(array $u, array $event, array $org, array $people, array $opts): array
 {
     if (array_filter(array_column($people, 'email'))) org_require_approved($org);
-    $have = (int) val('SELECT count(*) FROM gate_passes WHERE event_id = ?', [$event['id']]);
-    if ($have + count($people) > ORG_PASS_LIMIT) throw conflict('An event can have at most ' . ORG_PASS_LIMIT . ' gate passes.', 'pass_limit');
     return tx(function () use ($u, $event, $people, $opts) {
+        // Counted inside the write transaction, so two bulk uploads at once cannot pass the limit together.
+        $have = (int) val('SELECT count(*) FROM gate_passes WHERE event_id = ?', [$event['id']]);
+        if ($have + count($people) > ORG_PASS_LIMIT) throw conflict('An event can have at most ' . ORG_PASS_LIMIT . ' gate passes.', 'pass_limit');
         $out = [];
         $now = now_iso();
         foreach ($people as $p) {

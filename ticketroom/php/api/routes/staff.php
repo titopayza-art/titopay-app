@@ -51,6 +51,15 @@ route('GET', '/api/staff/events/:eventId/stats', function ($a) {
     return ['admitted' => $c['admitted'], 'issued' => $c['issued'], 'mine' => $mine, 'recent' => $recent];
 });
 
+// "Lerato Mokoena" becomes "Lerato M.": enough for the gate, less to lose on a phone.
+function staff_short_name(?string $name): string
+{
+    $n = trim((string) $name);
+    if ($n === '') return '';
+    $parts = preg_split('/\s+/', $n);
+    return count($parts) > 1 ? $parts[0] . ' ' . mb_substr($parts[1], 0, 1) . '.' : $parts[0];
+}
+
 // Offline scanning. Before the gates open, each scanner phone downloads the
 // event's ticket list (code, QR version, status, holder first name, stand) so
 // it can keep checking tickets if the stadium's mobile data fails. With
@@ -66,13 +75,13 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
     $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
     $list = [];
     while ($t = $st->fetch(PDO::FETCH_NUM)) {
-        $first = $t[3] ? trim(explode(' ', trim($t[3]))[0] . (str_contains(trim($t[3]), ' ') ? ' ' . mb_substr(trim(substr(trim($t[3]), strpos(trim($t[3]), ' '))), 0, 1) . '.' : '')) : '';
+        $first = staff_short_name($t[3]);
         $list[] = [$t[0], (int) $t[1], $t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0), $first, $types[$t[4]] ?? ''];
     }
     $st->closeCursor();
     // Gate passes ride along; the sixth field marks a re-entry pass.
     foreach (rows('SELECT code, qr_version, status, holder_name, role, access_note, reentry, scans FROM gate_passes WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]) as $g) {
-        $list[] = [$g['code'], (int) $g['qr_version'], $g['status'] !== 'active' ? 0 : ((int) $g['reentry'] === 0 && (int) $g['scans'] > 0 ? 2 : 1), $g['holder_name'],
+        $list[] = [$g['code'], (int) $g['qr_version'], $g['status'] !== 'active' ? 0 : ((int) $g['reentry'] === 0 && (int) $g['scans'] > 0 ? 2 : 1), staff_short_name($g['holder_name']),
             'Gate pass · ' . (PASS_ROLES[$g['role']] ?? $g['role']) . ($g['access_note'] ? " · {$g['access_note']}" : ''), (int) $g['reentry']];
     }
     audit('scan.offline_pack', ['entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['tickets' => count($list), 'incremental' => (bool) $since]]);
