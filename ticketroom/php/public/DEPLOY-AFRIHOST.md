@@ -10,7 +10,7 @@ most of it waiting for the certificate.
 | What | Where it comes from |
 | --- | --- |
 | cPanel login | Afrihost Client Zone → **Hosting** → your package → **cPanel** |
-| `ticketroom-<date>.zip` | The build you were given. `version.txt` inside it names the build. |
+| `ticketroom.zip` | The build you were given. Every version has this same name; `version.txt` inside it names the build. |
 | The temporary admin password | Given to you with the zip. It is not written in any file. |
 | A password for the `hello@ticketroom.co.za` mailbox | You create it in step 4. |
 
@@ -26,15 +26,15 @@ every account, event, order and setting.
 
 1. cPanel → **File Manager** → `public_html`. **Settings** (top right) →
    tick **Show Hidden Files (dotfiles)**.
-2. **Delete every `.zip` file in `public_html`** (for example an old
-   `ticketroom.zip`). cPanel will not upload a file over one with the same
-   name unless you tick **Overwrite existing files**, and then you end up
-   extracting the old version again. Do not delete `data`, `ticketroom-data`
+2. **Delete the old `ticketroom.zip` from `public_html`** if it is still
+   there. Every version is called `ticketroom.zip`, and cPanel will not
+   upload a file over one with the same name (unless you tick **Overwrite
+   existing files**): you would end up extracting the old version again. Do not delete `data`, `ticketroom-data`
    or `tr-data`: that is your data.
-3. **Upload** the new zip into `public_html`. Wait for the bar to reach 100%.
-4. Right-click the zip → **Extract** → into `/public_html` → **Extract
+3. **Upload** the new `ticketroom.zip` into `public_html`. Wait for the bar to reach 100%.
+4. Right-click `ticketroom.zip` → **Extract** → into `/public_html` → **Extract
    File(s)**. Existing files are replaced.
-5. Delete the zip.
+5. Delete `ticketroom.zip`.
 6. Open **https://ticketroom.co.za/version.txt**. It must say
    `TicketRoom build {{BUILD}}`. An older build means step 2 or 4 did not
    happen: do them again.
@@ -76,12 +76,12 @@ cPanel → **File Manager** → `public_html`.
 
 ## 3. Upload the site
 
-1. Upload the TicketRoom zip into `public_html`.
+1. Upload `ticketroom.zip` into `public_html`.
 2. Right-click it → **Extract**, into `public_html` itself.
 3. You should now see `index.html`, `api`, `assets`, `data` and `legal`
    directly in `public_html`, not inside another folder. If they went into a
    folder, move its contents up one level.
-4. **Delete the zip from the server.** Then open
+4. **Delete `ticketroom.zip` from the server.** Then open
    https://ticketroom.co.za/version.txt: it should say `TicketRoom build {{BUILD}}`.
 
 Permissions: `data` must be writable: `755` (or `775` if the host runs PHP as

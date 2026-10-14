@@ -6,11 +6,12 @@ This is build {{BUILD}}.
 UPDATING A SITE THAT IS ALREADY LIVE
 ------------------------------------
   1. cPanel → File Manager → public_html. Settings → tick "Show Hidden Files".
-  2. DELETE every old .zip in public_html first (cPanel will not upload over
-     a file with the same name, and you would extract the old version again).
+  2. DELETE the old ticketroom.zip in public_html first. Every version has
+     that same name, and cPanel will not upload over a file with the same
+     name: you would extract the old version again.
      Never delete the data, ticketroom-data or tr-data folders.
-  3. Upload the new zip, right-click → Extract into /public_html, then delete
-     the zip.
+  3. Upload the new ticketroom.zip, right-click → Extract into /public_html,
+     then delete ticketroom.zip.
   4. Open https://ticketroom.co.za/version.txt. It must say
      "TicketRoom build {{BUILD}}". If it shows an older build, repeat 2 and 3.
   5. On your phone: close TicketRoom and open it again. Remove an old
@@ -24,8 +25,8 @@ in order, with the cPanel screens named.
 
 The short version:
   1. cPanel → File Manager → public_html. Settings (top right) → tick
-     "Show Hidden Files". Upload the zip, right-click → Extract into
-     public_html itself, then DELETE the zip.
+     "Show Hidden Files". Upload ticketroom.zip, right-click → Extract into
+     public_html itself, then DELETE ticketroom.zip.
   2. Open https://ticketroom.co.za. The home page shows straight away.
      There is no setup screen: the database and the admin account are
      created by themselves the first time the site is opened.
