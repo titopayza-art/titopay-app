@@ -343,6 +343,9 @@ function tpl(string $name, array $a): array
         case 'callbackReceived':
             return ['subject' => "We've got your callback request ({$a['reference']})",
                 'body' => $hi . "Thanks for getting in touch. Your reference is {$a['reference']}, and someone from our team will get back to you within {$a['responseTime']}.\n\nOur office hours: {$a['hoursNote']}\n\nIf there's anything to add, reply to this email or write to {$a['email']} and mention {$a['reference']}." . FOOTER];
+        case 'contactReceived':
+            return ['subject' => "We've got your message ({$a['reference']})",
+                'body' => $hi . "Thanks for getting in touch about \"{$a['topic']}\". Your reference is {$a['reference']}, and someone from our team will reply within {$a['responseTime']}.\n\nOur office hours: {$a['hoursNote']}\n\nIf there's anything to add, reply to this email or write to {$a['email']} and mention {$a['reference']}." . FOOTER];
         case 'unsubscribeLink':
             return ['subject' => 'Unsubscribe from TicketRoom marketing',
                 'body' => $hi . "You asked to stop getting marketing emails from TicketRoom and the organisers you follow. Please confirm below. The link works for 7 days.\n\nConfirm unsubscribe: {$a['url']}\n\nWe'll still email you about tickets you already have. If you didn't ask for this, you can ignore this email." . FOOTER];
@@ -411,6 +414,7 @@ function email_catalog(): array
         ['key' => 'transferDone', 'name' => 'Ticket transfer accepted', 'audience' => 'Attendee', 'trigger' => 'When the friend accepts', 'sample' => fn() => tpl('transferDone', ['event' => $ev, 'toEmail' => 'friend@example.co.za'])],
         ['key' => 'verifyEmail', 'name' => 'Welcome / confirm email', 'audience' => 'Everyone', 'trigger' => 'On sign-up', 'sample' => fn() => tpl('verifyEmail', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/verify/sample"])],
         ['key' => 'passwordReset', 'name' => 'Password reset', 'audience' => 'Everyone', 'trigger' => 'On "Forgot password"', 'sample' => fn() => tpl('passwordReset', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'contactReceived', 'name' => 'Contact form received', 'audience' => 'Everyone', 'trigger' => 'When someone writes in from the Contact page', 'sample' => fn() => tpl('contactReceived', ['name' => 'Lerato Mokoena', 'reference' => 'CQ-7J2M9P4X', 'topic' => 'My tickets', 'responseTime' => '24–48 hours', 'email' => 'hello@ticketroom.co.za', 'hoursNote' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.'])],
         ['key' => 'callbackReceived', 'name' => 'Callback request received', 'audience' => 'Everyone', 'trigger' => 'When the callback form is sent', 'sample' => fn() => tpl('callbackReceived', ['name' => 'Lerato Mokoena', 'reference' => 'CB-4H8D2K', 'responseTime' => '24–48 hours', 'email' => 'hello@ticketroom.co.za', 'hoursNote' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.'])],
         ['key' => 'unsubscribeLink', 'name' => 'Unsubscribe link', 'audience' => 'Everyone', 'trigger' => 'From the Unsubscribe page', 'sample' => fn() => tpl('unsubscribeLink', ['name' => 'Lerato Mokoena', 'url' => "$B/unsubscribe?t=sample"])],
         ['key' => 'newsletterConfirm', 'name' => 'Confirm updates subscription', 'audience' => 'Subscriber', 'trigger' => 'When someone subscribes to updates on the website', 'sample' => fn() => tpl('newsletterConfirm', ['url' => "$B/subscribe?t=sample"])],

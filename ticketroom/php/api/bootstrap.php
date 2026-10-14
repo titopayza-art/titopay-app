@@ -155,7 +155,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -249,6 +249,10 @@ const UPGRADES = [
         'ALTER TABLE tickets ADD COLUMN test INTEGER NOT NULL DEFAULT 0',
         "UPDATE orders SET test = 1 WHERE id IN (SELECT order_id FROM payments WHERE environment <> 'live')",
         'UPDATE tickets SET test = 1 WHERE order_id IN (SELECT id FROM orders WHERE test = 1)',
+    ],
+    // Line-up on the event page (and Trending Artists on the home page).
+    10 => [
+        'ALTER TABLE events ADD COLUMN lineup TEXT',
     ],
 ];
 // The platform owner is the first administrator. Nobody else can change

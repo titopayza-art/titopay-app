@@ -24,6 +24,7 @@ const clearLimits = () => sql("DELETE FROM rate_limits");
 
 async function page(browser, creds, viewport = { width: 1280, height: 900 }) {
   const ctx = await browser.newContext({ viewport });
+  await ctx.addInitScript(() => { try { localStorage.setItem("tr_consent", JSON.stringify({ v: 1, functional: true, analytics: true })); } catch { /* no storage */ } });
   const p = await ctx.newPage();
   p.on("pageerror", (e) => problems.push(`[pageerror] ${p.url()} ${e.message}`));
   if (creds) assert.equal((await p.request.post(`${BASE}/api/auth/login`, { data: creds })).status(), 200, `sign in ${creds.email}`);

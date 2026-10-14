@@ -27,6 +27,7 @@ const checked = new Set();
   let pages = 0;
   for (const [who, creds] of Object.entries(PEOPLE)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await ctx.addInitScript(() => { try { localStorage.setItem("tr_consent", JSON.stringify({ v: 1, functional: true, analytics: true })); } catch { /* no storage */ } });
     const p = await ctx.newPage();
     p.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource.*(401|409|501)/.test(m.text())) problems.push(`[${who}] console on ${p.url()}: ${m.text()}`); });
     p.on("pageerror", (e) => problems.push(`[${who}] page error on ${p.url()}: ${e.message}`));

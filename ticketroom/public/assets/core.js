@@ -415,12 +415,67 @@ export function footer(el) {
     <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p>
       <a class="footer-social" href="${INSTAGRAM}" target="_blank" rel="noopener">${svgIcon("instagram", 20)} @ticketroom_za on Instagram</a></div>
-    <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
+    <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Contact us</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
-    <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
+    <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li><li><button type="button" class="btn-link footer-link" data-cookie-settings>Cookie settings</button></li></ul></div>
   </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
   $("[data-sub]", el).append(subscribeForm("footer"));
+  $("[data-cookie-settings]", el).addEventListener("click", () => cookiePreferences());
+  cookieBanner();
   siteExtras().catch(() => {});
+}
+
+// ---------- cookie consent ----------
+// Necessary cookies (sign-in, security, your basket) are always on. Optional
+// ones are used only after you say yes: functional (remembering choices such
+// as the organiser link that brought you here) and analytics (counting visits
+// to improve the site; TicketRoom uses no third-party trackers or ads).
+const CONSENT_KEY = "tr_consent";
+const CONSENT_GROUPS = [
+  ["necessary", "Necessary", "Keep you signed in, protect forms against misuse and hold your tickets while you check out. The site can't work without these.", true],
+  ["functional", "Functional", "Remember choices you make, such as the organisation you last worked in, or the organiser link that brought you to an event so they're credited for the sale."],
+  ["analytics", "Analytics", "Count visits and page views so we can see what works and fix what doesn't. Counted on TicketRoom's own servers, never shared with ad networks."],
+];
+const readConsent = () => { try { return JSON.parse(localStorage.getItem(CONSENT_KEY) || "null"); } catch { return null; } };
+export const consent = (group) => group === "necessary" || !!readConsent()?.[group];
+function saveConsent(choice) {
+  const c = { v: 1, at: new Date().toISOString(), functional: !!choice.functional, analytics: !!choice.analytics };
+  try { localStorage.setItem(CONSENT_KEY, JSON.stringify(c)); } catch { /* private mode: asked again next visit */ }
+  // Saying no later removes what was kept under that group.
+  if (!c.functional) { try { localStorage.removeItem("tr_org"); for (const k of Object.keys(sessionStorage)) if (k.startsWith("tr_ref_")) sessionStorage.removeItem(k); } catch { /* ignore */ } }
+  document.cookie = `${CONSENT_KEY}=${c.functional ? "f" : ""}${c.analytics ? "a" : ""}-;path=/;max-age=${180 * 86400};samesite=lax${location.protocol === "https:" ? ";secure" : ""}`;
+  document.querySelector(".cookie-banner")?.remove();
+}
+export function cookieBanner() {
+  if (readConsent() || document.querySelector(".cookie-banner")) return;
+  const b = document.createElement("section");
+  b.className = "cookie-banner";
+  b.setAttribute("aria-label", "Cookie consent");
+  render(b, html`<div><strong>We value your privacy</strong><p class="small mb-0">We use necessary cookies to run TicketRoom. With your permission we also use functional and analytics cookies. You can change your mind any time under Cookie settings. <a href="/legal/cookies">Cookie Policy</a></p></div>
+    <div class="row"><button type="button" class="btn btn-ghost btn-sm" data-c="custom">Customise</button><button type="button" class="btn btn-ghost btn-sm" data-c="reject">Reject all</button><button type="button" class="btn btn-primary btn-sm" data-c="accept">Accept all</button></div>`);
+  document.body.append(b);
+  b.addEventListener("click", (e) => {
+    const k = e.target.closest("[data-c]")?.dataset.c;
+    if (k === "accept") saveConsent({ functional: true, analytics: true });
+    else if (k === "reject") saveConsent({});
+    else if (k === "custom") cookiePreferences();
+  });
+}
+export function cookiePreferences() {
+  const cur = readConsent() || {};
+  const d = dialog("Customise consent preferences", html`<form class="stack">
+    <p class="small mb-0">Choose which cookies TicketRoom may use. Necessary cookies are always active because the site doesn't work without them.</p>
+    ${CONSENT_GROUPS.map(([k, l, about, always]) => html`<div class="consent-row"><div><strong>${l}</strong><p class="small muted mb-0">${about}</p></div>
+      ${always ? html`<span class="badge good">Always active</span>` : html`<label class="switch"><input type="checkbox" name="${k}" ${raw(cur[k] ? "checked" : "")}><span class="sr-only">${l}</span><span class="track" aria-hidden="true"></span></label>`}</div>`)}
+    <div class="row end"><button type="button" class="btn btn-ghost" data-c="reject">Reject all</button><button type="button" class="btn btn-ghost" data-c="save">Save my preferences</button><button type="button" class="btn btn-primary" data-c="accept">Accept all</button></div></form>`);
+  d.addEventListener("click", (e) => {
+    const k = e.target.closest("[data-c]")?.dataset.c;
+    if (!k) return;
+    const f = $("form", d);
+    saveConsent(k === "accept" ? { functional: true, analytics: true } : k === "reject" ? {} : { functional: f.elements.functional.checked, analytics: f.elements.analytics.checked });
+    d.close();
+    toast("Your cookie preferences are saved.", "good");
+  });
 }
 
 // ---------- site information: banner, hours, assistant, callback ----------

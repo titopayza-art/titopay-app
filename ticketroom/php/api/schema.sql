@@ -176,6 +176,7 @@ CREATE TABLE events (
   published_at              TEXT,
   ref                       TEXT,
   age_groups                TEXT,
+  lineup                    TEXT,
   CHECK (ends_at > starts_at)
 );
 CREATE UNIQUE INDEX events_ref_uq ON events (ref);
