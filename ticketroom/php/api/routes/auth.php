@@ -146,7 +146,8 @@ route('POST', '/api/auth/verify-email', function () {
     });
     if ($r['first']) create_session($r['user']['id']);
     $tickets = (int) val("SELECT count(*) FROM tickets WHERE owner_user_id = ? AND status = 'valid'", [$r['user']['id']]);
-    return ['ok' => true, 'signedIn' => $r['first'], 'firstName' => explode(' ', trim($r['user']['full_name']))[0], 'tickets' => $tickets];
+    $organiser = (bool) val('SELECT 1 FROM organiser_members WHERE user_id = ?', [$r['user']['id']]);
+    return ['ok' => true, 'signedIn' => $r['first'], 'firstName' => explode(' ', trim($r['user']['full_name']))[0], 'tickets' => $tickets, 'organiser' => $organiser];
 });
 
 // "Didn't get the email?" Same answer whether or not the address has an account.

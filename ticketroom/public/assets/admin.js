@@ -411,20 +411,63 @@ async function terminals() {
   $$("[data-t]").forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/terminals/${b.dataset.t}/status`, { status: b.dataset.s }))) terminals(); }));
 }
 
+// Support: every question is a conversation. Customer care replies (by
+// email), or passes it to the organiser it belongs to, who replies from their
+// portal. "With organiser" shows who has it.
 async function support() {
   const { cases } = await get("/api/admin/support");
   const open = cases.filter((c) => ["open", "in_progress"].includes(c.status));
-  render(main, html`${head("Support & callbacks", `${open.length} open · ${open.filter((c) => c.overdue).length} overdue. Callback requests promise a response within 24–48 hours.`)}
+  render(main, html`${head("Support & callbacks", `${open.length} open · ${open.filter((c) => c.overdue).length} overdue · ${open.filter((c) => c.handled_by === "organiser").length} with organisers. Callback requests promise a response within 24–48 hours.`)}
     ${tbl(["Ref", "Customer", "Topic", "Request", "Due", "Status", ""], cases.map((c) => html`<tr><td class="mono">${c.reference}<div class="tiny muted">${c.source || "web"}</div></td>
       <td class="small">${c.full_name ? html`<strong>${c.full_name}</strong><br>` : ""}${c.phone ? html`<a href="tel:${c.phone}">${c.phone}</a><br>` : ""}<a href="mailto:${c.email}">${c.email}</a>${c.preferred_time ? html`<div class="tiny muted">best time: ${c.preferred_time}</div>` : ""}</td>
       <td>${c.category}</td><td><strong>${c.subject}</strong><div class="small muted">${c.body.slice(0, 160)}</div></td>
-      <td class="small">${c.due_at ? html`${fmtDateTime(c.due_at)}${c.overdue ? html`<div><span class="badge bad">overdue</span></div>` : ""}` : "—"}</td><td>${badge(c.status)}${c.assignee ? html`<div class="tiny muted">${c.assignee}</div>` : ""}</td>
-      <td>${isA() || isS() ? html`<button class="btn btn-ghost btn-sm" data-c="${c.id}">Update</button>` : ""}</td></tr>`))}`);
-  $$("[data-c]").forEach((b) => b.addEventListener("click", () => {
-    const c = cases.find((x) => String(x.id) === b.dataset.c);
-    const dlg = dialog(c.subject, html`<p class="prose small">${c.body}</p><form class="stack"><div class="field"><label for="ss">Status</label><select id="ss" name="status">${["open", "in_progress", "resolved", "closed"].map((s) => html`<option ${raw(s === c.status ? "selected" : "")}>${s}</option>`)}</select></div><div class="field"><label for="sr">Resolution notes</label><textarea id="sr" name="resolution">${c.resolution || ""}</textarea></div><button class="btn btn-dark">Save</button></form>`);
-    onSubmit($("form", dlg), async (v) => { await post(`/api/admin/support/${c.id}`, v); dlg.close(); support(); });
-  }));
+      <td class="small">${c.due_at ? html`${fmtDateTime(c.due_at)}${c.overdue ? html`<div><span class="badge bad">overdue</span></div>` : ""}` : "—"}</td>
+      <td>${badge(c.status)}${c.handled_by === "organiser" ? html`<div class="tiny"><span class="badge amber plain">with ${c.organiser_name}</span></div>` : ""}${c.assignee ? html`<div class="tiny muted">${c.assignee}</div>` : ""}</td>
+      <td><button class="btn btn-ghost btn-sm" data-c="${c.id}">Open</button></td></tr>`))}`);
+  $$("[data-c]").forEach((b) => b.addEventListener("click", () => supportCase(b.dataset.c)));
+}
+async function supportCase(id) {
+  const { case: c, messages, suggestions } = await get(`/api/admin/support/${id}`);
+  const who = { customer: "Customer", ticketroom: "TicketRoom", organiser: "Organiser", system: "Note" };
+  const can = isA() || isS();
+  const dlg = dialog(`${c.subject} · ${c.reference}`, html`<div class="stack">
+    <div class="thread"><div class="msg-row customer"><div class="tiny muted">${c.full_name || c.email} · ${fmtDateTime(c.created_at)}</div><p class="prose mb-0">${c.body}</p></div>
+      ${messages.map((m) => html`<div class="msg-row ${m.author_kind}"><div class="tiny muted">${who[m.author_kind]}${m.author_name ? ` · ${m.author_name}` : ""} · ${fmtDateTime(m.created_at)}${m.emailed ? " · emailed" : ""}</div><p class="prose mb-0">${m.body}</p></div>`)}</div>
+    ${c.handled_by === "organiser" ? html`<p class="callout small mb-0">With <strong>${c.organiser_name}</strong>${c.event_title ? ` (${c.event_title})` : ""} since ${fmtDateTime(c.transferred_at)}. They reply from their portal. ${can ? html`<button class="btn-link" data-back>Take it back</button>` : ""}</p>` : ""}
+    ${can ? html`<form class="stack card flat" data-reply><div class="field"><label for="sr-msg">Reply to the customer</label><textarea id="sr-msg" name="message" required minlength="2" placeholder="Write as you'd speak to them. It's emailed from hello@ticketroom.co.za."></textarea></div>
+      <label class="check"><input type="checkbox" name="resolve"><span>This answers it: mark resolved</span></label><button class="btn btn-dark">Send reply</button></form>
+      ${c.handled_by !== "organiser" ? html`<form class="stack card flat" data-transfer><strong>Pass to the organiser</strong>
+        ${suggestions.length ? html`<div class="field"><label for="sr-pick">Events this customer booked</label><select id="sr-pick" name="pick"><option value="">Choose…</option>${suggestions.map((x, i) => html`<option value="${i}">${x.event_title} · ${x.organiser_name} (${x.organiser_ref || ""})</option>`)}</select></div>` : ""}
+        <div class="field"><label for="sr-org">Or find an organiser</label><input id="sr-org" list="sr-orgs" placeholder="Name or ORG-…" autocomplete="off"><datalist id="sr-orgs"></datalist></div>
+        <div class="field"><label for="sr-note">Note for the organiser <span class="muted">(optional)</span></label><textarea id="sr-note" name="note" maxlength="1000"></textarea></div>
+        <label class="check"><input type="checkbox" name="tellCustomer" checked><span>Tell the customer it's with the organiser</span></label>
+        <button class="btn btn-primary">Send to organiser</button></form>` : ""}
+      <form class="row" data-status><label class="sr-only" for="sr-st">Status</label><select id="sr-st" name="status">${["open", "in_progress", "resolved", "closed"].map((s) => html`<option ${raw(s === c.status ? "selected" : "")}>${s}</option>`)}</select><button class="btn btn-ghost btn-sm">Update status</button></form>` : ""}
+  </div>`, { wide: true, onClose: support });
+  if ($("[data-reply]", dlg)) onSubmit($("[data-reply]", dlg), async (v) => { await post(`/api/admin/support/${id}/reply`, { message: v.message, resolve: !!v.resolve }); toast("Reply emailed to the customer.", "good"); dlg.close(); });
+  if ($("[data-status]", dlg)) onSubmit($("[data-status]", dlg), async (v) => { await post(`/api/admin/support/${id}`, { status: v.status }); toast("Status updated.", "good"); dlg.close(); });
+  $("[data-back]", dlg)?.addEventListener("click", async () => { await post(`/api/admin/support/${id}/take-back`); toast("Taken back.", "good"); dlg.close(); });
+  const tf = $("[data-transfer]", dlg);
+  if (tf) {
+    let chosen = null;
+    const find = $("#sr-org", tf), list = $("#sr-orgs", tf);
+    let found = [];
+    find.addEventListener("input", async () => {
+      chosen = null;
+      const q = find.value.trim();
+      found = q.length < 2 ? [] : (await get(`/api/admin/support-organisers?q=${encodeURIComponent(q)}`)).organisers;
+      render(list, html`${found.map((o) => html`<option value="${o.name} (${o.ref || ""})"></option>`)}`);
+      chosen = found.find((o) => `${o.name} (${o.ref || ""})` === q) || null;
+    });
+    find.addEventListener("change", () => { chosen = found.find((o) => `${o.name} (${o.ref || ""})` === find.value) || null; });
+    onSubmit(tf, async (v) => {
+      const s2 = v.pick !== undefined && v.pick !== "" ? suggestions[Number(v.pick)] : null;
+      const organiserId = s2?.organiser_id || chosen?.id;
+      if (!organiserId) throw Object.assign(new Error("Choose the event, or find the organiser by name or ID."), { details: {} });
+      await post(`/api/admin/support/${id}/transfer`, { organiserId, eventId: s2?.event_id, note: v.note || undefined, tellCustomer: !!v.tellCustomer });
+      toast("Passed to the organiser. They've been emailed.", "good"); dlg.close();
+    });
+  }
 }
 
 async function audit() {

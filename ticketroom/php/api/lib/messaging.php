@@ -290,6 +290,16 @@ function tpl(string $name, array $a): array
         case 'passwordReset':
             return ['subject' => 'Reset your TicketRoom password',
                 'body' => $hi . "Someone, hopefully you, asked to reset the password on your TicketRoom account. This link works for one hour.\n\nChoose a new password: {$a['url']}\n\nIf it wasn't you, ignore this email and your password will stay the same." . FOOTER];
+        case 'supportReply':
+            return ['subject' => "Re: {$a['subject']} ({$a['reference']})",
+                'body' => $hi . $a['message'] . "\n\n" . ($a['from'] ?? 'The TicketRoom team') . "\n\nTo add anything, reply to this email or write to hello@ticketroom.co.za and mention {$a['reference']}." . FOOTER];
+        case 'queryPassedOn':
+            return ['subject' => "Your question is with {$a['organiser']} ({$a['reference']})",
+                'body' => $hi . "Thanks for your patience. Your question is about an event run by {$a['organiser']}, so we've passed it to them with everything you told us. They'll reply to you by email.\n\nIf you don't hear from them within two working days, reply to this email and we'll follow up." . FOOTER];
+        case 'queryForOrganiser':
+            return ['subject' => "Customer question for {$a['organiser']} ({$a['reference']})",
+                'body' => "Hi {$a['organiser']},\n\nTicketRoom customer care has passed you a question from {$a['customer']}" . ($a['event'] ? " about {$a['event']}" : '') . ".\n\n\"{$a['subject']}\"\n{$a['body']}\n" . ($a['note'] ? "\nNote from customer care: {$a['note']}\n" : '')
+                    . "\nPlease reply within two working days: $B/organisers#/queries\n\nYour reply is emailed to the customer from TicketRoom. If it isn't yours to answer, send it back to TicketRoom from the same page." . FOOTER];
         case 'callbackReceived':
             return ['subject' => "We've got your callback request ({$a['reference']})",
                 'body' => $hi . "Thanks for getting in touch. Your reference is {$a['reference']}, and someone from our team will get back to you within {$a['responseTime']}.\n\nOur office hours: {$a['hoursNote']}\n\nIf there's anything to add, reply to this email or write to {$a['email']} and mention {$a['reference']}." . FOOTER];

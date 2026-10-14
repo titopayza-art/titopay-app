@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -328,7 +328,8 @@ function sellPage() {
         <p class="callout mt">Right now TicketRoom is open for <strong>free event listings</strong>. Paid ticket sales are coming soon. Set your event up now and add paid tickets when they launch.</p>
         <p class="muted small mt mb-0">Example: 100 tickets at R150 = R15 000 in sales. You receive R14 250; each buyer pays R160. Payouts are released after your event, less approved refunds.</p></div>
     </div></section>`);
-  $("[data-apply]").addEventListener("click", async () => { const u = await requireUser("Create a free account first, then set up your organiser profile."); if (u) location.href = "/organisers#/apply"; });
+  // New here: account and organisation in one step. Signed in: straight to the organiser portal.
+  $("[data-apply]").addEventListener("click", async () => { if (await me()) location.href = "/organisers"; else organiserSignupDialog(); });
 }
 
 // ---------------- legal ----------------

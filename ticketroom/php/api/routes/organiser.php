@@ -63,11 +63,11 @@ function org_dashboard(string $orgId): array
 {
     $events = rows("SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.capacity,
                            COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0) AS sold,
-                           e.is_free,
+                           e.is_free, (SELECT count(*) FROM ticket_types WHERE event_id = e.id) AS ticket_types,
                            COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . "),0) AS revenue_cents,
                            COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . "),0) AS organiser_fee_cents
                       FROM events e WHERE e.organiser_id = ? ORDER BY e.starts_at DESC", [$orgId]);
-    foreach ($events as &$e) foreach (['sold', 'revenue_cents', 'organiser_fee_cents', 'capacity'] as $k) $e[$k] = (int) $e[$k];
+    foreach ($events as &$e) foreach (['sold', 'revenue_cents', 'organiser_fee_cents', 'capacity', 'ticket_types'] as $k) $e[$k] = (int) $e[$k];
     unset($e);
     $last7 = row("SELECT COALESCE(SUM(o.subtotal_cents - o.discount_cents),0) AS revenue_cents, COUNT(*) AS orders
                     FROM orders o JOIN events e ON e.id = o.event_id WHERE e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.paid_at > ?", [$orgId, iso_in(-7 * 86400)]);
@@ -335,6 +335,39 @@ route('POST', '/api/organiser/apply', function () {
         return $o;
     });
     return json_out(['organiser' => ['id' => $org['id'], 'name' => $org['name'], 'status' => $org['status']]], 201);
+});
+
+// One step for someone new: their account and their organisation together.
+// Same rules as any sign-up: one account per email, confirmed before use.
+route('POST', '/api/organiser/signup', function () {
+    limit('register', 10, 3600);
+    $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true]), 'password' => R::password(),
+        'organisation' => R::str(['min' => 2, 'max' => 120]), 'description' => R::text(['optional' => true, 'max' => 2000]), 'acceptTerms' => R::bool()]);
+    if (!$b['acceptTerms']) throw bad('Please accept the Terms and Privacy Notice.', ['acceptTerms' => 'Required.']);
+    tx(function () use ($b) {
+        $now = now_iso();
+        $existing = user_by_email($b['email']);
+        if ($existing && (int) $existing['guest'] !== 1) {
+            throw conflict('You already have a TicketRoom account with this email. Sign in, then set up your organisation from the organiser portal.', 'email_taken', ['email' => 'Already has an account.']);
+        }
+        if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0 AND id <> ?", [$b['phone'], $existing['id'] ?? ''])) {
+            throw conflict('This mobile number is already on another TicketRoom account.', 'phone_taken', ['phone' => 'Already on another account.']);
+        }
+        if ($existing) {
+            q('UPDATE users SET pending_password_hash = ?, full_name = ?, phone = COALESCE(phone, ?), updated_at = ? WHERE id = ?', [hash_secret($b['password']), $b['fullName'], $b['phone'] ?? null, $now, $existing['id']]);
+            $u = row('SELECT * FROM users WHERE id = ?', [$existing['id']]);
+        } else {
+            $u = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'phone' => $b['phone'] ?? null, 'full_name' => $b['fullName'],
+                'password_hash' => hash_secret($b['password']), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+        }
+        $o = insert('organisers', ['id' => uuid(), 'ref' => new_ref('organisers'), 'name' => $b['organisation'], 'slug' => org_slugify($b['organisation']) . '-' . strtolower(random_code(4)),
+            'contact_email' => $b['email'], 'contact_phone' => $b['phone'] ?? null, 'description' => ($b['description'] ?? '') !== '' ? $b['description'] : null, 'status' => 'pending', 'created_at' => $now]);
+        insert('organiser_members', ['organiser_id' => $o['id'], 'user_id' => $u['id'], 'role' => 'owner', 'created_at' => $now]);
+        send_verification($u);
+        audit('organiser.applied', ['actor' => ['id' => $u['id']], 'entityType' => 'organiser', 'entityId' => $o['id'], 'organiserId' => $o['id'], 'ip' => client_ip(), 'details' => ['withAccount' => true]]);
+    });
+    return json_out(['needsVerification' => true, 'email' => $b['email'],
+        'message' => "We've sent a confirmation link to {$b['email']}. Open it and your organiser portal is ready."], 201);
 });
 
 route('GET', '/api/organiser/orgs', function () {

@@ -600,6 +600,31 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
   return d;
 }
 
+// Becoming an organiser in one go: your account and your organisation.
+export function organiserSignupDialog() {
+  const d = dialog("Start selling on TicketRoom", html`<form class="stack" novalidate>
+    <p class="muted mb-0">One form, two minutes. TicketRoom checks every organiser before their first event goes live, usually within one working day. You can build your events while you wait.</p>
+    <div class="field"><label for="os-org">Organisation or trading name</label><input id="os-org" name="organisation" required maxlength="120" autocomplete="organization"></div>
+    <div class="grid-2"><div class="field"><label for="os-name">Your full name</label><input id="os-name" name="fullName" required autocomplete="name"></div>
+      <div class="field"><label for="os-phone">Mobile number <span class="muted">(optional)</span></label><input id="os-phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567"></div></div>
+    <div class="field"><label for="os-email">Email</label><input id="os-email" name="email" type="email" required autocomplete="email"><span class="hint">Where TicketRoom and your ticket buyers reach you.</span></div>
+    <div class="grid-2"><div class="field"><label for="os-pass">Password</label><input id="os-pass" name="password" type="password" required minlength="10" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+      <div class="field"><label for="os-pass2">Confirm password</label><input id="os-pass2" name="passwordConfirm" type="password" required minlength="10" autocomplete="new-password"></div></div>
+    <label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
+    <button class="btn btn-primary btn-block">Create my organiser account</button>
+    <p class="small mb-0">Already have a TicketRoom account? <a href="/organisers">Sign in</a> and set up your organisation there.</p></form>`, { wide: true });
+  onSubmit($("form", d), async (v) => {
+    matchPasswords(v, "password", "passwordConfirm");
+    const r = await post("/api/organiser/signup", v);
+    render($(".dialog-body", d), html`<div class="stack check-inbox"><span class="tk-label">One more step</span><h3 class="mb-0">Check your inbox</h3>
+      <p class="mb-0">We've sent a confirmation link to <strong>${r.email}</strong>. Open it and your organiser portal is ready: create your first event straight away.</p>
+      <div class="row"><button class="btn btn-ghost btn-sm" data-resend>Send it again</button><button class="btn btn-primary btn-sm" data-close>Done</button></div></div>`);
+    $("[data-resend]", d).addEventListener("click", async (e) => { try { const x = await post("/api/auth/verify-email/resend", { email: r.email }); toast(x.message, "good"); e.target.disabled = true; } catch (err) { toast(err.message, "bad"); } });
+  });
+  setTimeout(() => $("#os-org", d)?.focus(), 50);
+  return d;
+}
+
 function forgotDialog() {
   const d = dialog("Reset your password", html`<form class="stack"><p class="muted">We will email you a link to choose a new password.</p>
     <div class="field"><label for="f-email">Email</label><input id="f-email" name="email" type="email" required autocomplete="email"></div>

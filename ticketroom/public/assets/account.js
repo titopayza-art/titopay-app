@@ -220,8 +220,16 @@ async function refunds() {
   render(main, html`${head("Refunds & support", "", html`<a class="btn btn-ghost" href="/help">Contact support</a>`)}
     <section class="card"><h2>Refunds</h2>${rf.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Event</th><th>Type</th><th>Requested</th><th>Status</th><th class="num">Amount</th></tr></thead><tbody>
       ${rf.map((r) => html`<tr><td class="mono">${r.reference}</td><td>${r.title}</td><td>${r.kind.replace("_", " ")}</td><td>${fmtDate(r.created_at)}</td><td>${badge(r.status)}</td><td class="num">${moneyExact(r.amount_cents)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No refunds.</p>`}</section>
-    <section class="card mt"><h2>Support cases</h2>${cases.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Subject</th><th>Status</th><th>Updated</th></tr></thead><tbody>
-      ${cases.map((c) => html`<tr><td class="mono">${c.reference}</td><td>${c.subject}${c.resolution ? html`<div class="small muted">${c.resolution}</div>` : ""}</td><td>${badge(c.status)}</td><td>${fmtDate(c.updated_at)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No support cases.</p>`}</section>`);
+    <section class="card mt"><h2>Support cases</h2>${cases.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Subject</th><th>Status</th><th>Updated</th><th></th></tr></thead><tbody>
+      ${cases.map((c) => html`<tr><td class="mono">${c.reference}</td><td>${c.subject}${c.resolution ? html`<div class="small muted">${c.resolution}</div>` : ""}</td><td>${badge(c.status)}</td><td>${fmtDate(c.updated_at)}</td><td><button class="btn btn-ghost btn-sm" data-case="${c.reference}">Replies</button></td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No support cases.</p>`}</section>`);
+  // The replies you were emailed, from TicketRoom or the event's organiser.
+  $$("[data-case]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      const { case: c, messages } = await get(`/api/me/support/${encodeURIComponent(b.dataset.case)}`);
+      dialog(c.subject, html`<div class="thread"><div class="msg-row customer"><div class="tiny muted">You · ${fmtDateTime(c.created_at)}</div><p class="prose mb-0">${c.body}</p></div>
+        ${messages.length ? messages.map((m) => html`<div class="msg-row ${m.from}"><div class="tiny muted">${m.from === "organiser" ? "The organiser" : "TicketRoom"} · ${fmtDateTime(m.created_at)}</div><p class="prose mb-0">${m.body}</p></div>`) : html`<p class="muted mb-0">No reply yet. We answer within 24 to 48 hours on working days.</p>`}</div>`, { wide: true });
+    } catch (err) { toast(err.message, "bad"); }
+  }));
 }
 
 // ---------------- settings & privacy ----------------
@@ -318,7 +326,7 @@ async function verify({ token }) {
     const r = await post("/api/auth/verify-email", { token });
     render(main, html`<section class="welcome card"><span class="tk-label">Email confirmed</span><h1>Welcome to TicketRoom${r.firstName ? `, ${r.firstName}` : ""}</h1>
       <p class="lead">Your account is ready.${r.tickets ? ` ${r.tickets} ticket${r.tickets === 1 ? " you bought as a guest is" : "s you bought as a guest are"} now in your account.` : ""}</p>
-      <div class="row"><button class="btn btn-primary" data-go>Go to my tickets</button><a class="btn btn-ghost" href="/">Browse events</a></div></section>`);
+      <div class="row">${r.organiser ? html`<a class="btn btn-primary" href="/organisers">Open my organiser portal</a><button class="btn btn-ghost" data-go>My tickets</button>` : html`<button class="btn btn-primary" data-go>Go to my tickets</button><a class="btn btn-ghost" href="/">Browse events</a>`}</div></section>`);
     $("[data-go]").addEventListener("click", open);
   } catch (err) {
     render(main, html`<section class="welcome card"><span class="tk-label">Confirm your email</span><h1>This link has expired</h1>

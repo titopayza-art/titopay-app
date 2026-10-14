@@ -1,11 +1,12 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff, qrPanel, ticketPng, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
 let FEATURES = { cashless: true, sms: true };           // current organiser
 let ORGS = [];
+let QUERIES = 0;                                          // open customer queries passed on by TicketRoom
 
 const head = (title, sub = "", actions = "", crumbs = "") => html`${crumbs ? html`<div class="crumbs">${crumbs}</div>` : ""}<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
 const can = (...roles) => ORG && (roles.includes(ORG.role) || ORG.role === "admin");
@@ -15,7 +16,7 @@ function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
     ${ORG?.ref ? html`<div class="org-id">Organiser ID <span class="mono">${ORG.ref}</span></div>` : ""}
-    <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
+    <a href="#/">Dashboard</a><a href="#/events">My events</a>${can("owner", "manager") ? html`<a href="#/queries">Customer queries${QUERIES ? html`<span class="count">${QUERIES}</span>` : ""}</a>` : ""}<a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
     <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
 }
@@ -48,13 +49,35 @@ async function apply() {
   onSubmit($("#ap"), async (v) => { const r = await post("/api/organiser/apply", v); localStorage.setItem("tr_org", r.organiser.id); toast("Organiser account created.", "good"); location.hash = "#/"; location.reload(); });
 }
 
+// ---------------- setup checklist ----------------
+// The road from sign-up to a live event, ticked off as it happens. It goes
+// away by itself once the first event is on sale.
+function setupChecklist(events) {
+  const first = events.find((e) => e.status !== "cancelled");
+  const steps = [
+    ["Confirm your email", true, ""],
+    ["TicketRoom approves your organisation", ORG.status === "approved", ORG.status === "approved" ? "" : "Usually within one working day. Build your event meanwhile."],
+    ["Create your first event", !!first, "#/events/new"],
+    ["Add ticket types", events.some((e) => e.ticket_types > 0), first ? `#/events/${first.id}/tickets` : ""],
+    ["Add bank details to get paid", !!ORG.bank?.last4 || (events.length > 0 && events.every((e) => e.is_free)), "#/settings"],
+    ["Submit it for approval", events.some((e) => ["pending_approval", "published", "completed"].includes(e.status)), first ? `#/events/${first.id}` : ""],
+    ["Share your event", events.some((e) => e.status === "published"), first ? `#/events/${first.id}` : ""],
+  ];
+  const done = steps.filter((x) => x[1]).length;
+  if (done === steps.length || !can("owner", "manager")) return "";
+  return html`<section class="card checklist mb"><div class="card-title"><h2 class="mb-0">Get your first event live</h2><span class="small muted">${done} of ${steps.length} done</span></div>
+    <div class="meter amber mt"><i data-pct="${(done / steps.length) * 100}"></i></div>
+    <ol class="steps-list">${steps.map(([label, ok, href]) => html`<li class="${ok ? "done" : ""}"><span class="tick" aria-hidden="true">${ok ? "✓" : ""}</span>
+      ${!ok && href.startsWith("#") ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`}${!ok && href && !href.startsWith("#") ? html`<span class="small muted"> · ${href}</span>` : ""}<span class="sr-only">${ok ? " (done)" : " (to do)"}</span></li>`)}</ol></section>`;
+}
+
 // ---------------- dashboard ----------------
 async function dashboard() {
   const d = await get(`${base()}/dashboard`);
   const t = d.totals;
   const upcoming = d.events.filter((e) => new Date(e.starts_at) > new Date()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
   render(main, html`${head(`Hi, ${ORG.name}`, html`Here's how your events are selling.${ORG.ref ? html` <span class="small">Organiser ID <span class="mono">${ORG.ref}</span></span>` : ""}`, can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}
-    ${pendingBanner()}
+    ${pendingBanner()}${setupChecklist(d.events)}
     <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold.toLocaleString("en-ZA")}</div><div class="s">across ${t.events} event${t.events === 1 ? "" : "s"}</div></div>
       <div class="kpi"><div class="k">Last 7 days</div><div class="v">${money(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} order${t.last7Orders === 1 ? "" : "s"}</div></div>
@@ -581,6 +604,36 @@ async function finance() {
   if ($("#po")) onSubmit($("#po"), async (v) => { const c = parseRand(v.amount); const r = await post(`${base()}/payouts`, { amountCents: c }); toast(`Payout ${r.payout.reference} requested.`, "good"); finance(); });
 }
 
+// ---------------- customer queries ----------------
+// Questions TicketRoom customer care has passed on. Replies are emailed to
+// the customer from TicketRoom, with your name and organisation.
+async function queries() {
+  const { queries: list, open } = await get(`${base()}/queries`);
+  QUERIES = open; nav();
+  render(main, html`${head("Customer queries", "Questions from your ticket buyers that TicketRoom customer care has passed to you. Please reply within two working days.")}
+    ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Customer</th><th>Question</th><th>Event</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map((q) => html`<tr><td class="mono">${q.reference}</td><td>${q.full_name || ""}<div class="tiny muted">${q.email}</div></td><td><strong>${q.subject}</strong></td><td class="small">${q.event_title || "—"}</td>
+        <td>${q.handled_by === "organiser" ? badge(q.status) : html`<span class="badge plain">back with TicketRoom</span>`}</td><td><a class="btn btn-ghost btn-sm" href="#/queries/${q.id}">Open</a></td></tr>`)}</tbody></table></div>`
+      : empty("No customer queries. When TicketRoom passes you a question from a ticket buyer, it appears here and we email you.")}`);
+}
+async function query({ id }) {
+  const { query: q, messages } = await get(`${base()}/queries/${id}`);
+  const mine = q.handled_by === "organiser";
+  const who = { customer: "Customer", ticketroom: "TicketRoom", organiser: "You", system: "TicketRoom" };
+  render(main, html`${head(q.subject, html`${q.reference}${q.event_title ? ` · ${q.event_title}` : ""}`, "", html`<a href="#/queries">Customer queries</a>`)}
+    <div class="grid-2"><section class="card stack"><h3>Conversation</h3>
+      <div class="thread"><div class="msg-row customer"><div class="tiny muted">${q.full_name || q.email} · ${fmtDateTime(q.created_at)}</div><p class="prose mb-0">${q.body}</p></div>
+        ${messages.map((m) => html`<div class="msg-row ${m.author_kind}"><div class="tiny muted">${who[m.author_kind]}${m.author_name && m.author_kind !== "system" ? ` · ${m.author_name}` : ""} · ${fmtDateTime(m.created_at)}</div><p class="prose mb-0">${m.body}</p></div>`)}</div></section>
+      <div class="stack">${mine ? html`<section class="card"><form class="stack" id="qr"><div class="field"><label for="qm">Reply to ${q.full_name || "the customer"}</label><textarea id="qm" name="message" required minlength="2" rows="6" placeholder="Answer their question. We email it to ${q.email} from TicketRoom, signed with your name and organisation."></textarea></div>
+          <label class="check"><input type="checkbox" name="resolve" checked><span>This answers it: mark resolved</span></label><button class="btn btn-primary">Send reply</button></form></section>
+        <section class="card"><form class="stack" id="qb"><div class="field"><label for="qn">Not yours to answer?</label><textarea id="qn" name="note" required minlength="3" placeholder="Tell TicketRoom why, e.g. it's about a payment."></textarea></div><button class="btn btn-ghost">Send back to TicketRoom</button></form></section>`
+        : html`<p class="callout">This query is back with TicketRoom customer care.</p>`}
+        <section class="card"><h3>Customer</h3><dl class="dl"><dt>Name</dt><dd>${q.full_name || "—"}</dd><dt>Email</dt><dd>${q.email}</dd>${q.phone ? html`<dt>Phone</dt><dd>${q.phone}</dd>` : ""}</dl>
+          <p class="tiny muted mb-0">Use these details only to answer this question (POPIA).</p></section></div></div>`);
+  if ($("#qr")) onSubmit($("#qr"), async (v) => { await post(`${base()}/queries/${id}/reply`, { message: v.message, resolve: !!v.resolve }); toast("Reply emailed to the customer.", "good"); query({ id }); });
+  if ($("#qb")) onSubmit($("#qb"), async (v) => { await post(`${base()}/queries/${id}/return`, { note: v.note }); toast("Sent back to TicketRoom.", "good"); location.hash = "#/queries"; });
+}
+
 // ---------------- team & settings ----------------
 async function team() {
   const { members } = await get(`${base()}/members`);
@@ -616,12 +669,23 @@ async function loadOrg() {
   const want = localStorage.getItem("tr_org");
   const pick = ORGS.find((o) => o.id === want) || ORGS[0];
   ORG = pick ? (await get(`/api/organiser/${pick.id}`)).organiser : null;
+  if (ORG && can("owner", "manager")) try { QUERIES = (await get(`/api/organiser/${ORG.id}/queries`)).open; } catch { QUERIES = 0; }
 }
 
 (async () => {
   await header($("#header"), { portal: "organiser" });
-  const u = await requireUser("Sign in to the organiser portal.");
-  if (!u) return render(main, empty("Sign in to continue."));
+  // Signed out: a welcome, not a bare sign-in box.
+  const u = await me();
+  if (!u) {
+    render($("#sidenav"), "");
+    render(main, html`<section class="welcome card"><span class="tk-label">Organiser portal</span><h1>Sell tickets, scan people in, get paid</h1>
+      <p class="lead">Sign in to manage your events. New to TicketRoom? Create your organiser account in one step: listing free events costs nothing.</p>
+      <div class="row"><button class="btn btn-primary" data-in>Sign in</button><button class="btn btn-ghost" data-start>Start selling</button></div>
+      <p class="small muted mb-0">Buying tickets instead? <a href="/">Browse events</a></p></section>`);
+    $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: () => location.reload() }));
+    $("[data-start]").addEventListener("click", () => organiserSignupDialog());
+    return;
+  }
   await header($("#header"), { portal: "organiser" });
   FEATURES = await features();
   await loadOrg();
@@ -629,6 +693,6 @@ async function loadOrg() {
   if (!ORG) { render($("#sidenav"), ""); return apply(); }
   router([
     ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)],
-    ["/marketing", marketing], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
+    ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
   ], () => { location.hash = "#/"; });
 })();

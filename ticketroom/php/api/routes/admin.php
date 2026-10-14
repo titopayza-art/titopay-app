@@ -536,8 +536,8 @@ route('GET', '/api/admin/audit/verify', function () {
 
 route('GET', '/api/admin/support', function () {
     adm_any();
-    $cases = rows("SELECT s.*, u.full_name AS assignee, (s.due_at < ? AND s.status IN ('open','in_progress')) AS overdue
-                     FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to
+    $cases = rows("SELECT s.*, u.full_name AS assignee, (s.due_at < ? AND s.status IN ('open','in_progress')) AS overdue, org.name AS organiser_name
+                     FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to LEFT JOIN organisers org ON org.id = s.organiser_id
                     ORDER BY (s.status IN ('resolved','closed')), s.due_at IS NULL, s.due_at, s.created_at DESC LIMIT 300", [now_iso()]);
     return ['cases' => $cases];
 });
