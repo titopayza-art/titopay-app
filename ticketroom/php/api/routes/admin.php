@@ -267,22 +267,26 @@ route('POST', '/api/admin/staff', function () {
     $roles = array_values(array_unique($b['roles']));
     return tx(function () use ($u, $b, $roles) {
         $now = now_iso();
-        $existing = row("SELECT id, status FROM users WHERE lower(email) = ?", [$b['email']]);
+        $existing = user_by_email($b['email']);
         if ($existing && $existing['status'] !== 'active') throw conflict('That account is suspended or closed. Restore it under All users first.', 'account_inactive');
+        // Someone new, or someone who has only bought as a guest, sets a password from the email.
+        $needsPassword = !$existing || (int) $existing['guest'] === 1;
         $url = null;
         if ($existing) $id = $existing['id'];
         else {
             $id = uuid();
-            insert('users', ['id' => $id, 'email' => $b['email'], 'full_name' => $b['fullName'], 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+            insert('users', ['id' => $id, 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $b['fullName'], 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+        }
+        if ($needsPassword) {
             $token = random_token(32);
             insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $id, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
             $url = base_url() . "/account#/reset/$token";
         }
         foreach ($roles as $r) q('INSERT OR IGNORE INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$id, $r, $u['id'], $now]);
         $names = implode(' and ', array_map(fn($r) => STAFF_ROLE_NAMES[$r], $roles));
-        outbox_enqueue(['to' => $b['email'], 'userId' => $id] + tpl('teamInvite', ['name' => $existing ? null : $b['fullName'], 'by' => $u['fullName'], 'roles' => $names, 'url' => $url]));
+        outbox_enqueue(['to' => $b['email'], 'userId' => $id] + tpl('teamInvite', ['name' => $needsPassword ? $b['fullName'] : null, 'by' => $u['fullName'], 'roles' => $names, 'url' => $url]));
         audit('staff.added', ['actor' => $u, 'entityType' => 'user', 'entityId' => $id, 'details' => ['roles' => $roles, 'newAccount' => !$existing]]);
-        return json_out(['ok' => true, 'invited' => !$existing], 201);
+        return json_out(['ok' => true, 'invited' => $needsPassword], 201);
     });
 });
 // Set exactly these roles; an empty list removes the person from the team.

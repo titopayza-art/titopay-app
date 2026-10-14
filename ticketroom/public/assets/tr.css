@@ -510,3 +510,10 @@ body.venue main#main { min-height: 0; }
 .org-id .mono { color: var(--ink-2); font-weight: 700; }
 .age-groups { border: 0; padding: 0; margin: 0; }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 16px; margin: 6px 0; }
+
+/* Welcome and confirmation cards (signed-out portal, email confirmed) */
+.welcome { max-width: 620px; margin: 24px auto; padding: 36px 32px; text-align: left; }
+.welcome h1 { margin: 8px 0 10px; font-size: clamp(1.6rem, 4vw, 2.1rem); }
+.welcome .lead { color: var(--ink-2); font-size: 1.05rem; }
+.welcome .row { margin: 18px 0; }
+@media (max-width: 560px) { .welcome { padding: 26px 20px; margin: 8px auto; } }

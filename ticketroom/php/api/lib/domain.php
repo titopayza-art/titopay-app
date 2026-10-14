@@ -31,6 +31,26 @@ function event_staff_access(array $u, string $eventId, string $cap = 'can_scan')
 }
 
 // ============================================================== profile
+// One person, one account. "Jane.Doe+tickets@gmail.com" and
+// "janedoe@gmail.com" are the same inbox, so they share this key: the part
+// after a "+" is dropped everywhere, and Gmail also ignores dots.
+function email_key(string $email): string
+{
+    $e = strtolower(trim($email));
+    $at = strrpos($e, '@');
+    if ($at === false) return $e;
+    $local = substr($e, 0, $at);
+    $domain = substr($e, $at + 1);
+    $local = explode('+', $local, 2)[0];
+    if (in_array($domain, ['gmail.com', 'googlemail.com'], true)) { $local = str_replace('.', '', $local); $domain = 'gmail.com'; }
+    return "$local@$domain";
+}
+// The account behind an email, if any (deleted accounts don't count).
+function user_by_email(string $email): ?array
+{
+    return row("SELECT * FROM users WHERE (email_key = ? OR lower(email) = ?) AND status <> 'deleted' ORDER BY guest, created_at LIMIT 1", [email_key($email), strtolower(trim($email))]);
+}
+
 function profile(string $userId): array
 {
     $u = row('SELECT id, email, full_name, phone, email_verified_at, created_at FROM users WHERE id = ?', [$userId]);
@@ -213,7 +233,8 @@ function fulfil_order(string $orderId): array
         }
     }
     $event = row('SELECT * FROM events WHERE id = ?', [$order['event_id']]);
-    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n]));
+    $guest = (int) val('SELECT guest FROM users WHERE id = ?', [$order['user_id']]) === 1;
+    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $guest ? order_link($order) : null]));
     return ['order' => $order];
 }
 function release_holds(array $order): void
@@ -235,6 +256,47 @@ function expire_due_orders(): int
     }
     return $n;
 }
+// ============================================================== guest checkout
+// Someone buying without signing in. Their email gets a quiet "guest"
+// account with no password: the tickets live there. If they sign up later
+// with the same email and confirm it, that account (and its tickets) is
+// theirs. An email that already has an account books into that account.
+function guest_buyer(array $g): array
+{
+    $u = user_by_email($g['email']);
+    if ($u && $u['status'] === 'suspended') throw new AppError(403, 'suspended', 'The account for this email is suspended. Contact hello@ticketroom.co.za.');
+    if (!$u) {
+        $now = now_iso();
+        $u = insert('users', ['id' => uuid(), 'email' => $g['email'], 'email_key' => email_key($g['email']), 'phone' => $g['phone'] ?? null, 'full_name' => $g['fullName'],
+            'password_hash' => '!', 'status' => 'active', 'guest' => 1, 'created_at' => $now, 'updated_at' => $now]);
+        audit('user.guest_created', ['actor' => ['id' => $u['id']], 'entityType' => 'user', 'entityId' => $u['id'], 'ip' => client_ip()]);
+    }
+    return ['id' => $u['id'], 'fullName' => $g['fullName'], 'email' => $u['email'], 'phone' => $g['phone'] ?? $u['phone'], 'guest' => (int) $u['guest'] === 1];
+}
+// A private link to one order, for buyers without an account (and the order
+// email). Signed, so it cannot be guessed or edited; valid for 13 months.
+function order_key(string $orderId): string { return sign_link(['o' => $orderId], 400 * 86400); }
+function order_link(array $order): string { return base_url() . '/orders/' . $order['reference'] . '?k=' . rawurlencode(order_key($order['id'])); }
+// The order behind a reference, for its owner or for the holder of its private link.
+function order_access(string $ref, ?string $key): array
+{
+    $o = row('SELECT o.*, e.title, e.slug, e.starts_at, e.ends_at, e.venue_name, e.city FROM orders o JOIN events e ON e.id = o.event_id WHERE o.reference = ?', [$ref]);
+    $d = $key ? verify_link($key) : null;
+    $u = user();
+    if (!$o || !(($d && ($d['o'] ?? '') === $o['id']) || ($u && $u['id'] === $o['user_id']))) {
+        if (!$u && !$key) throw unauthenticated();
+        throw not_found('Order not found.');
+    }
+    return $o;
+}
+
+// The payment behind an order, as the buyer's page shows it.
+function order_payment_view(array $o): ?array
+{
+    $p = row("SELECT id, provider, status, amount_cents FROM payments WHERE order_id = ? ORDER BY created_at DESC LIMIT 1", [$o['id']]);
+    return $p ? ['id' => $p['id'], 'provider' => $p['provider'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents'], 'method' => 'card'] : null;
+}
+
 function order_for_user(array $user, string $ref): array
 {
     $o = row('SELECT o.*, e.title, e.slug, e.starts_at, e.venue_name, e.city FROM orders o JOIN events e ON e.id = o.event_id WHERE o.reference = ? AND o.user_id = ?', [$ref, $user['id']]);

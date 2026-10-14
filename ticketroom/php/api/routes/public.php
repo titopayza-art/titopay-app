@@ -81,41 +81,66 @@ route('POST', '/api/public/checkout/quote', function () {
     return ['quote' => public_quote(order_quote($ev, $b['items'], $b['promoCode'] ?? null))];
 });
 
+// Booking. Signed in, or as a guest with a name and email: no account needed.
 route('POST', '/api/public/orders', function () {
-    $u = require_auth();
-    limit('order', 20, 60, $u['id']);
     $b = check(body(), [
         'eventSlug' => R::str(['max' => 120]), 'items' => items_rule(), 'promoCode' => R::str(['optional' => true, 'max' => 40]),
         'ref' => R::str(['optional' => true, 'max' => 40, 'pattern' => '/^[A-Za-z0-9_-]+$/']), 'buyerPhone' => R::phone(['optional' => true]),
         'marketingOptIn' => R::obj(['email' => R::bool(), 'sms' => R::bool()], ['optional' => true]), 'idempotencyKey' => R::idemKey(),
         'paymentMethod' => R::oneOf(['card', 'titopay_wallet'], ['optional' => true, 'fallback' => 'card']),
+        'guest' => R::obj(['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true])], ['optional' => true]),
     ]);
+    $u = user();
+    if ($u) limit('order', 20, 60, $u['id']);
+    else {
+        if (empty($b['guest'])) throw bad('Tell us your name and email so we can send your tickets.', ['guest' => 'Required.']);
+        limit('guestorder', 15, 3600);
+        $u = tx(fn() => guest_buyer($b['guest']));
+    }
     $r = create_order($u, $b);
     $o = $r['order'];
-    return json_out(['order' => ['reference' => $o['reference'], 'status' => $o['status'], 'totalCents' => $o['total_cents'], 'expiresAt' => $o['expires_at']], 'payment' => null], $r['replay'] ? 200 : 201);
+    return json_out(['order' => ['reference' => $o['reference'], 'status' => $o['status'], 'totalCents' => $o['total_cents'], 'expiresAt' => $o['expires_at']],
+        'accessKey' => user() ? null : order_key($o['id']), 'payment' => $r['payment'] ?? null], $r['replay'] ? 200 : 201);
 });
 
+// An order and its tickets, for the buyer (signed in, or with the private link).
 route('GET', '/api/public/orders/:ref', function ($a) {
-    $u = require_auth();
-    ['order' => $o, 'items' => $items] = order_for_user($u, $a['ref']);
-    $tickets = rows('SELECT id, code, status FROM tickets WHERE order_id = ? AND owner_user_id = ?', [$o['id'], $u['id']]);
+    limit('orderview', 120, 60);
+    $key = qs('k');
+    $o = order_access($a['ref'], $key);
+    $items = rows('SELECT oi.quantity, oi.unit_price_cents, oi.unit_fee_cents, tt.name FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = ?', [$o['id']]);
+    $owner = row('SELECT email, guest FROM users WHERE id = ?', [$o['user_id']]);
+    $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
+                      WHERE t.order_id = ? AND t.owner_user_id = ? ORDER BY t.created_at", [$o['id'], $o['user_id']]);
+    $k = $key && verify_link($key) ? $key : order_key($o['id']);
+    foreach ($tickets as &$t) $t['qrUrl'] = $t['status'] === 'valid' ? "/api/public/orders/{$o['reference']}/tickets/{$t['id']}/qr.svg?k=" . rawurlencode($k) : null;
+    unset($t);
     return [
         'order' => [
             'reference' => $o['reference'], 'status' => $o['status'], 'subtotalCents' => $o['subtotal_cents'], 'discountCents' => $o['discount_cents'],
             'feeCents' => $o['fee_cents'], 'totalCents' => $o['total_cents'], 'refundedCents' => $o['refunded_cents'], 'expiresAt' => $o['expires_at'], 'paidAt' => $o['paid_at'],
-            'event' => ['title' => $o['title'], 'slug' => $o['slug'], 'startsAt' => $o['starts_at'], 'venue' => $o['venue_name'], 'city' => $o['city']],
+            'buyerName' => $o['buyer_name'],
+            'event' => ['title' => $o['title'], 'slug' => $o['slug'], 'startsAt' => $o['starts_at'], 'endsAt' => $o['ends_at'], 'venue' => $o['venue_name'], 'city' => $o['city']],
         ],
-        'items' => $items, 'tickets' => $tickets, 'payment' => null,
+        'guest' => (int) $owner['guest'] === 1, 'email' => (int) $owner['guest'] === 1 ? $owner['email'] : null,
+        'items' => $items, 'tickets' => $tickets, 'payment' => order_payment_view($o),
     ];
+});
+
+route('GET', '/api/public/orders/:ref/tickets/:id/qr.svg', function ($a) {
+    limit('orderqr', 240, 60);
+    $o = order_access($a['ref'], qs('k'));
+    $t = row("SELECT * FROM tickets WHERE id = ? AND order_id = ? AND owner_user_id = ? AND status = 'valid'", [$a['id'], $o['id'], $o['user_id']]);
+    if (!$t) throw not_found('Ticket not found.');
+    return raw_out(tr_qr_svg(qr_payload($t), ['ecc' => 'M', 'margin' => 1, 'dark' => '#0B1A33', 'light' => '#FFFFFF']), 'image/svg+xml', 200, ['Cache-Control' => 'no-store']);
 });
 
 route('POST', '/api/public/orders/:ref/pay', function () { require_auth(); throw not_available(); });
 
 route('POST', '/api/public/orders/:ref/cancel', function ($a) {
-    $u = require_auth();
-    return tx(function () use ($u, $a) {
-        $o = row('SELECT * FROM orders WHERE reference = ? AND user_id = ?', [$a['ref'], $u['id']]);
-        if (!$o) throw not_found('Order not found.');
+    $key = qs('k');
+    return tx(function () use ($a, $key) {
+        $o = order_access($a['ref'], $key);
         if ($o['status'] !== 'pending_payment') throw conflict('Only unpaid orders can be cancelled.', 'order_not_pending');
         release_holds($o);
         q("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ?", [now_iso(), $o['id']]);

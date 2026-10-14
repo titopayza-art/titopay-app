@@ -572,11 +572,25 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
     </form>`);
   const form = $("form", d);
   onSubmit(form, async (v) => {
-    if (signup) matchPasswords(v, "password", "passwordConfirm");
-    await post(signup ? "/api/auth/register" : "/api/auth/login", v);
+    if (signup) {
+      matchPasswords(v, "password", "passwordConfirm");
+      const r = await post("/api/auth/register", v);
+      // Accounts start once the email is confirmed: show where to look next.
+      render($(".dialog-body", d), html`<div class="stack check-inbox">
+        <span class="tk-label">One more step</span>
+        <h3 class="mb-0">Check your inbox</h3>
+        <p class="mb-0">We've sent a confirmation link to <strong>${r.email}</strong>. Open it on any device and your account is ready. Tickets you bought with this email as a guest will be waiting in it.</p>
+        <p class="small muted mb-0">Nothing there after a few minutes? Look in spam or promotions, or send it again.</p>
+        <div class="row"><button class="btn btn-ghost btn-sm" data-resend>Send it again</button><button class="btn btn-primary btn-sm" data-close>Done</button></div></div>`);
+      $("[data-resend]", d).addEventListener("click", async (e) => {
+        try { const x = await post("/api/auth/verify-email/resend", { email: r.email }); toast(x.message, "good"); e.target.disabled = true; } catch (err) { toast(err.message, "bad"); }
+      });
+      return;
+    }
+    await post("/api/auth/login", v);
     await me(true);
     d.close();
-    toast(signup ? "Welcome to TicketRoom." : "Signed in.", "good");
+    toast("Signed in.", "good");
     if (onDone) onDone(); else location.reload();
   });
   $("[data-switch]", d).addEventListener("click", () => { d.close(); authDialog(signup ? "signin" : "signup", { onDone, reason }); });

@@ -545,6 +545,11 @@ function limit(string $bucket, int $max, int $windowSeconds, ?string $key = null
     });
     if ($hit > $max) throw too_many();
 }
+// The same counter, for things that should quietly stop rather than fail (resending an email).
+function limit_ok(string $bucket, int $max, int $windowSeconds, ?string $key = null): bool
+{
+    try { limit($bucket, $max, $windowSeconds, $key); return true; } catch (AppError $e) { return false; }
+}
 
 // ============================================================== audit
 // Append-only, hash-chained. Every row's hash covers the previous row's hash,

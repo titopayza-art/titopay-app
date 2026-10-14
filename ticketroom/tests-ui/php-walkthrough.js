@@ -3,15 +3,32 @@
 // temporary password and changes it → organiser applies → free event → admin approves →
 // fan gets tickets → QR shows → gate scan → live count; plus every portal
 // page loads without console errors or CSP violations.
-//   node tests-ui/php-walkthrough.js http://127.0.0.1:8400 TEMP-PASSWORD
-// (TEMP-PASSWORD is what the package was built with: TR_ADMIN_PASSWORD.)
+//   node tests-ui/php-walkthrough.js http://127.0.0.1:8400 TEMP-PASSWORD /path/to/public_html
+// (TEMP-PASSWORD is what the package was built with: TR_ADMIN_PASSWORD.
+// The folder lets the test read the emails the site sent, like a real inbox.)
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert/strict");
+const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8400";
 const TEMP = process.argv[3] || "Temp-pass-#2026";
+const ROOT = process.argv[4] || "/srv/trtest/public_html";
+// The newest email to an address, read from the site's database.
+function lastMail(to) {
+  const dataDir = [path.join(path.dirname(ROOT), "ticketroom-data"), path.join(ROOT, "data")].find((d) => fs.existsSync(path.join(d, "ticketroom.sqlite")));
+  const php = `$d=new PDO('sqlite:${dataDir}/ticketroom.sqlite'); $s=$d->prepare('SELECT subject, body FROM message_outbox WHERE to_address = ? ORDER BY created_at DESC, rowid DESC LIMIT 1'); $s->execute([$argv[1]]); echo json_encode($s->fetch(PDO::FETCH_ASSOC));`;
+  return JSON.parse(execFileSync("php", ["-r", php, to]).toString() || "null");
+}
+// Open the confirmation link from the email, as the person would.
+async function confirmEmail(p, email) {
+  const m = lastMail(email);
+  const link = m.body.match(/\/account#\/verify\/(\S+)/);
+  assert.ok(link, `confirmation email for ${email}`);
+  await p.goto(`${BASE}/account#/verify/${link[1]}`);
+  await p.getByRole("heading", { name: /Welcome to TicketRoom/ }).waitFor();
+}
 const SHOTS = path.resolve(__dirname, "artifacts", "php");
 const problems = [];
 let step = 0;
@@ -35,10 +52,15 @@ async function signUp(p, name, email, password) {
   await d.getByLabel("Confirm password").fill(password);
   await d.getByText("I accept the").click();
   await d.getByRole("button", { name: "Create account" }).click();
-  await p.getByRole("button", { name: /Sign out/ }).waitFor().catch(async (err) => {
+  await d.getByRole("heading", { name: "Check your inbox" }).waitFor().catch(async (err) => {
     await p.screenshot({ path: path.join(SHOTS, "signup-failed.png") });
     throw new Error(`sign-up did not finish: ${(await d.innerText().catch(() => "")).slice(0, 300)} | ${err.message.split("\n")[0]}`);
   });
+  // Not signed in until the email is confirmed.
+  assert.equal((await (await p.request.post(`${BASE}/api/auth/login`, { data: { email, password } })).json()).error.code, "email_not_verified");
+  await confirmEmail(p, email);
+  await p.getByRole("button", { name: "Go to my tickets" }).click();
+  await p.getByRole("button", { name: /Sign out/ }).waitFor();
 }
 async function signIn(p, email, password) {
   const r = await p.request.post(`${BASE}/api/auth/login`, { data: { email, password } });
@@ -149,20 +171,32 @@ async function signIn(p, email, password) {
     await f.getByRole("button", { name: /More Free admission/ }).click();
     await f.getByRole("button", { name: /More Free admission/ }).click();
     await f.getByRole("button", { name: "Continue" }).click();
+    // No account needed: the fan checks out as a guest.
+    await f.getByRole("heading", { name: "Checkout" }).waitFor();
+    await f.getByLabel("Full name").fill("Sipho Fan");
+    await f.getByLabel("Email", { exact: true }).fill("sipho@example.co.za");
+    await f.getByLabel("Confirm email").fill("sipho@example.co.za");
+    await f.getByRole("button", { name: "Get free tickets" }).click();
+    await f.getByRole("heading", { name: /You're going/ }).waitFor();
+    await f.locator(".t-qr img").first().waitFor();
+    assert.equal(await f.locator(".ticket").count(), 2, "both tickets on the order page");
+    await shot(f, "fan-order-confirmed");
+    // The email carries a private link that opens the same tickets anywhere.
+    const conf = lastMail("sipho@example.co.za");
+    assert.match(conf.body, /\/orders\/TR-[A-Z0-9]+\?k=/);
+    // Later the fan makes an account with the same email; once confirmed, the tickets are in it.
+    await f.getByRole("button", { name: "Create my account" }).click();
     const dlg = f.locator("dialog");
-    await dlg.getByRole("button", { name: "Create account" }).click().catch(() => {});
-    if (await dlg.getByLabel("Full name").count() === 0) await dlg.getByRole("button", { name: "Create account" }).click();
     await dlg.getByLabel("Full name").fill("Sipho Fan");
     await dlg.getByRole("textbox", { name: "Email" }).fill("sipho@example.co.za");
     await dlg.getByLabel("Password", { exact: true }).fill("fan-password-123");
     await dlg.getByLabel("Confirm password").fill("fan-password-123");
     await dlg.getByText("I accept the").click();
     await dlg.getByRole("button", { name: "Create account" }).click();
-    await f.getByRole("heading", { name: "Checkout" }).waitFor().catch(async (e) => { throw new Error(`no checkout; dialog says: ${(await f.locator("dialog[open]").innerText().catch(() => "-")).slice(0, 300)} | ${e.message.split("\n")[0]}`); });
-    await f.getByRole("button", { name: "Get free tickets" }).click();
-    await f.getByRole("heading", { name: /You're going/ }).waitFor();
-    await shot(f, "fan-order-confirmed");
-    await f.goto(`${BASE}/account#/tickets`);
+    await dlg.getByRole("heading", { name: "Check your inbox" }).waitFor();
+    await confirmEmail(f, "sipho@example.co.za");
+    await f.getByText(/2 tickets you bought as a guest are now in your account/).waitFor();
+    await f.getByRole("button", { name: "Go to my tickets" }).click();
     await f.locator(".portal-bar.pb-customer").getByText("Customer portal").waitFor();
     await f.locator(".t-qr img").first().waitFor();
     const qrOk = await f.locator(".t-qr img").first().evaluate((img) => img.complete && img.naturalWidth > 0);

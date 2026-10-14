@@ -139,7 +139,7 @@ function tr_install_db(string $hash): void
     $email = strtolower((string) cfg('admin.email', 'hello@ticketroom.co.za'));
     $uid = uuid();
     $now = now_iso();
-    insert('users', ['id' => $uid, 'email' => $email, 'full_name' => (string) cfg('admin.name', 'TicketRoom Admin'), 'password_hash' => $hash, 'status' => 'active', 'email_verified_at' => $now, 'created_at' => $now, 'updated_at' => $now]);
+    insert('users', ['id' => $uid, 'email' => $email, 'email_key' => email_key($email), 'full_name' => (string) cfg('admin.name', 'TicketRoom Admin'), 'password_hash' => $hash, 'status' => 'active', 'email_verified_at' => $now, 'created_at' => $now, 'updated_at' => $now]);
     foreach (['admin', 'finance', 'support'] as $role) insert('platform_roles', ['user_id' => $uid, 'role' => $role, 'granted_at' => $now]);
     q('INSERT INTO meta (key, value) VALUES (?, ?)', ["temp_password:$uid", $now]);
     kb_ensure_defaults();
@@ -148,7 +148,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -189,7 +189,39 @@ const UPGRADES = [
         'CREATE UNIQUE INDEX IF NOT EXISTS organisers_ref_uq ON organisers (ref)',
         'CREATE UNIQUE INDEX IF NOT EXISTS events_ref_uq ON events (ref)',
     ],
+    // Guest checkout, one account per person, payments, refunds, payouts,
+    // self-service integrations and queries passed to organisers.
+    7 => [
+        'ALTER TABLE users ADD COLUMN email_key TEXT',
+        'ALTER TABLE users ADD COLUMN guest INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE users ADD COLUMN pending_password_hash TEXT',
+        'CREATE INDEX IF NOT EXISTS users_email_key_idx ON users (email_key)',
+        'CREATE INDEX IF NOT EXISTS users_phone_idx ON users (phone)',
+        '@emailkeys',
+        'ALTER TABLE support_cases ADD COLUMN organiser_id TEXT REFERENCES organisers(id)',
+        'ALTER TABLE support_cases ADD COLUMN event_id TEXT REFERENCES events(id)',
+        "ALTER TABLE support_cases ADD COLUMN handled_by TEXT NOT NULL DEFAULT 'ticketroom'",
+        'ALTER TABLE support_cases ADD COLUMN transferred_at TEXT',
+        'CREATE TABLE IF NOT EXISTS payments ( id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES orders(id), provider TEXT NOT NULL, environment TEXT NOT NULL, provider_reference TEXT, amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), status TEXT NOT NULL CHECK (status IN (\'initiated\',\'pending\',\'confirmed\',\'failed\',\'cancelled\',\'refunded\',\'partially_refunded\')), refunded_cents INTEGER NOT NULL DEFAULT 0, failure_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confirmed_at TEXT )',
+        'CREATE UNIQUE INDEX IF NOT EXISTS payments_provider_ref_uq ON payments (provider, provider_reference)',
+        'CREATE INDEX IF NOT EXISTS payments_order_idx ON payments (order_id)',
+        'CREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status, created_at)',
+        'CREATE TABLE IF NOT EXISTS webhook_events ( id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT \'received\' CHECK (status IN (\'received\',\'processed\',\'ignored\',\'failed\',\'rejected\')), result TEXT, error TEXT, attempts INTEGER NOT NULL DEFAULT 1, received_at TEXT NOT NULL, processed_at TEXT, UNIQUE (provider, event_id) )',
+        'CREATE TABLE IF NOT EXISTS refunds ( id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL REFERENCES orders(id), payment_id TEXT REFERENCES payments(id), amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), kind TEXT NOT NULL CHECK (kind IN (\'customer\',\'event_cancelled\',\'unfulfilled\',\'goodwill\')), reason TEXT NOT NULL, ticket_ids TEXT, status TEXT NOT NULL CHECK (status IN (\'requested\',\'approved\',\'processing\',\'completed\',\'rejected\',\'failed\')), manual INTEGER NOT NULL DEFAULT 0, provider_reference TEXT, note TEXT, requested_by TEXT REFERENCES users(id), decided_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT )',
+        'CREATE INDEX IF NOT EXISTS refunds_status_idx ON refunds (status, created_at)',
+        'CREATE INDEX IF NOT EXISTS refunds_order_idx ON refunds (order_id)',
+        'CREATE TABLE IF NOT EXISTS payouts ( id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, organiser_id TEXT NOT NULL REFERENCES organisers(id), amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), status TEXT NOT NULL CHECK (status IN (\'requested\',\'approved\',\'paid\',\'rejected\')), bank_name TEXT, account_holder TEXT, account_last4 TEXT, branch_code TEXT, eft_reference TEXT, note TEXT, requested_by TEXT REFERENCES users(id), decided_by TEXT REFERENCES users(id), paid_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, paid_at TEXT )',
+        'CREATE INDEX IF NOT EXISTS payouts_org_idx ON payouts (organiser_id, status)',
+        'CREATE TABLE IF NOT EXISTS integration_settings ( key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_by TEXT REFERENCES users(id), updated_at TEXT NOT NULL )',
+        'CREATE TABLE IF NOT EXISTS support_messages ( id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES support_cases(id), author_id TEXT REFERENCES users(id), author_kind TEXT NOT NULL CHECK (author_kind IN (\'customer\',\'ticketroom\',\'organiser\',\'system\')), body TEXT NOT NULL, emailed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL )',
+        'CREATE INDEX IF NOT EXISTS support_messages_case_idx ON support_messages (case_id, id)',
+    ],
 ];
+// Fills in the duplicate-check key for accounts made before it existed.
+function tr_backfill_email_keys(): void
+{
+    foreach (rows('SELECT id, email FROM users WHERE email_key IS NULL') as $r) q('UPDATE users SET email_key = ? WHERE id = ?', [email_key($r['email']), $r['id']]);
+}
 // Gives every organiser and event without one its short ID.
 function tr_backfill_refs(): void
 {
@@ -204,7 +236,7 @@ function tr_upgrade(): void
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         foreach (UPGRADES as $v => $steps) {
             if ($v <= $have) continue;
-            foreach ($steps as $sql) $sql === '@refs' ? tr_backfill_refs() : db()->exec($sql);
+            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), default => db()->exec($sql) };
             q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
         }
     });

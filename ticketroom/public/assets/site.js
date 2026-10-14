@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -150,15 +150,13 @@ async function eventPage(slug) {
       <p class="trust mt mb-0">${e.is_free ? "This event is free. Choose how many tickets you need and register." : html`${icon("lock")}The only extra is a R10 booking fee per paid ticket. Got a promo code? Add it on the next step.`}</p>`);
     $$("[data-inc]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.inc]++; drawSelect(); $(`[data-inc="${b.dataset.inc}"]`, box)?.focus(); }));
     $$("[data-dec]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.dec]--; drawSelect(); $(`[data-dec="${b.dataset.dec}"]`, box)?.focus(); }));
-    $("[data-continue]", box).addEventListener("click", async () => {
-      const u = await requireUser("Sign in or create a free account to buy tickets. Your tickets live in your account so you can view and transfer them.");
-      if (u) { header($("#header")); drawCheckout(u); }
-    });
+    // No account needed: signed-in people check out as themselves, anyone else as a guest.
+    $("[data-continue]", box).addEventListener("click", async () => drawCheckout(await me()));
   };
 
   const drawCheckout = async (u, promo = "") => {
     let pm = { links: [], titopayAvailable: false };
-    try { pm = await get("/api/me/payment-methods"); } catch { /* card only */ }
+    if (u) try { pm = await get("/api/me/payment-methods"); } catch { /* card only */ }
     const titopay = pm.links.find((l) => l.provider === "titopay");
     let quote;
     try { quote = (await post("/api/public/checkout/quote", { eventSlug: slug, items: selection(), promoCode: promo || undefined })).quote; }
@@ -174,8 +172,14 @@ async function eventPage(slug) {
         <div class="line total"><span>Total</span><span>${moneyExact(quote.totalCents)}</span></div></div>
       <form class="row mt" id="promo"><label class="sr-only" for="pc">Promo code</label><input id="pc" name="code" placeholder="Promo code" class="grow" value="${quote.promoCode || ""}" maxlength="40"><button class="btn btn-ghost btn-sm">Apply</button></form>
       <form class="stack mt" id="pay">
-        <p class="small mb-0">Tickets go to <strong>${u.email}</strong>.</p>
-        <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>
+        ${u ? html`<p class="small mb-0">Tickets go to <strong>${u.email}</strong>.</p>
+        <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>`
+        : html`<fieldset class="stack card flat"><legend class="label">Your details</legend>
+          <p class="small muted mb-0">No account needed. We email your tickets, and you can add them to an account later. <button type="button" class="btn-link" data-signin>Sign in instead</button></p>
+          <div class="field"><label for="g-name">Full name</label><input id="g-name" name="gName" autocomplete="name" required maxlength="120"></div>
+          <div class="field"><label for="g-email">Email</label><input id="g-email" name="gEmail" type="email" autocomplete="email" required></div>
+          <div class="field"><label for="g-email2">Confirm email</label><input id="g-email2" name="gEmail2" type="email" autocomplete="email" required><span class="hint">Your tickets are sent here, so check it twice.</span></div>
+          <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" autocomplete="tel" placeholder="082 123 4567"></div></fieldset>`}
         ${quote.totalCents > 0 ? html`<fieldset class="stack card flat"><legend class="label">Pay with</legend>
           <label class="check"><input type="radio" name="paymentMethod" value="card" checked><span>Card, EFT or instant EFT</span></label>
           ${pm.titopayAvailable ? (titopay ? html`<label class="check"><input type="radio" name="paymentMethod" value="titopay_wallet"><span>TitoPay wallet <span class="muted small">${titopay.display_handle}</span></span></label>`
@@ -190,11 +194,16 @@ async function eventPage(slug) {
         <p class="tiny muted mb-0">By paying you agree to the <a href="/legal/terms">Terms</a> and the event's refund policy. Your tickets are reserved for a few minutes while you pay. Payment is confirmed by the payment provider, not by your browser.</p>
       </form>`);
     $("#promo").addEventListener("submit", (ev) => { ev.preventDefault(); drawCheckout(u, $("#pc").value.trim()); });
+    $("[data-signin]", box)?.addEventListener("click", () => authDialog("signin", { onDone: async () => { header($("#header")); drawCheckout(await me(true), promo); } }));
     $("[data-back]", box).addEventListener("click", drawSelect);
     onSubmit($("#pay"), async (v) => {
+      if (!u && String(v.gEmail || "").trim().toLowerCase() !== String(v.gEmail2 || "").trim().toLowerCase()) {
+        throw Object.assign(new Error("The two email addresses don't match."), { details: { gEmail2: "Must match the email above." } });
+      }
       const body = {
         eventSlug: slug, items: selection(), promoCode: quote.promoCode || undefined, ref: sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
         buyerPhone: v.buyerPhone, marketingOptIn: { email: !!v.mEmail, sms: !!v.mSms }, idempotencyKey: key, paymentMethod: v.paymentMethod || "card",
+        ...(u ? {} : { guest: { fullName: v.gName, email: v.gEmail, ...(v.buyerPhone ? { phone: v.buyerPhone } : {}) } }),
       };
       // On a big on-sale the server can be briefly too busy to answer. Try
       // again with the same key: the server books it once, however many tries.
@@ -211,42 +220,84 @@ async function eventPage(slug) {
         }
       }
       sessionStorage.removeItem(`tr_idem_${slug}`);
+      const k = res.accessKey ? `?k=${encodeURIComponent(res.accessKey)}` : "";
       if (res.payment?.redirectUrl && res.order.status === "pending_payment") location.href = res.payment.redirectUrl;
-      else location.href = `/orders/${res.order.reference}`;
+      else location.href = `/orders/${res.order.reference}${k}`;
     });
   };
   drawSelect();
 }
 
 // ---------------- order status ----------------
+// The order page: the buyer's tickets, signed in or from the private link in
+// their email (?k=…). Guests see their QR codes here and are offered an
+// account with the same email, which collects every ticket once confirmed.
+function orderTicket(t, o) {
+  const when = `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`;
+  const live = t.status === "valid" && t.qrUrl;
+  return html`<div class="tk-wrap"><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"}" aria-label="Ticket ${t.code}">
+    <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${o.event.title}</h3><p class="tk-when">${when}</p><p class="tk-where">${o.event.venue}, ${o.event.city}</p></header>
+    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || o.buyerName}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${o.reference}</dd></div></dl>
+      <div class="t-qr">${live ? html`<img src="${t.qrUrl}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
+      <p class="tk-scan">${t.status === "used" ? `Scanned ${fmtDateTime(t.admitted_at)}` : live ? "Scan at the entrance" : ""}</p></div>
+    <div class="tk-perf" aria-hidden="true"></div>
+    <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">${t.code}</span><p class="tk-note">Present this ticket at the entrance. Do not share the code publicly.</p></div>
+  </article>
+  ${live ? html`<div class="tk-actions no-print"><div class="row"><button class="btn btn-ghost btn-sm" data-img="${t.id}">Save ticket image</button><button class="btn btn-ghost btn-sm" data-cal>Add to calendar</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div></div>` : ""}</div>`;
+}
+
 async function orderPage(ref) {
-  const u = await requireUser("Sign in to view your order.");
-  if (!u) return;
+  const k = new URLSearchParams(location.search).get("k") || "";
+  const signedIn = !!(await me());
+  if (!k && !signedIn) {
+    const u = await requireUser("Sign in to view your order, or open the link in your confirmation email.");
+    if (!u) return;
+  }
+  const q = k ? `?k=${encodeURIComponent(k)}` : "";
   let tries = 0;
   const draw = async () => {
-    const { order: o, items, tickets, payment } = await get(`/api/public/orders/${encodeURIComponent(ref)}`);
+    const { order: o, items, tickets, payment, guest, email } = await get(`/api/public/orders/${encodeURIComponent(ref)}${q}`);
     const wallet = payment?.method === "titopay_wallet";
     document.title = `Order ${o.reference} | TicketRoom`;
     const pending = o.status === "pending_payment";
-    render(main, html`<div class="wrap section"><div class="card pad-lg stack" aria-live="polite">
+    const paid = o.status === "paid" || o.status === "partially_refunded";
+    render(main, html`<div class="wrap section stack-lg"><div class="card pad-lg stack" aria-live="polite">
       <div class="row between"><span class="muted small">Order ${o.reference}</span>${badge(o.status)}</div>
-      ${o.status === "paid" ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've also emailed a confirmation.</p>
-          <div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>
+      ${paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you as well.</p>
+          ${guest ? html`<div class="callout"><strong>Keep your tickets in one place.</strong> Create a free account with <strong>${email}</strong> and confirm it: these tickets, and any you buy later, will be waiting there. You can then pass a ticket to a friend or change the name on it.
+            <div class="row mt"><button class="btn btn-primary btn-sm" data-make-account>Create my account</button></div></div>`
+          : html`<div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>`}
           <div class="card flat stack"><strong>Tell your friends you're going</strong><div data-share></div></div>`
         : pending && wallet && payment.status === "failed" ? html`<h1>Payment not approved</h1><p>The TitoPay wallet payment was declined or not approved in time. Nothing was charged.</p><div class="row"><button class="btn btn-primary" data-repay>Try again</button><button class="btn btn-ghost" data-cancel>Cancel order</button></div>`
-        : pending && wallet ? html`<h1>Approve in your TitoPay app</h1><p>We've sent a payment request of <strong>${moneyExact(o.totalCents)}</strong> to your TitoPay wallet. Open the TitoPay app and approve it. This page will update by itself.</p>${spinner()}`
-        : pending ? html`<h1>Confirming your payment…</h1><p>We're waiting for the payment provider to confirm. This usually takes a few seconds. Please don't pay again.</p>${tries > 20 ? html`<p class="callout warn">Still waiting. If you completed payment, your tickets will appear in your account as soon as the provider confirms. <button class="btn-link" data-repay>Return to payment</button> · <button class="btn-link" data-cancel>Cancel order</button></p>` : spinner()}`
+        : pending && payment && ["failed", "cancelled"].includes(payment.status) ? html`<h1>Payment not completed</h1><p>The payment was cancelled or declined, so nothing was charged. Your tickets are still held for a few minutes.</p><div class="row"><button class="btn btn-primary" data-repay>Try paying again</button><button class="btn btn-ghost" data-cancel>Cancel order</button></div>`
+        : pending ? html`<h1>Confirming your payment…</h1><p>We're waiting for the payment provider to confirm. This usually takes a few seconds. Please don't pay again.</p>${tries > 20 ? html`<p class="callout warn">Still waiting. If you completed payment, your tickets will appear as soon as the provider confirms, and we'll email them to you. <button class="btn-link" data-repay>Return to payment</button> · <button class="btn-link" data-cancel>Cancel order</button></p>` : spinner()}`
         : o.status === "paid_unfulfilled" ? html`<h1>Payment received, but the tickets ran out</h1><p class="callout warn">Your payment arrived after your reservation expired and the tickets had sold out. A full refund has been started automatically.</p>`
+        : o.status === "refunded" ? html`<h1>Order refunded</h1><p>This order was refunded in full${o.refundedCents ? ` (${moneyExact(o.refundedCents)})` : ""}. Card refunds usually reach your account within 5 to 10 working days.</p>`
         : html`<h1>${o.status === "expired" ? "Reservation expired" : o.status === "cancelled" ? "Order cancelled" : "Order " + o.status.replace(/_/g, " ")}</h1><p>No tickets were issued${o.status === "expired" || o.status === "cancelled" ? " and nothing was charged" : ""}.</p><a class="btn btn-primary" href="/events/${o.event.slug}">Try again</a>`}
       <div class="card flat"><h3>${o.event.title}</h3><p class="muted small mb-0">${fmtDateTime(o.event.startsAt)} · ${o.event.venue}, ${o.event.city}</p>
         <div class="totals">${items.map((i) => html`<div class="line"><span>${i.quantity} × ${i.name}</span><span>${moneyExact(i.unit_price_cents * i.quantity)}</span></div>`)}
         ${o.discountCents ? html`<div class="line"><span>Discount</span><span>−${moneyExact(o.discountCents)}</span></div>` : ""}
-        <div class="line"><span>Booking fee</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div></div></div>
-    </div></div>`);
+        <div class="line"><span>Booking fee</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div>
+        ${o.refundedCents ? html`<div class="line"><span>Refunded</span><span>−${moneyExact(o.refundedCents)}</span></div>` : ""}</div></div>
+    </div>
+    ${paid && (guest || k) && tickets.length ? html`<div class="stack-lg">${tickets.map((t) => orderTicket(t, o))}</div>` : ""}</div>`);
     $("[data-share]")?.append(shareBar(`${location.origin}/events/${o.event.slug}`, o.event.title, { text: `I'm going to ${o.event.title}. Get your ticket` }));
-    $("[data-repay]")?.addEventListener("click", async () => { try { const r = await post(`/api/public/orders/${ref}/pay`); if (r.payment.redirectUrl) location.href = r.payment.redirectUrl; else { tries = 0; draw(); } } catch (err) { toast(err.message, "bad"); } });
-    $("[data-cancel]")?.addEventListener("click", async () => { await post(`/api/public/orders/${ref}/cancel`); draw(); });
-    if (pending && !(wallet && payment.status === "failed") && tries++ < 120) setTimeout(draw, tries < 10 ? 1500 : 4000);
+    $("[data-make-account]")?.addEventListener("click", () => authDialog("signup", {}));
+    $$("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
+    $$("[data-cal]").forEach((b) => b.addEventListener("click", () => calendarFile({ title: o.event.title, starts: o.event.startsAt, ends: o.event.endsAt, place: `${o.event.venue}, ${o.event.city}`, url: `${location.origin}/events/${o.event.slug}` })));
+    $$("[data-img]").forEach((b) => b.addEventListener("click", async () => {
+      const t = tickets.find((x) => x.id === b.dataset.img);
+      try {
+        const svg = await fetch(t.qrUrl, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
+        const png = await ticketPng(svg, { title: o.event.title, when: `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`, place: `${o.event.venue}, ${o.event.city}`, code: t.code,
+          rows: [["Ticket", t.ticket_type], ["Holder", t.holder_name || o.buyerName], ...(t.admits > 1 ? [["Admits", `${t.admits} people`]] : []), ["Order", o.reference]] });
+        const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `ticket-${t.code}.png`; document.body.append(a); a.click(); a.remove();
+        toast("Saved. Show this picture at the gate if you have no signal.", "good");
+      } catch (err) { toast(err.message, "bad"); }
+    }));
+    $("[data-repay]")?.addEventListener("click", async () => { try { const r = await post(`/api/public/orders/${ref}/pay${q}`); if (r.payment.redirectUrl) location.href = r.payment.redirectUrl; else { tries = 0; draw(); } } catch (err) { toast(err.message, "bad"); } });
+    $("[data-cancel]")?.addEventListener("click", async () => { await post(`/api/public/orders/${ref}/cancel${q}`); draw(); });
+    if (pending && !(payment && ["failed", "cancelled"].includes(payment.status)) && tries++ < 120) setTimeout(draw, tries < 10 ? 1500 : 4000);
   };
   await draw();
 }

@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -309,9 +309,23 @@ async function saved() {
       : empty("Nothing saved yet. Tap the heart on an event you like and it will appear here.", html`<a class="btn btn-primary" href="/">Find events</a>`)}`);
 }
 
+// The link in the confirmation email. Confirming signs the person in, and any
+// tickets bought as a guest with this email are already in the account.
 async function verify({ token }) {
-  try { await post("/api/auth/verify-email", { token }); toast("Email confirmed. Thank you.", "good"); } catch (err) { toast(err.message, "bad"); }
-  location.hash = "#/tickets";
+  render(main, spinner());
+  const open = () => { location.replace("/account#/tickets"); location.reload(); };
+  try {
+    const r = await post("/api/auth/verify-email", { token });
+    render(main, html`<section class="welcome card"><span class="tk-label">Email confirmed</span><h1>Welcome to TicketRoom${r.firstName ? `, ${r.firstName}` : ""}</h1>
+      <p class="lead">Your account is ready.${r.tickets ? ` ${r.tickets} ticket${r.tickets === 1 ? " you bought as a guest is" : "s you bought as a guest are"} now in your account.` : ""}</p>
+      <div class="row"><button class="btn btn-primary" data-go>Go to my tickets</button><a class="btn btn-ghost" href="/">Browse events</a></div></section>`);
+    $("[data-go]").addEventListener("click", open);
+  } catch (err) {
+    render(main, html`<section class="welcome card"><span class="tk-label">Confirm your email</span><h1>This link has expired</h1>
+      <p class="lead">${err.message} Sign in with your email and password and we'll send you a fresh link straight away.</p>
+      <div class="row"><button class="btn btn-primary" data-in>Sign in</button></div></section>`);
+    $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: open }));
+  }
 }
 
 function reset({ token }) {
@@ -319,13 +333,32 @@ function reset({ token }) {
   onSubmit($("#rs"), async (v) => { matchPasswords(v, "password", "passwordConfirm"); await post("/api/auth/password/reset", { token, password: v.password }); toast("Password changed. Please sign in.", "good"); location.href = "/signin"; });
 }
 
+// Signed out: a calm welcome instead of a sign-in box over an empty page.
+// With no signal, the tickets saved on this phone still open.
+function welcome() {
+  render($("#sidenav"), "");
+  const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+  if (navigator.onLine === false && cached?.tickets?.length) return tickets();
+  render(main, html`<section class="welcome card">
+    <span class="tk-label">Customer portal</span>
+    <h1>Your tickets live here</h1>
+    <p class="lead">Sign in to see your tickets, pass one to a friend, or change the name on a ticket. Bought as a guest? Use the link in your confirmation email, or create an account with the same email: once you confirm it, your tickets appear here.</p>
+    <div class="row"><button class="btn btn-primary" data-in>Sign in</button><button class="btn btn-ghost" data-up>Create account</button></div>
+    <p class="small muted mb-0">Looking for something to do? <a href="/">Browse events</a></p></section>`);
+  const done = () => location.reload();
+  $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: done }));
+  $("[data-up]").addEventListener("click", () => authDialog("signup", { onDone: done }));
+}
+
 (async () => {
-  const pre = location.hash.match(/^#\/reset\/(.+)$/);
   await header($("#header"), { portal: "customer" });
-  if (pre) { nav(); return reset({ token: pre[1] }); }
-  const u = await requireUser("Sign in to see your tickets.");
-  if (!u) return render(main, empty("Sign in to see your tickets."));
-  await header($("#header"), { portal: "customer" });
+  // Links from emails work signed out: choose a new password, confirm an email.
+  const reset0 = location.hash.match(/^#\/reset\/(.+)$/);
+  if (reset0) return reset({ token: reset0[1] });
+  const verify0 = location.hash.match(/^#\/verify\/(.+)$/);
+  if (verify0) return verify({ token: verify0[1] });
+  const u = await me();
+  if (!u) return welcome();
   nav();
   router([
     ["/", tickets], ["/tickets", tickets], ["/saved", saved], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],

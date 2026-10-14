@@ -19,9 +19,14 @@ CREATE TABLE users (
   locked_until      TEXT,
   created_at        TEXT NOT NULL,
   updated_at        TEXT NOT NULL,
-  deleted_at        TEXT
+  deleted_at        TEXT,
+  email_key         TEXT,
+  guest             INTEGER NOT NULL DEFAULT 0,
+  pending_password_hash TEXT
 );
 CREATE UNIQUE INDEX users_email_uq ON users (lower(email));
+CREATE INDEX users_email_key_idx ON users (email_key);
+CREATE INDEX users_phone_idx ON users (phone);
 
 CREATE TABLE platform_roles (
   user_id    TEXT NOT NULL REFERENCES users(id),
@@ -117,7 +122,11 @@ CREATE TABLE support_cases (
   source         TEXT NOT NULL DEFAULT 'web',
   due_at         TEXT,
   created_at     TEXT NOT NULL,
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  organiser_id   TEXT REFERENCES organisers(id),
+  event_id       TEXT REFERENCES events(id),
+  handled_by     TEXT NOT NULL DEFAULT 'ticketroom',
+  transferred_at TEXT
 );
 
 CREATE TABLE uploads (
@@ -519,3 +528,92 @@ CREATE TABLE IF NOT EXISTS event_likes (
   PRIMARY KEY (user_id, event_id)
 );
 CREATE INDEX IF NOT EXISTS event_likes_event_idx ON event_likes (event_id);
+
+-- Card payments, provider notifications, refunds, organiser payouts,
+-- settings entered in the admin portal, and support conversations.
+CREATE TABLE IF NOT EXISTS payments (
+  id                 TEXT PRIMARY KEY,
+  order_id           TEXT NOT NULL REFERENCES orders(id),
+  provider           TEXT NOT NULL,
+  environment        TEXT NOT NULL,
+  provider_reference TEXT,
+  amount_cents       INTEGER NOT NULL CHECK (amount_cents > 0),
+  status             TEXT NOT NULL CHECK (status IN ('initiated','pending','confirmed','failed','cancelled','refunded','partially_refunded')),
+  refunded_cents     INTEGER NOT NULL DEFAULT 0,
+  failure_reason     TEXT,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  confirmed_at       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS payments_provider_ref_uq ON payments (provider, provider_reference);
+CREATE INDEX IF NOT EXISTS payments_order_idx ON payments (order_id);
+CREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status, created_at);
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider     TEXT NOT NULL,
+  event_id     TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received','processed','ignored','failed','rejected')),
+  result       TEXT,
+  error        TEXT,
+  attempts     INTEGER NOT NULL DEFAULT 1,
+  received_at  TEXT NOT NULL,
+  processed_at TEXT,
+  UNIQUE (provider, event_id)
+);
+CREATE TABLE IF NOT EXISTS refunds (
+  id                 TEXT PRIMARY KEY,
+  reference          TEXT NOT NULL UNIQUE,
+  order_id           TEXT NOT NULL REFERENCES orders(id),
+  payment_id         TEXT REFERENCES payments(id),
+  amount_cents       INTEGER NOT NULL CHECK (amount_cents > 0),
+  kind               TEXT NOT NULL CHECK (kind IN ('customer','event_cancelled','unfulfilled','goodwill')),
+  reason             TEXT NOT NULL,
+  ticket_ids         TEXT,
+  status             TEXT NOT NULL CHECK (status IN ('requested','approved','processing','completed','rejected','failed')),
+  manual             INTEGER NOT NULL DEFAULT 0,
+  provider_reference TEXT,
+  note               TEXT,
+  requested_by       TEXT REFERENCES users(id),
+  decided_by         TEXT REFERENCES users(id),
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  completed_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS refunds_status_idx ON refunds (status, created_at);
+CREATE INDEX IF NOT EXISTS refunds_order_idx ON refunds (order_id);
+CREATE TABLE IF NOT EXISTS payouts (
+  id               TEXT PRIMARY KEY,
+  reference        TEXT NOT NULL UNIQUE,
+  organiser_id     TEXT NOT NULL REFERENCES organisers(id),
+  amount_cents     INTEGER NOT NULL CHECK (amount_cents > 0),
+  status           TEXT NOT NULL CHECK (status IN ('requested','approved','paid','rejected')),
+  bank_name        TEXT,
+  account_holder   TEXT,
+  account_last4    TEXT,
+  branch_code      TEXT,
+  eft_reference    TEXT,
+  note             TEXT,
+  requested_by     TEXT REFERENCES users(id),
+  decided_by       TEXT REFERENCES users(id),
+  paid_by          TEXT REFERENCES users(id),
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL,
+  paid_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS payouts_org_idx ON payouts (organiser_id, status);
+CREATE TABLE IF NOT EXISTS integration_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_by TEXT REFERENCES users(id),
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS support_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_id    TEXT NOT NULL REFERENCES support_cases(id),
+  author_id  TEXT REFERENCES users(id),
+  author_kind TEXT NOT NULL CHECK (author_kind IN ('customer','ticketroom','organiser','system')),
+  body       TEXT NOT NULL,
+  emailed    INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS support_messages_case_idx ON support_messages (case_id, id);

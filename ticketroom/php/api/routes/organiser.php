@@ -395,8 +395,9 @@ route('POST', '/api/organiser/:orgId/members', function ($a) {
     limit('orgmember', 30, 3600, $u['id']);
     org_require_approved(organiser_access($u, $a['orgId'], ['owner'])['organiser']);
     $b = check(body(), ['email' => R::email(), 'role' => R::oneOf(['manager', 'marketing', 'finance', 'viewer'])]);
-    $uid = val("SELECT id FROM users WHERE lower(email) = ? AND status = 'active'", [$b['email']]);
-    if (!$uid) throw not_found('No TicketRoom account uses that email. Ask them to sign up first.');
+    $f = user_by_email($b['email']);
+    if (!$f || $f['status'] !== 'active' || (int) $f['guest'] === 1) throw not_found('No TicketRoom account uses that email. Ask them to sign up first.');
+    $uid = $f['id'];
     q('INSERT INTO organiser_members (organiser_id, user_id, role, created_at) VALUES (?,?,?,?) ON CONFLICT (organiser_id, user_id) DO UPDATE SET role = excluded.role',
         [$a['orgId'], $uid, $b['role'], now_iso()]);
     audit('organiser.member_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $a['orgId'], 'details' => ['role' => $b['role']]]);
@@ -702,18 +703,21 @@ route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
     org_require_approved($org);
     $b = check(body(), ['email' => R::email(), 'fullName' => R::str(['optional' => true, 'min' => 2, 'max' => 120]),
         'canScan' => org_bool(['optional' => true, 'fallback' => true]), 'canManageTags' => R::bool()]);
-    $uid = val("SELECT id FROM users WHERE lower(email) = ? AND status = 'active'", [$b['email']]);
+    $found = user_by_email($b['email']);
+    if ($found && $found['status'] !== 'active') throw conflict('That account is suspended or closed, so it cannot scan tickets.', 'account_inactive');
+    $uid = $found['id'] ?? null;
     $invited = false;
-    if (!$uid) {
+    // Someone new, or someone who has only bought tickets as a guest, gets an email to set a password.
+    if (!$uid || (int) $found['guest'] === 1) {
         $token = random_token(32);
-        $name = $b['fullName'] ?? explode('@', $b['email'])[0];
-        $uid = tx(function () use ($u, $b, $token, $name, $event, $org) {
+        $name = $b['fullName'] ?? ($found['full_name'] ?? explode('@', $b['email'])[0]);
+        $uid = tx(function () use ($u, $b, $token, $name, $event, $org, $uid) {
             $now = now_iso();
-            $nu = insert('users', ['id' => uuid(), 'email' => $b['email'], 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
-            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $nu['id'], 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
-            outbox_enqueue(['to' => $b['email'], 'userId' => $nu['id']] + tpl('staffInvite', ['name' => $name, 'organiser' => $org['name'], 'event' => $event['title'], 'url' => base_url() . "/account#/reset/$token"]));
-            audit('staff.invited', ['actor' => $u, 'entityType' => 'user', 'entityId' => $nu['id'], 'organiserId' => $event['organiser_id'], 'details' => ['eventId' => $event['id']]]);
-            return $nu['id'];
+            if (!$uid) $uid = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now])['id'];
+            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $uid, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
+            outbox_enqueue(['to' => $b['email'], 'userId' => $uid] + tpl('staffInvite', ['name' => $name, 'organiser' => $org['name'], 'event' => $event['title'], 'url' => base_url() . "/account#/reset/$token"]));
+            audit('staff.invited', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['eventId' => $event['id']]]);
+            return $uid;
         });
         $invited = true;
     }

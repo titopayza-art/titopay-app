@@ -237,8 +237,11 @@ function tpl(string $name, array $a): array
                 'body' => $hi . ($free ? "You're booked for {$e['title']}. Your " . plural($n, 'free ticket') . " $isAre waiting in your TicketRoom account."
                                        : 'Thanks for your order. Your ' . plural($n, 'ticket') . " for {$e['title']} $isAre ready.")
                     . "\n\n" . place($e) . "\n" . when_str($e['starts_at']) . "\nOrder {$o['reference']}" . ($free ? '' : ' · ' . format_zar((int) $o['total_cents']))
-                    . "\n\nOpen my tickets: $B/account#/tickets\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in."
-                    . ($free ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : '') . FOOTER,
+                    . (!empty($a['guestLink'])
+                        ? "\n\nView your tickets: {$a['guestLink']}\n\nKeep this email: the link opens your tickets on any phone. Want them all in one place? Create a free account with this email address at $B/account and confirm it. Your tickets will be waiting."
+                        : "\n\nOpen my tickets: $B/account#/tickets")
+                    . "\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in."
+                    . ($free && empty($a['guestLink']) ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : '') . FOOTER,
             ];
         case 'eventReminder':
             $e = $a['event']; $soon = !empty($a['soon']); $n = (int) $a['ticketCount'];
