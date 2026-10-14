@@ -200,30 +200,38 @@ route('POST', '/api/admin/events/:id/cancel', function ($a) {
 });
 
 // ---- users -----------------------------------------------------------------------
+// The platform owner: the first administrator. Only they act on their own account.
+function adm_owner_id(): string { return (string) val("SELECT value FROM meta WHERE key = 'owner_user_id'"); }
+function adm_guard_owner(array $actor, string $targetId): void
+{
+    if ($targetId === adm_owner_id() && $actor['id'] !== $targetId) throw forbidden('That is the platform owner. Only the owner can change their own account.');
+}
+// Customers and organisers. TicketRoom staff are managed under Staff & roles.
 route('GET', '/api/admin/users', function () {
     adm_admin_or_support();
     $s = adm_search('q');
+    $type = (string) qs('type', '');
+    if (!in_array($type, ['', 'customer', 'organiser'], true)) $type = '';
     $like = "%$s%";
-    $list = rows("SELECT u.id, u.email, u.full_name, u.phone, u.status, u.created_at, u.email_verified_at FROM users u
-                   WHERE ? = '' OR lower(u.email) LIKE lower(?) OR lower(u.full_name) LIKE lower(?) OR lower(COALESCE(u.phone,'')) LIKE lower(?)
-                   ORDER BY u.created_at DESC LIMIT 100", [$s, $like, $like, $like]);
-    $roles = [];
-    if ($list) {
-        $ids = array_column($list, 'id');
-        foreach (rows('SELECT user_id, role FROM platform_roles WHERE user_id IN (' . placeholders($ids) . ')', $ids) as $r) $roles[$r['user_id']][] = $r['role'];
-    }
-    foreach ($list as &$x) $x['roles'] = $roles[$x['id']] ?? [];
-    return ['users' => $list];
+    $list = rows("SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_type, u.guest, u.created_at, u.email_verified_at,
+                         (SELECT group_concat(o.name, ', ') FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = u.id) AS organisations
+                    FROM users u
+                   WHERE u.account_type <> 'staff' AND (? = '' OR u.account_type = ?)
+                     AND (? = '' OR lower(u.email) LIKE lower(?) OR lower(u.full_name) LIKE lower(?) OR lower(COALESCE(u.phone,'')) LIKE lower(?))
+                   ORDER BY u.created_at DESC LIMIT 100", [$type, $type, $s, $like, $like, $like]);
+    $counts = [];
+    foreach (rows("SELECT account_type, count(*) AS n FROM users WHERE account_type <> 'staff' GROUP BY account_type") as $r) $counts[$r['account_type']] = (int) $r['n'];
+    return ['users' => $list, 'counts' => $counts];
 });
 
 route('GET', '/api/admin/users/:id', function ($a) {
     adm_admin_or_support();
-    $user = row('SELECT id, email, full_name, phone, status, created_at, email_verified_at FROM users WHERE id = ?', [$a['id']]);
+    $user = row("SELECT id, email, full_name, phone, status, account_type, guest, created_at, email_verified_at FROM users WHERE id = ? AND account_type <> 'staff'", [$a['id']]);
     if (!$user) throw not_found('User not found.');
     $user['has_pin'] = false; // spending PINs belong to cashless, not in this edition
     return [
         'user' => $user,
-        'roles' => rows('SELECT role, granted_at FROM platform_roles WHERE user_id = ?', [$a['id']]),
+        'organisations' => rows('SELECT o.id, o.name, o.ref, o.status, m.role FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = ? ORDER BY o.name', [$a['id']]),
         'orders' => rows('SELECT o.id, o.reference, o.status, o.total_cents, o.created_at, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = ? ORDER BY o.created_at DESC LIMIT 50', [$a['id']]),
         'tickets' => rows('SELECT t.id, t.code, t.status, e.title, t.admitted_at FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = ? ORDER BY t.created_at DESC LIMIT 100', [$a['id']]),
         'tags' => [],
@@ -234,35 +242,43 @@ route('POST', '/api/admin/users/:id/status', function ($a) {
     $u = adm_admin();
     $b = check(body(), ['status' => R::oneOf(['active', 'suspended']), 'reason' => R::str(['min' => 3, 'max' => 400])]);
     if ($a['id'] === $u['id']) throw bad('You cannot change your own status.');
+    adm_guard_owner($u, $a['id']);
     tx(function () use ($a, $b) {
         $now = now_iso();
-        if (!affected("UPDATE users SET status = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'", [$b['status'], $now, $a['id']])) throw not_found('User not found.');
+        // Staff accounts are switched on and off under Staff & roles only.
+        if (!affected("UPDATE users SET status = ?, updated_at = ? WHERE id = ? AND status <> 'deleted' AND account_type <> 'staff'", [$b['status'], $now, $a['id']])) throw not_found('User not found.');
         if ($b['status'] === 'suspended') q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [$now, $a['id']]);
     });
     audit("user.{$b['status']}", ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['reason' => $b['reason']]]);
     return ['ok' => true];
 });
 
-route('POST', '/api/admin/users/:id/roles', function ($a) {
-    $u = adm_admin();
-    $b = check(body(), ['role' => R::oneOf(['admin', 'finance', 'support']), 'grant' => R::bool()]);
-    if ($a['id'] === $u['id']) throw forbidden('You cannot change your own platform roles.');
-    if ($b['grant']) q('INSERT OR IGNORE INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$a['id'], $b['role'], $u['id'], now_iso()]);
-    else q('DELETE FROM platform_roles WHERE user_id = ? AND role = ?', [$a['id'], $b['role']]);
-    audit($b['grant'] ? 'role.granted' : 'role.revoked', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['role' => $b['role']]]);
-    return ['ok' => true];
-});
-
 // ---- TicketRoom staff (admin portal team) --------------------------------------------
+// Staff accounts are made here and nowhere else. A customer's or organiser's
+// account can never become staff: staff use their own work email.
 const STAFF_ROLE_NAMES = ['admin' => 'Admin', 'finance' => 'Finance', 'support' => 'Support'];
+function adm_staff_target(array $actor, string $id): array
+{
+    $t = row("SELECT * FROM users WHERE id = ? AND account_type = 'staff'", [$id]);
+    if (!$t) throw not_found('Staff member not found.');
+    adm_guard_owner($actor, $id);
+    return $t;
+}
+function adm_staff_reset_link(string $userId, int $days = 7): string
+{
+    $token = random_token(32);
+    insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $userId, 'expires_at' => iso_in($days * 86400), 'created_at' => now_iso()]);
+    return base_url() . "/admin#/reset/$token";
+}
 route('GET', '/api/admin/staff', function () {
     adm_any();
     $list = rows("SELECT u.id, u.full_name, u.email, u.status, u.created_at, group_concat(r.role) AS roles
-                    FROM users u JOIN platform_roles r ON r.user_id = u.id GROUP BY u.id ORDER BY u.full_name");
-    foreach ($list as &$x) $x['roles'] = array_values(array_filter(explode(',', (string) $x['roles'])));
+                    FROM users u LEFT JOIN platform_roles r ON r.user_id = u.id WHERE u.account_type = 'staff' GROUP BY u.id ORDER BY u.full_name");
+    $owner = adm_owner_id();
+    foreach ($list as &$x) { $x['roles'] = array_values(array_filter(explode(',', (string) $x['roles']))); $x['owner'] = $x['id'] === $owner; }
     return ['staff' => $list];
 });
-// Add someone to the team. A new address gets an account and an email to set a password.
+// Add someone to the team: a new staff account and an email to set a password.
 route('POST', '/api/admin/staff', function () {
     $u = adm_admin();
     limit('staffteam', 30, 3600, $u['id']);
@@ -271,41 +287,61 @@ route('POST', '/api/admin/staff', function () {
     return tx(function () use ($u, $b, $roles) {
         $now = now_iso();
         $existing = user_by_email($b['email']);
-        if ($existing && $existing['status'] !== 'active') throw conflict('That account is suspended or closed. Restore it under All users first.', 'account_inactive');
-        // Someone new, or someone who has only bought as a guest, sets a password from the email.
-        $needsPassword = !$existing || (int) $existing['guest'] === 1;
-        $url = null;
-        if ($existing) $id = $existing['id'];
-        else {
+        if ($existing && account_type($existing) !== 'staff') {
+            throw conflict('That email already belongs to a customer or organiser account. Staff need their own work email, for example name@ticketroom.co.za.', 'not_staff_account', ['email' => 'Use a work email.']);
+        }
+        if ($existing) {
+            adm_guard_owner($u, $existing['id']);
+            $id = $existing['id'];
+            q("UPDATE users SET status = 'active', updated_at = ? WHERE id = ?", [$now, $id]);
+        } else {
             $id = uuid();
-            insert('users', ['id' => $id, 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $b['fullName'], 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+            insert('users', ['id' => $id, 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $b['fullName'], 'password_hash' => hash_secret(random_token(24)),
+                'status' => 'active', 'account_type' => 'staff', 'email_verified_at' => null, 'created_at' => $now, 'updated_at' => $now]);
         }
-        if ($needsPassword) {
-            $token = random_token(32);
-            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $id, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
-            $url = base_url() . "/account#/reset/$token";
-        }
+        $url = $existing ? null : adm_staff_reset_link($id);
         foreach ($roles as $r) q('INSERT OR IGNORE INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$id, $r, $u['id'], $now]);
         $names = implode(' and ', array_map(fn($r) => STAFF_ROLE_NAMES[$r], $roles));
-        outbox_enqueue(['to' => $b['email'], 'userId' => $id] + tpl('teamInvite', ['name' => $needsPassword ? $b['fullName'] : null, 'by' => $u['fullName'], 'roles' => $names, 'url' => $url]));
+        outbox_enqueue(['to' => $b['email'], 'userId' => $id] + tpl('teamInvite', ['name' => $existing ? $existing['full_name'] : $b['fullName'], 'by' => $u['fullName'], 'roles' => $names, 'url' => $url]));
         audit('staff.added', ['actor' => $u, 'entityType' => 'user', 'entityId' => $id, 'details' => ['roles' => $roles, 'newAccount' => !$existing]]);
-        return json_out(['ok' => true, 'invited' => $needsPassword], 201);
+        return json_out(['ok' => true, 'invited' => !$existing], 201);
     });
 });
-// Set exactly these roles; an empty list removes the person from the team.
+// Set exactly these roles. An empty list takes the person off the team: their
+// staff account is switched off until someone adds them again.
 route('PUT', '/api/admin/staff/:id', function ($a) {
     $u = adm_admin();
     $b = check(body(), ['roles' => R::arr(R::oneOf(array_keys(STAFF_ROLE_NAMES)), ['max' => 3])]);
     if ($a['id'] === $u['id']) throw forbidden('You cannot change your own roles. Ask another admin.');
-    if (!row('SELECT 1 FROM users WHERE id = ?', [$a['id']])) throw not_found('Staff member not found.');
+    adm_staff_target($u, $a['id']);
     $want = array_values(array_unique($b['roles']));
     tx(function () use ($u, $a, $want) {
+        $now = now_iso();
         $have = array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$a['id']]), 'role');
         foreach (array_diff($have, $want) as $r) { q('DELETE FROM platform_roles WHERE user_id = ? AND role = ?', [$a['id'], $r]); audit('role.revoked', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['role' => $r]]); }
-        foreach (array_diff($want, $have) as $r) { q('INSERT INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$a['id'], $r, $u['id'], now_iso()]); audit('role.granted', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['role' => $r]]); }
-        if (!$want) q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [now_iso(), $a['id']]);
+        foreach (array_diff($want, $have) as $r) { q('INSERT INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$a['id'], $r, $u['id'], $now]); audit('role.granted', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['role' => $r]]); }
+        if (!$want) {
+            q("UPDATE users SET status = 'suspended', updated_at = ? WHERE id = ?", [$now, $a['id']]);
+            q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [$now, $a['id']]);
+        }
+        if (!val("SELECT 1 FROM platform_roles r JOIN users x ON x.id = r.user_id WHERE r.role = 'admin' AND x.status = 'active' AND x.account_type = 'staff'")) throw conflict('TicketRoom needs at least one active admin.', 'last_admin');
     });
     return ['ok' => true];
+});
+// The owner or an admin sends a staff member a link to choose a new password.
+// Staff cannot reset their own password from the sign-in box.
+route('POST', '/api/admin/staff/:id/reset', function ($a) {
+    $u = adm_admin();
+    limit('staffreset', 20, 3600, $u['id']);
+    $t = adm_staff_target($u, $a['id']);
+    if ($t['status'] !== 'active') throw conflict('That staff account is switched off. Add them to the team again first.', 'account_inactive');
+    tx(function () use ($u, $t) {
+        q('UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL', [now_iso(), $t['id']]);
+        $url = adm_staff_reset_link($t['id'], 1);
+        outbox_enqueue(['to' => $t['email'], 'userId' => $t['id']] + tpl('staffPasswordReset', ['name' => $t['full_name'], 'by' => $u['fullName'], 'url' => $url]));
+        audit('staff.password_reset_sent', ['actor' => $u, 'entityType' => 'user', 'entityId' => $t['id']]);
+    });
+    return ['ok' => true, 'message' => "A link to choose a new password is on its way to {$t['email']}. It works for 24 hours."];
 });
 
 // ---- orders & tickets --------------------------------------------------------------
@@ -510,10 +546,12 @@ route('GET', '/api/admin/emails/:key/preview', function ($a) {
 });
 route('POST', '/api/admin/emails/:key/test', function ($a) {
     $u = adm_admin();
-    limit('emailtest', 20, 3600, $u['id']);
+    limit('emailtest', 100, 3600, $u['id']);
+    $b = check(body(), ['to' => R::email(['optional' => true])]);
+    $to = $b['to'] ?? $u['email'];
     $m = adm_catalog_item($a['key'])['sample']();
-    outbox_enqueue(['to' => $u['email'], 'userId' => $u['id'], 'subject' => "[TEST] {$m['subject']}", 'body' => $m['body']]);
-    return ['ok' => true, 'to' => $u['email']];
+    $r = send_now($to, "[TEST] {$m['subject']}", $m['body'], null);
+    return $r + ['to' => $to];
 });
 
 // ---- audit, support, outbox ------------------------------------------------------------

@@ -78,8 +78,9 @@ route('POST', '/api/admin/support/:id/transfer', function ($a) {
 route('POST', '/api/admin/support/:id/take-back', function ($a) {
     $u = adm_admin_or_support();
     $c = sup_case($a['id']);
-    q("UPDATE support_cases SET handled_by = 'ticketroom', status = 'in_progress', updated_at = ? WHERE id = ?", [now_iso(), $c['id']]);
-    sup_note($c['id'], $u['id'], 'system', 'Taken back by TicketRoom customer care.');
+    // Taken back: the organiser no longer sees the case or anything said after.
+    q("UPDATE support_cases SET handled_by = 'ticketroom', organiser_id = NULL, event_id = NULL, status = 'in_progress', updated_at = ? WHERE id = ?", [now_iso(), $c['id']]);
+    sup_note($c['id'], $u['id'], 'system', "Taken back by TicketRoom customer care from {$c['organiser_name']}.");
     audit('support.taken_back', ['actor' => $u, 'entityType' => 'support_case', 'entityId' => $c['id']]);
     return ['case' => sup_case($c['id'])];
 });
@@ -133,7 +134,7 @@ route('POST', '/api/organiser/:orgId/queries/:id/return', function ($a) {
     ['organiser' => $org] = organiser_access($u, $a['orgId'], ['owner', 'manager']);
     $b = check(body(), ['note' => R::text(['min' => 3, 'max' => 1000])]);
     $c = sup_org_case($org['id'], $a['id']);
-    q("UPDATE support_cases SET handled_by = 'ticketroom', status = 'open', updated_at = ? WHERE id = ?", [now_iso(), $c['id']]);
+    q("UPDATE support_cases SET handled_by = 'ticketroom', organiser_id = NULL, event_id = NULL, status = 'open', updated_at = ? WHERE id = ?", [now_iso(), $c['id']]);
     sup_note($c['id'], $u['id'], 'system', "Sent back by {$org['name']}: {$b['note']}");
     audit('support.returned', ['actor' => $u, 'entityType' => 'support_case', 'entityId' => $c['id'], 'organiserId' => $org['id']]);
     return ['ok' => true];

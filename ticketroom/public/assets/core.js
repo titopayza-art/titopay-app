@@ -175,7 +175,7 @@ export function confirmDialog(title, message, { confirm = "Confirm", danger = fa
   return new Promise((resolve) => {
     let result = false;
     const d = dialog(title, html`<form class="stack" data-f><p>${message}</p>
-      ${input ? html`<div class="field"><label for="cd-in">${input.label}</label><input id="cd-in" name="v" ${raw(input.required ? "required" : "")} maxlength="400" placeholder="${input.placeholder || ""}"></div>` : ""}
+      ${input ? html`<div class="field"><label for="cd-in">${input.label}</label><input id="cd-in" name="v" type="${input.type || "text"}" ${raw(input.required ? "required" : "")} maxlength="400" placeholder="${input.placeholder || ""}" value="${input.value || ""}" autocomplete="${input.autocomplete || "off"}">${input.hint ? html`<span class="hint">${input.hint}</span>` : ""}</div>` : ""}
       <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn ${danger ? "btn-danger" : "btn-dark"}">${confirm}</button></div></form>`,
     { onClose: () => resolve(result) });
     $("form", d).addEventListener("submit", (e) => { e.preventDefault(); result = input ? ($("#cd-in", d).value.trim() || false) : true; d.close(); });
@@ -272,19 +272,35 @@ export const PORTALS = {
 };
 export const isStaff = (u) => ["admin", "finance", "support"].some((x) => roles(u).has(x));
 // The portals this person can open, in a fixed order.
+// One account, one portal: customers, organisers and TicketRoom staff each
+// have their own. Gate scanning is open to whoever an organiser added.
+export const accountType = (u) => u?.account_type || "customer";
 export function portalsFor(u) {
   if (!u) return [];
-  const list = ["customer"];
-  if (u.organisers?.length) list.push("organiser");
-  if (u.staff_events?.length || u.organisers?.length) list.push("scanner");
+  const type = accountType(u);
+  if (type === "staff") return ["admin"];
+  const list = [type === "organiser" ? "organiser" : "customer"];
+  if (u.staff_events?.length || (type === "organiser" && u.organisers?.length)) list.push("scanner");
   if (u.vendors?.length) list.push("pos");
-  if (isStaff(u)) list.push("admin");
   return list;
 }
-// Where someone lands after signing in: their working portal.
-export const homePortal = (u) => (isStaff(u) ? "/admin" : u?.organisers?.length ? "/organisers" : "/account");
+// Where someone lands after signing in: their own portal.
+export const homePortal = (u) => ({ staff: "/admin", organiser: "/organisers" })[accountType(u)] || "/account";
+const PORTAL_OF_TYPE = { customer: "customer", organiser: "organiser", staff: "admin" };
+// Signed in, but with an account that belongs to another portal.
+export function wrongAccountPage(u, portal) {
+  const theirs = PORTALS[PORTAL_OF_TYPE[accountType(u)]];
+  const kind = { customer: "a customer account", organiser: "an organiser account", staff: "a TicketRoom staff account" }[accountType(u)];
+  render($("#sidenav"), "");
+  render($("#main"), html`<section class="welcome card"><span class="tk-label">${PORTALS[portal].name}</span>
+    <h1>This portal isn't for this account</h1>
+    <p class="lead">You're signed in as ${u.email}, ${kind}. ${portal === "organiser" ? "The organiser portal is for organiser accounts: to sell tickets, sign out and create an organiser account with a different email." : portal === "customer" ? "The customer portal is for customer accounts." : ""}</p>
+    <div class="row"><a class="btn btn-primary" href="${theirs.href}">Open the ${theirs.name.toLowerCase()}</a><button class="btn btn-ghost" data-out>Sign out</button></div></section>`);
+  $("[data-out]").addEventListener("click", async () => { await post("/api/auth/logout"); location.reload(); });
+  pageReady();
+}
 
-export async function header(el, { portal, active } = {}) {
+export async function header(el, { portal, active, box: signInBox } = {}) {
   // The app is open in this tab: a later visit to /account is on purpose (see account.js).
   try { sessionStorage.setItem("tr-launched", "1"); } catch { /* storage blocked */ }
   const [u, site] = await Promise.all([me(), siteInfo()]);
@@ -306,7 +322,7 @@ export async function header(el, { portal, active } = {}) {
       ${here ? html`<span class="nav-here">You're in the ${here.name}</span>` : ""}
       ${links.map(([href, label]) => html`<a href="${href}" ${raw(active === href ? 'aria-current="page"' : "")}>${label}</a>`)}
       ${u ? html`<button class="link" data-signout><span class="user-chip"><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span>Sign out</span></button>`
-      : html`<button class="link" data-signin>Sign in</button><button class="btn btn-primary btn-sm" data-signup>Create account</button>`}
+      : html`<button class="link" data-signin>Sign in</button>${["admin", "scanner"].includes(signInBox || portal) ? "" : html`<button class="btn btn-primary btn-sm" data-signup>${portal === "organiser" ? "Start selling" : "Create account"}</button>`}`}
     </nav></div>`);
   // A coloured bar under the header names the portal, so admin, organiser and
   // customer screens can never be mistaken for each other, on a phone too.
@@ -324,8 +340,9 @@ export async function header(el, { portal, active } = {}) {
   } else bar?.remove();
   const toggle = $(".menu-toggle", el);
   toggle.addEventListener("click", () => { const open = $("#nav", el).classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); });
-  $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin"));
-  $("[data-signup]", el)?.addEventListener("click", () => authDialog("signup"));
+  const box = signInBox || (here ? portal : "site");
+  $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin", { portal: box }));
+  $("[data-signup]", el)?.addEventListener("click", () => authDialog("signup", { portal: box }));
   $("[data-signout]", el)?.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; });
   if (u?.mustChangePassword && !$(".pw-nag")) {
     const nag = document.createElement("div");
@@ -345,9 +362,19 @@ export async function header(el, { portal, active } = {}) {
 // While maintenance mode is on, visitors see only the message. TicketRoom
 // staff see the site as normal, and the sign-in page stays open for them.
 async function maintenanceScreen(u) {
-  if (roles(u).size || /^\/(admin|signin)(\/|$)/.test(location.pathname) || $(".maint-screen")) return;
+  if ($(".maint-screen") || $(".maint-staff")) return;
   const s = await siteInfo();
   if (!s?.maintenance) return;
+  // Staff work as normal, with a reminder that visitors are seeing the notice.
+  if (roles(u).size) {
+    const bar = document.createElement("div");
+    bar.className = "maint-staff";
+    bar.setAttribute("role", "status");
+    render(bar, html`<div class="wrap"><strong>Maintenance mode is on.</strong> Visitors see the maintenance notice and can't sign in, book or sign up. <a href="/admin#/site">Turn it off</a></div>`);
+    ($(".portal-bar") || $("#header")).after(bar);
+    return;
+  }
+  if (/^\/admin(\/|$)/.test(location.pathname)) return;
   const box = document.createElement("div");
   box.className = "maint-screen";
   render(box, html`<main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${s.maintenance.message}</p>
@@ -561,8 +588,15 @@ function chatWidget(s) {
   window.addEventListener("tr:chat", (e) => { toggle(true); if (e.detail) ask(e.detail); });
 }
 
-export function authDialog(mode = "signin", { onDone, reason } = {}) {
-  const signup = mode === "signup";
+// portal: which sign-in box this is. "site" (the public website) and
+// "customer" offer customer sign-up; "organiser" offers organiser sign-up;
+// "admin" offers neither, and no "Forgot password": staff passwords are reset
+// by the platform owner from the admin portal; "scanner" has no sign-up.
+export function authDialog(mode = "signin", { onDone, reason, portal = "site" } = {}) {
+  const staffBox = portal === "admin";
+  if (mode === "signup" && portal === "organiser") return organiserSignupDialog();
+  const signup = mode === "signup" && !staffBox && portal !== "scanner";
+  const canSignUp = !staffBox && portal !== "scanner";
   const d = dialog(signup ? "Create your TicketRoom account" : "Sign in", html`
     ${reason ? html`<p class="callout">${reason}</p>` : ""}
     <form class="stack" novalidate>
@@ -574,8 +608,9 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
       ${signup ? html`<label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
         <label class="check"><input type="checkbox" name="marketingOptIn"><span>Send me TicketRoom event news by email. You can unsubscribe at any time.</span></label>` : ""}
       <button class="btn btn-primary btn-block" type="submit">${signup ? "Create account" : "Sign in"}</button>
-      <div class="row between small">${signup ? html`<span>Already have an account? <button type="button" class="btn-link" data-switch>Sign in</button></span>`
-        : html`<button type="button" class="btn-link" data-forgot>Forgot password?</button><span>New here? <button type="button" class="btn-link" data-switch>Create account</button></span>`}</div>
+      ${staffBox ? html`<p class="small muted mb-0">TicketRoom staff only. Forgotten your password? Ask the platform owner to send you a new link.</p>`
+        : html`<div class="row between small">${signup ? html`<span>Already have an account? <button type="button" class="btn-link" data-switch>Sign in</button></span>`
+        : html`<button type="button" class="btn-link" data-forgot>Forgot password?</button>${canSignUp ? html`<span>New here? <button type="button" class="btn-link" data-switch>${portal === "organiser" ? "Start selling" : "Create account"}</button></span>` : ""}`}</div>`}
     </form>`);
   const form = $("form", d);
   onSubmit(form, async (v) => {
@@ -594,13 +629,22 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
       });
       return;
     }
-    await post("/api/auth/login", v);
+    let u;
+    try { u = (await post("/api/auth/login", { ...v, portal })).user; }
+    catch (err) {
+      // The right password, on the wrong portal: say where this account signs in.
+      if (err.code !== "wrong_portal") throw err;
+      render($(".dialog-body", d), html`<div class="stack"><p class="callout warn mb-0">${err.message}</p>
+        <div class="row"><a class="btn btn-primary" href="${err.details?.portal || "/"}">Take me there</a><button class="btn btn-ghost" data-close>Close</button></div></div>`);
+      return;
+    }
     await me(true);
     d.close();
     toast("Signed in.", "good");
-    if (onDone) onDone(); else location.reload();
+    // From the public website, everyone goes to their own portal.
+    if (onDone) onDone(); else if (portal === "site") location.href = homePortal(u); else location.reload();
   });
-  $("[data-switch]", d).addEventListener("click", () => { d.close(); authDialog(signup ? "signin" : "signup", { onDone, reason }); });
+  $("[data-switch]", d)?.addEventListener("click", () => { d.close(); authDialog(signup ? "signin" : "signup", { onDone, reason, portal }); });
   $("[data-forgot]", d)?.addEventListener("click", () => { d.close(); forgotDialog(); });
   // Put the cursor in the first box, unless the person is already typing somewhere.
   setTimeout(() => { if (!form.contains(document.activeElement)) $("input", form)?.focus(); }, 50);
@@ -639,12 +683,70 @@ function forgotDialog() {
   onSubmit($("form", d), async (v) => { const r = await post("/api/auth/password/forgot", v); d.close(); toast(r.message, "good"); });
 }
 
-export async function requireUser(reason) {
+export async function requireUser(reason, portal = "site") {
   const u = await me();
   if (u) return u;
   pageReady();
-  await new Promise((resolve) => authDialog("signin", { reason, onDone: resolve }));
+  await new Promise((resolve) => authDialog("signin", { reason, portal, onDone: resolve }));
   return me(true);
+}
+
+// An emailed link opened in a tab already showing the portal changes only the
+// part after "#": load the page again so the link is handled from the start.
+addEventListener("hashchange", () => { if (/^#\/(reset|verify)\//.test(location.hash)) location.reload(); });
+
+// Links from emails (confirm your email, choose a password) open in the
+// portal of the account they belong to, signed out. Returns true if the page
+// was one of them.
+export function emailLinkPage(portal) {
+  const reset = location.hash.match(/^#\/reset\/([^/?#]+)$/);
+  const verify = location.hash.match(/^#\/verify\/([^/?#]+)$/);
+  if (!reset && !verify) return false;
+  const main = $("#main");
+  render($("#sidenav"), "");
+  // Going to another page loads it; staying on this page (only the "#" part
+  // changes) needs a reload so it starts again signed in.
+  const openFresh = (to) => {
+    const u = new URL(to, location.href);
+    // Only a change after "#" stays on the same document and needs the reload.
+    const hashOnly = u.pathname === location.pathname && u.search === location.search && u.hash !== "";
+    location.replace(u.href);
+    if (hashOnly) location.reload();
+  };
+  const go = (u) => openFresh(homePortal(u) === "/account" ? "/account#/tickets" : homePortal(u));
+  if (reset) {
+    const token = reset[1];
+    render(main, html`<div class="page-head"><div><h1>Choose your password</h1><p class="muted">Use at least 10 characters. You'll be signed in straight away.</p></div></div>
+      <div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+      <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
+    onSubmit($("#rs"), async (v) => {
+      matchPasswords(v, "password", "passwordConfirm");
+      const r = await post("/api/auth/password/reset", { token, password: v.password });
+      toast(r.signedIn ? "Password saved. You're signed in." : "Password saved.", "good");
+      meCache = undefined;
+      go({ account_type: r.accountType });
+    });
+  } else {
+    (async () => {
+      render(main, spinner());
+      try {
+        const r = await post("/api/auth/verify-email", { token: verify[1] });
+        meCache = undefined;
+        const home = homePortal({ account_type: r.accountType });
+        render(main, html`<section class="welcome card"><span class="tk-label">Email confirmed</span><h1>Welcome to TicketRoom${r.firstName ? `, ${r.firstName}` : ""}</h1>
+          <p class="lead">Your account is ready.${r.tickets ? ` ${r.tickets} ticket${r.tickets === 1 ? " you bought as a guest is" : "s you bought as a guest are"} now in your account.` : ""}</p>
+          <div class="row"><a class="btn btn-primary" href="${home === "/account" ? "/account#/tickets" : home}" data-go>${r.accountType === "organiser" ? "Open my organiser portal" : "Go to my tickets"}</a><a class="btn btn-ghost" href="/">Browse events</a></div></section>`);
+        $("[data-go]").addEventListener("click", (e) => { e.preventDefault(); openFresh(e.currentTarget.getAttribute("href")); });
+      } catch (err) {
+        render(main, html`<section class="welcome card"><span class="tk-label">Confirm your email</span><h1>This link has expired</h1>
+          <p class="lead">${err.message} Sign in with your email and password and we'll send you a fresh link straight away.</p>
+          <div class="row"><button class="btn btn-primary" data-in>Sign in</button></div></section>`);
+        $("[data-in]").addEventListener("click", () => authDialog("signin", { portal }));
+      }
+    })();
+  }
+  pageReady();
+  return true;
 }
 
 // ---------- tiny hash router for portals ----------

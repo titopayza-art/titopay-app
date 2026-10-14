@@ -11,7 +11,7 @@ const PEOPLE = {
   visitor: null,
   fan: { email: "sipho@example.co.za", password: "fan-password-123" },
   organiser: { email: "naledi@example.co.za", password: "organiser-pass-1" },
-  admin: { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" },
+  admin: { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" },
 };
 const START = {
   visitor: ["/", "/sell", "/advertise", "/help", "/contact", "/unsubscribe", "/legal/terms-of-use", "/legal/terms", "/legal/privacy", "/legal/cookies", "/legal/paia", "/privacy", "/cookies", "/terms", "/signin"],

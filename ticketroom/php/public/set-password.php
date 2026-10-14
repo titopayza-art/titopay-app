@@ -41,7 +41,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($origin !== '' && parse_url($origin, PHP_URL_HOST) !== parse_url('//' . ($_SERVER['HTTP_HOST'] ?? ''), PHP_URL_HOST)) { http_response_code(403); exit; }
     $pw = (string) ($_POST['password'] ?? '');
     $word = trim((string) ($_POST['unlock'] ?? ''));
-    $u = row("SELECT u.id FROM users u WHERE lower(u.email) = ? AND u.status = 'active' AND EXISTS (SELECT 1 FROM platform_roles r WHERE r.user_id = u.id)", [$email]);
+    $u = row("SELECT u.id FROM users u WHERE lower(u.email) = ? AND u.status = 'active' AND u.account_type = 'staff' AND EXISTS (SELECT 1 FROM platform_roles r WHERE r.user_id = u.id)", [$email]);
     if (mb_strlen($secret) < 8) $error = 'Open the file unlock-reset in File Manager, type a secret word of at least 8 characters into it, save, then try again.';
     elseif (!hash_equals($secret, $word)) {
         @unlink($unlock);

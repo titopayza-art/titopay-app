@@ -46,6 +46,10 @@ every account, event, order and setting.
    (⋮ → **Add to Home screen**).
 
 The database upgrades itself the first time the new version is opened.
+Existing accounts are sorted into customers, organisers and staff by what
+they already do. From this version, staff sign in at
+**ticketroom.co.za/admin** only (the website's sign-in is for customers and
+organisers).
 Accounts made before email confirmation was required are asked to confirm
 their email once, the next time they sign in; the link is sent for them.
 
@@ -129,7 +133,9 @@ marked **Fix**, top to bottom. Then delete `data/unlock-check`.
 
 ## 7. Sign in and change the password
 
-Go to **https://ticketroom.co.za/signin**.
+Go to **https://ticketroom.co.za/admin**. This sign-in is for TicketRoom
+staff only: it has no "Create account" and no "Forgot password" (an admin
+sends staff a new-password link from **Staff & roles**).
 
 - Email `hello@ticketroom.co.za`
 - Password: the temporary one you were given
@@ -146,8 +152,11 @@ never confused:
 | Organiser portal | /organisers | blue | Organisers: their events, tickets, sales, gate staff |
 | Customer portal | /account | green | Ticket buyers: their tickets, orders, transfers |
 
-Staff land in the admin portal when they sign in, organisers in the
-organiser portal, everyone else in the customer portal. The Menu button
+One account, one portal: every account is a customer, an organiser or
+TicketRoom staff, and signs in only on its own portal. Customers sign up on
+the website, organisers with **Start selling**, and staff accounts are made
+only under **Staff & roles**, on a work email (a customer's or organiser's
+email can never become staff). The Menu button
 lists the other portals a person may open, by these names. The admin portal
 is never linked anywhere on the site: staff open it by typing
 ticketroom.co.za/admin, and to anyone else that address shows "Page not found".
@@ -155,10 +164,12 @@ ticketroom.co.za/admin, and to anyone else that address shows "Page not found".
 ## 8. Set up email and prove it works
 
 Admin portal → **Integrations** → **Email**: choose "SMTP mailbox", check
-the server (`mail.ticketroom.co.za`, port `465`) and username
-(`hello@ticketroom.co.za`), type the mailbox password, then your own admin
-password, and **Save**. Press **Send me a test email**: it should arrive
-within a minute. If not, **Check connection** says what is wrong.
+the server (`mail.ticketroom.co.za`, port `465`), type the username
+(`hello@ticketroom.co.za`) and the mailbox password, press **Save** and type
+your own admin password when asked. Press **Send a test email** and type any
+address: it is sent straight away and the page says what happened. If it
+fails, **Check connection** says why. Admin portal → **Email templates**
+lets you preview every email and send a test of any of them.
 
 ## 9. Switch on card payments
 
@@ -170,12 +181,16 @@ TicketRoom pays organisers from it.
 1. Sign in at portal.yoco.com → **Sales** → **Payment gateway** → **API keys**.
    Copy the **test secret key** (starts with `sk_test_`).
 2. Admin portal → **Integrations** → **Card payments**: provider **Yoco**,
-   mode **Test**, paste the key, type your admin password, **Save**.
+   mode **Test**, paste the key, **Save** (it asks for your admin password).
    TicketRoom registers its notification address with Yoco for you.
 3. **Check connection**. Then make a R10 test event and buy a ticket with
    Yoco's test card (4111 1111 1111 1111, any future date, any CVV).
 4. When that works: change the mode to **Live**, paste the **live** key
    (`sk_live_`), **Save**, and **Check connection** again.
+
+**Just want to try it first?** Press **Use the test account** on the Card
+payments card: PayFast's shared test account in test mode, no sign-up, no
+real money. Buy a ticket to see the whole flow, then put in your own keys.
 
 **PayFast (cards, instant EFT, SnapScan, Zapper)**
 1. PayFast dashboard → **Settings** → **Developer settings**: note the
@@ -205,6 +220,30 @@ written to the audit log.
   The organiser is emailed at each step.
 
 ---
+
+## 10. SMS (optional)
+
+Admin portal → **Integrations** → **SMS**. Choose **BulkSMS** or
+**Clickatell** and paste its keys, or **My own provider (any web API)**:
+
+1. From your SMS provider's API documentation, copy the web address for
+   sending one SMS (it must start with `https://`) and the Authorization
+   header value (for example `Bearer …`).
+2. Fill in the field names the provider expects for the number and the
+   message (often `to` and `message`), the sender field if any, and the
+   number format (+27…, 27… or 0…).
+3. **Save**, then **Send a test SMS** to your own phone.
+
+The address and header are stored encrypted, like every key.
+
+## 11. Maintenance mode
+
+Admin portal → **Site settings** → **Maintenance mode**. While it is on,
+the server answers every visitor with the maintenance page: nobody can
+browse, book, sign up or sign in, except TicketRoom staff, who see the
+site as normal with a yellow "Maintenance mode is on" bar. Payment
+notifications from Yoco and PayFast keep arriving. **See what visitors see**
+previews the page. Turn it off on the same card.
 
 ## Going-live checklist
 

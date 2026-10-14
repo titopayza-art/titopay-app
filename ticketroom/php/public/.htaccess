@@ -34,6 +34,14 @@ RewriteCond %{REQUEST_URI} !^/api/index\.php$
 RewriteRule ^api(/|$) /api/index.php [L,QSA]
 RewriteRule ^media/ /api/index.php [L,QSA]
 
+# Maintenance mode (admin portal, Site settings): while maintenance.on exists,
+# every page goes through index.php, which shows visitors the notice and
+# TicketRoom staff the site. The admin portal and the files pages use stay open.
+RewriteRule ^maintenance\.on$ - [F,L]
+RewriteCond %{DOCUMENT_ROOT}/maintenance.on -f
+RewriteCond %{REQUEST_URI} !^/(admin|admin\.html)$
+RewriteRule ^([^.]*|.*\.html)$ /index.php [L]
+
 # --- Addresses that moved ---------------------------------------------------
 RewriteRule ^organiser(/.*)?$ /organisers$1 [R=301,L]
 RewriteRule ^(privacy|cookies|terms)/?$ /legal/$1 [R=301,L]

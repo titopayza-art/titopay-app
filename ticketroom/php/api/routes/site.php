@@ -14,7 +14,7 @@ route('GET', '/api/site', function () {
             'upcomingHolidays' => array_slice(array_values(array_filter($s['hours']['holidays'], fn($h) => $h['date'] >= $today)), 0, 5)],
         'support' => $s['support'], 'legal' => $s['legal'],
         'chatbot' => ['enabled' => $s['chatbot']['enabled'], 'greeting' => $s['chatbot']['greeting']],
-        'posters' => $posters, 'cardPaymentsEnabled' => false,
+        'posters' => $posters, 'cardPaymentsEnabled' => pay_ready(),
     ];
 });
 

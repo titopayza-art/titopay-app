@@ -194,7 +194,7 @@ async function eventPage(slug) {
         <p class="tiny muted mb-0">By paying you agree to the <a href="/legal/terms">Terms</a> and the event's refund policy. Your tickets are reserved for a few minutes while you pay. Payment is confirmed by the payment provider, not by your browser.</p>
       </form>`);
     $("#promo").addEventListener("submit", (ev) => { ev.preventDefault(); drawCheckout(u, $("#pc").value.trim()); });
-    $("[data-signin]", box)?.addEventListener("click", () => authDialog("signin", { onDone: async () => { header($("#header")); drawCheckout(await me(true), promo); } }));
+    $("[data-signin]", box)?.addEventListener("click", () => authDialog("signin", { portal: "customer", onDone: async () => { header($("#header")); drawCheckout(await me(true), promo); } }));
     $("[data-back]", box).addEventListener("click", drawSelect);
     onSubmit($("#pay"), async (v) => {
       if (!u && String(v.gEmail || "").trim().toLowerCase() !== String(v.gEmail2 || "").trim().toLowerCase()) {
@@ -282,7 +282,7 @@ async function orderPage(ref) {
     </div>
     ${paid && (guest || k) && tickets.length ? html`<div class="stack-lg">${tickets.map((t) => orderTicket(t, o))}</div>` : ""}</div>`);
     $("[data-share]")?.append(shareBar(`${location.origin}/events/${o.event.slug}`, o.event.title, { text: `I'm going to ${o.event.title}. Get your ticket` }));
-    $("[data-make-account]")?.addEventListener("click", () => authDialog("signup", {}));
+    $("[data-make-account]")?.addEventListener("click", () => authDialog("signup", { portal: "customer" }));
     $$("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
     $$("[data-cal]").forEach((b) => b.addEventListener("click", () => calendarFile({ title: o.event.title, starts: o.event.startsAt, ends: o.event.endsAt, place: `${o.event.venue}, ${o.event.city}`, url: `${location.origin}/events/${o.event.slug}` })));
     $$("[data-img]").forEach((b) => b.addEventListener("click", async () => {

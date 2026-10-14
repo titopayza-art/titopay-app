@@ -35,6 +35,13 @@ $notify = function (array $s, array $evt) use ($local) {
     }
 };
 
+// ---- "Your own SMS provider": records what arrives, answers like most SMS APIs.
+if ($path === '/sms/send') {
+    file_put_contents("$state/sms.log", json_encode(['auth' => $auth, 'type' => $_SERVER['CONTENT_TYPE'] ?? '', 'body' => $raw]) . "\n", FILE_APPEND);
+    if ($auth !== 'Bearer sms-test-key') $json(['error' => 'bad key sms-test-key'], 401);
+    $json(['id' => 'sms-' . bin2hex(random_bytes(4))]);
+}
+
 // ---- Yoco API (Bearer sk_test_… or sk_live_…)
 if (str_starts_with($path, '/api/')) {
     if (!preg_match('/^Bearer sk_(test|live)_\w+$/', $auth)) $json(['message' => 'Unauthorised'], 401);

@@ -90,7 +90,8 @@ route('POST', '/api/public/orders', function () {
         'paymentMethod' => R::oneOf(['card', 'titopay_wallet'], ['optional' => true, 'fallback' => 'card']),
         'guest' => R::obj(['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true])], ['optional' => true]),
     ]);
-    $u = user();
+    // Signed in as an organiser or staff: tickets are bought as a guest, never into a work account.
+    $u = user() && account_type(user()) === 'customer' ? user() : null;
     if ($u) limit('order', 20, 60, $u['id']);
     else {
         if (empty($b['guest'])) throw bad('Tell us your name and email so we can send your tickets.', ['guest' => 'Required.']);

@@ -9,7 +9,7 @@ const { chromium } = require("playwright");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3];
-const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" };
+const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 const ORG = { email: "naledi@example.co.za", password: "organiser-pass-1" };
 const problems = [];
 const step = (m) => console.log(`  ok  ${m}`);
@@ -81,16 +81,17 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     await a.goto(`${BASE}/admin#/staff`);
     await a.getByRole("heading", { name: "Staff & roles" }).waitFor();
     await a.getByLabel("Full name").fill("Ayanda Khumalo");
-    await a.getByLabel("Email").fill("ayanda@example.co.za");
+    await a.getByLabel("Work email").fill("ayanda@example.co.za");
     await a.getByLabel(/Finance/).check();
     await a.getByRole("button", { name: "Add to the team" }).click();
-    await a.locator("tr", { hasText: "Ayanda Khumalo" }).waitFor();
+    await a.locator("tr", { hasText: "ayanda@example.co.za" }).waitFor();
     assert.match(lastMail("ayanda@example.co.za").body, /as Finance and Support|as Support and Finance/);
-    await a.locator("tr", { hasText: "Ayanda Khumalo" }).getByRole("button", { name: "Change roles" }).click();
+    await a.locator("tr", { hasText: "ayanda@example.co.za" }).getByRole("button", { name: "Change roles" }).click();
     await a.locator("dialog").getByLabel(/Support/).uncheck();
     await a.locator("dialog").getByRole("button", { name: "Save roles" }).click();
     await a.getByText("Roles saved.").waitFor();
-    assert.equal(await a.locator("tr", { hasText: "Ayanda Khumalo" }).locator(".badge").count(), 1);
+    await a.locator("tr", { hasText: "ayanda@example.co.za" }).locator(".badge").nth(1).waitFor({ state: "detached" });
+    assert.equal(await a.locator("tr", { hasText: "ayanda@example.co.za" }).locator(".badge").count(), 1);
     step("admin adds a staff member with chosen roles and changes them");
 
     // Organiser: Share your event card with QR downloads.

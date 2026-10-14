@@ -17,7 +17,7 @@ const { chromium } = require("playwright");
 const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3] || "/srv/trtest/public_html";
 const MOCK = "http://127.0.0.1:8701";
-const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" };
+const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 const ORG = { email: "naledi@example.co.za", password: "organiser-pass-1" };
 const problems = [];
 const step = (m) => console.log(`  ok  ${m}`);
@@ -73,12 +73,20 @@ const ledgerOk = async (a, label) => {
     const card = adm.locator('[data-integ="payments"]');
     await card.getByLabel("Payment provider").selectOption("yoco");
     await card.getByLabel("Mode").selectOption("test");
+    // No password box sits on the page for the browser to fill: it is asked for on Save.
+    assert.equal(await adm.locator("#main input[autocomplete='current-password']").count(), 0, "no password field on the page");
+    assert.equal(await adm.locator("#main input[type=password]").evaluateAll((els) => els.filter((e) => e.value).length), 0, "write-only boxes start empty");
+    await card.getByLabel(/Yoco secret key/).click();
     await card.getByLabel(/Yoco secret key/).fill("sk_test_ticketroomTEST123");
-    await card.getByLabel("Your password").fill("wrong-password");
-    await card.getByRole("button", { name: /Save card payments settings/ }).click();
-    await card.getByText(/Incorrect|password is incorrect/).first().waitFor();
-    await card.getByLabel("Your password").fill(ADMIN.password);
-    await card.getByRole("button", { name: /Save card payments settings/ }).click();
+    const save = async (pw) => {
+      await card.getByRole("button", { name: /Save card payments settings/ }).click();
+      const dlg = adm.locator("dialog[open]");
+      await dlg.getByLabel("Your password").fill(pw);
+      await dlg.getByRole("button", { name: "Save" }).click();
+    };
+    await save("wrong-password");
+    await adm.getByText(/password is incorrect/).first().waitFor();
+    await save(ADMIN.password);
     await adm.locator('[data-integ="payments"] .badge', { hasText: "test" }).waitFor();
     const ig = await a.get("/api/admin/integrations");
     const text = JSON.stringify(ig.body);

@@ -325,7 +325,7 @@ function fin_integration(string $group): array
         'endpoint' => $p === 'bulksms' ? 'api.bulksms.com' : ($p === 'clickatell' ? 'platform.clickatell.com' : '—'), 'credentials' => $creds ?: (object) [], 'fields' => $form];
 }
 route('GET', '/api/admin/integrations', function () {
-    adm_any();
+    adm_admin(); // provider settings are for admins only
     return [
         'defaults' => ['bookingFeeCents' => (int) cfg('fees.ticketFeeFixedCents', 1000), 'bookingFeeBps' => (int) cfg('fees.ticketFeeBps', 0), 'organiserCommissionBps' => (int) cfg('fees.organiserCommissionBps', 500)],
         'integrations' => [fin_integration('payments'), fin_integration('mail'), fin_integration('sms')],
@@ -363,6 +363,7 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     if ($key === 'email') $result = smtp_health();
     elseif ($key === 'sms') $result = sms_health();
     elseif ($key === 'payments') $result = fin_payments_health();
+    if (isset($result['detail'])) $result['detail'] = integration_scrub((string) $result['detail']);
     else throw not_found('Unknown integration.');
     audit('integration.health_checked', ['actor' => $u, 'entityType' => 'integration', 'entityId' => $key, 'details' => ['ok' => $result['ok']]]);
     return $result;
@@ -385,20 +386,35 @@ function fin_payments_health(): array
     if ((string) cfg('payments.yocoWebhookSecret', '') === '') return ['ok' => false, 'detail' => 'Key accepted, but the notification address is not registered yet. Save the settings again.'];
     return ['ok' => true, 'detail' => 'Yoco accepted the key and payment notifications are set up (' . pay_mode() . ').'];
 }
-// Sends a test email or SMS to the admin, straight away.
+// Test mode in one click: PayFast's shared sandbox account (published by
+// PayFast for testing; no real money moves). Needs the admin's password.
+const PAYFAST_SANDBOX = ['payfastMerchantId' => '10000100', 'payfastMerchantKey' => '46f0cd694581a', 'payfastPassphrase' => 'jt7NOE43FZPn'];
+route('POST', '/api/admin/integrations/payments/sandbox', function () {
+    $u = adm_admin();
+    limit('integsave', 20, 3600, $u['id']);
+    $b = check(body(), ['currentPassword' => R::str(['max' => 200])]);
+    if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
+    if (pay_provider() !== 'none' && pay_mode() === 'live') throw conflict('Live payments are switched on. Switch Mode to Test first if you really want the test account.', 'live_mode');
+    $changed = tx(fn() => integration_save('payments', ['provider' => 'payfast', 'mode' => 'test'] + PAYFAST_SANDBOX, [], $u['id']));
+    audit('integration.updated', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'payments', 'ip' => client_ip(), 'details' => ['fields' => $changed, 'sandbox' => true]]);
+    return ['ok' => true, 'message' => 'Test payments are ready: PayFast test mode with PayFast\'s shared test account. Buy a ticket to try it; no real money moves.'];
+});
+// Sends a test email or SMS straight away.
 route('POST', '/api/admin/integrations/:key/test', function ($a) {
     $u = adm_admin();
     limit('integtest', 10, 600, $u['id']);
     if ($a['key'] === 'email') {
-        $id = outbox_enqueue(['to' => $u['email'], 'userId' => $u['id'], 'subject' => 'TicketRoom test email', 'body' => "Hi,\n\nThis is a test from Admin portal → Integrations. If you can read it, TicketRoom email works.\n\n-- \nTicketRoom"]);
-        outbox_deliver(5);
-        $m = row('SELECT status, last_error FROM message_outbox WHERE id = ?', [$id]);
-        return ['ok' => ($m['status'] ?? '') === 'sent', 'detail' => ($m['status'] ?? '') === 'sent' ? "Sent to {$u['email']}." : 'Not sent: ' . ($m['last_error'] ?? 'unknown error')];
+        // To any address the admin types (their own by default), sent straight away.
+        $b = check(body(), ['to' => R::email(['optional' => true])]);
+        $to = $b['to'] ?? $u['email'];
+        $r = send_now($to, 'TicketRoom test email', "Hi,\n\nThis is a test from Admin portal → Integrations, sent by {$u['fullName']}. If you can read it, TicketRoom email works.\n\n-- \nTicketRoom", null);
+        audit('integration.test_email', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'mail', 'details' => ['ok' => $r['ok']]]);
+        return $r;
     }
     if ($a['key'] === 'sms') {
         $b = check(body(), ['phone' => R::phone()]);
         try { sms_send($b['phone'], 'TicketRoom test SMS. If you can read this, SMS works.'); return ['ok' => true, 'detail' => "Sent to {$b['phone']}."]; }
-        catch (Throwable $e) { return ['ok' => false, 'detail' => $e->getMessage()]; }
+        catch (Throwable $e) { return ['ok' => false, 'detail' => integration_scrub($e->getMessage())]; }
     }
     throw not_found('Nothing to test here.');
 });

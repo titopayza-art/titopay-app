@@ -145,7 +145,8 @@ function tr_install_db(string $hash): void
     $email = strtolower((string) cfg('admin.email', 'hello@ticketroom.co.za'));
     $uid = uuid();
     $now = now_iso();
-    insert('users', ['id' => $uid, 'email' => $email, 'email_key' => email_key($email), 'full_name' => (string) cfg('admin.name', 'TicketRoom Admin'), 'password_hash' => $hash, 'status' => 'active', 'email_verified_at' => $now, 'created_at' => $now, 'updated_at' => $now]);
+    insert('users', ['id' => $uid, 'email' => $email, 'email_key' => email_key($email), 'full_name' => (string) cfg('admin.name', 'TicketRoom Admin'), 'password_hash' => $hash, 'status' => 'active', 'account_type' => 'staff', 'email_verified_at' => $now, 'created_at' => $now, 'updated_at' => $now]);
+    q("INSERT INTO meta (key, value) VALUES ('owner_user_id', ?)", [$uid]);
     foreach (['admin', 'finance', 'support'] as $role) insert('platform_roles', ['user_id' => $uid, 'role' => $role, 'granted_at' => $now]);
     q('INSERT INTO meta (key, value) VALUES (?, ?)', ["temp_password:$uid", $now]);
     kb_ensure_defaults();
@@ -154,7 +155,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -232,7 +233,24 @@ const UPGRADES = [
         'CREATE TABLE IF NOT EXISTS recon_items ( id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES recon_runs(id), provider_reference TEXT NOT NULL, outcome TEXT NOT NULL, provider_amount_cents INTEGER, internal_amount_cents INTEGER, provider_status TEXT, internal_status TEXT, resolved INTEGER NOT NULL DEFAULT 0, resolution_note TEXT, resolved_by TEXT REFERENCES users(id), resolved_at TEXT )',
         'CREATE INDEX IF NOT EXISTS recon_items_run_idx ON recon_items (run_id)',
     ],
+    // One account, one portal: every account is a customer, an organiser or
+    // TicketRoom staff. Existing accounts are sorted by what they already do.
+    8 => [
+        "ALTER TABLE users ADD COLUMN account_type TEXT NOT NULL DEFAULT 'customer'",
+        "UPDATE users SET account_type = 'staff' WHERE id IN (SELECT user_id FROM platform_roles)",
+        "UPDATE users SET account_type = 'organiser' WHERE account_type = 'customer' AND id IN (SELECT user_id FROM organiser_members)",
+        'CREATE INDEX IF NOT EXISTS users_type_idx ON users (account_type, created_at)',
+        '@owner',
+    ],
 ];
+// The platform owner is the first administrator. Nobody else can change
+// their roles, suspend them or reset their password.
+function tr_mark_owner(): void
+{
+    if (val("SELECT value FROM meta WHERE key = 'owner_user_id'")) return;
+    $id = val("SELECT u.id FROM users u JOIN platform_roles r ON r.user_id = u.id AND r.role = 'admin' ORDER BY u.created_at LIMIT 1");
+    if ($id) q("INSERT INTO meta (key, value) VALUES ('owner_user_id', ?)", [$id]);
+}
 // Fills in the duplicate-check key for accounts made before it existed.
 function tr_backfill_email_keys(): void
 {
@@ -252,7 +270,7 @@ function tr_upgrade(): void
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         foreach (UPGRADES as $v => $steps) {
             if ($v <= $have) continue;
-            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), default => db()->exec($sql) };
+            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), default => db()->exec($sql) };
             q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
         }
     });
@@ -273,10 +291,11 @@ function tr_error_response(Throwable $e): Response
     return json_out(['error' => ['code' => 'server_error', 'message' => 'Something went wrong on our side.', 'requestId' => $rid]], 500);
 }
 
-// While maintenance mode is on, visitors' API calls get a 503 and the pages
-// show the maintenance message (core.js). Sign-in, settings and the back
-// office keep working so staff can turn it off again.
-const MAINT_EXEMPT = '#^/api/(health|config|auth/|site(/|$)|admin/|webhooks/)#';
+// While maintenance mode is on, visitors get the maintenance notice: pages
+// through index.php (see maintenance_flag_sync), and every API call a 503.
+// Only what staff need to work and turn it off again stays open: signing in
+// and out, the admin API, payment notifications and the site settings read.
+const MAINT_EXEMPT = '#^/api/(health|config|auth/(login|logout|me|password/reset)$|admin/|webhooks/)#';
 
 // ---------------------------------------------------------------- jobs
 // Shared hosting has no always-on worker: due jobs run right after a response
@@ -297,6 +316,8 @@ function jobs(): array
             q('DELETE FROM chat_messages WHERE created_at < ?', [iso_in(-90 * 86400)]);
             q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND body <> '[redacted]'", [iso_in(-180 * 86400)]);
         }],
+        // Organiser campaigns booked for later go out when their time comes.
+        ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];
 }
@@ -353,7 +374,10 @@ function tr_handle(): void
     if (!str_starts_with($path, '/api/')) { emit(json_out(['error' => ['code' => 'not_found', 'message' => 'Not found.']], 404)); return; }
 
     $s = settings_all();
-    if ($s['maintenance']['enabled'] && !preg_match(MAINT_EXEMPT, $path) && !(user() && user()['platformRoles'])) {
+    // Keep the web server's switch in step with the setting (after an upload, for example).
+    if ($s['maintenance']['enabled'] !== is_file(maintenance_flag_file())) maintenance_flag_sync((bool) $s['maintenance']['enabled']);
+    $siteRead = $method === 'GET' && $path === '/api/site';
+    if ($s['maintenance']['enabled'] && !$siteRead && !preg_match(MAINT_EXEMPT, $path) && !(user() && user()['platformRoles'])) {
         emit(json_out(['error' => ['code' => 'maintenance', 'message' => $s['maintenance']['message']]], 503));
         return;
     }
@@ -377,6 +401,11 @@ function tr_handle(): void
         }
         $GLOBALS['TR_REQ'] = ['method' => $method, 'path' => $path, 'body' => $body, 'raw' => $raw];
         foreach (glob(TR_APP . '/routes/*.php') as $f) require_once $f;
+        // The customer portal's API is for customer accounts. Organisers and
+        // staff have their own portals (liking an event is open to anyone signed in).
+        if (str_starts_with($path, '/api/me/') && $path !== '/api/me/likes' && user() && account_type(user()) !== 'customer') {
+            throw forbidden('This is for customer accounts. Sign in on your own portal.');
+        }
         $res = dispatch($method, $path);
     } catch (Throwable $e) {
         $res = tr_error_response($e);

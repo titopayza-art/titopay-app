@@ -303,8 +303,7 @@ function org_send_campaign(array $actor, string $orgId, string $campaignId): arr
     });
 }
 
-// Sends campaigns whose scheduled time has come. Not wired into jobs() yet:
-// add ['scheduled-campaigns', 60, fn() => org_due_scheduled_campaigns()] there.
+// Sends campaigns whose scheduled time has come (the 'scheduled-campaigns' job).
 function org_due_scheduled_campaigns(): int
 {
     $list = rows("SELECT id, organiser_id, created_by FROM campaigns WHERE status = 'scheduled' AND scheduled_at <= ? LIMIT 20", [now_iso()]);
@@ -323,8 +322,8 @@ function org_due_scheduled_campaigns(): int
 route('POST', '/api/organiser/apply', function () {
     $u = require_auth();
     limit('orgapply', 5, 24 * 3600, $u['id']);
-    // Staff accounts run the admin portal; they never become organisers.
-    if (has_role($u, 'admin', 'finance', 'support')) throw new AppError(403, 'staff_account', "This is a TicketRoom staff account. Organisers need their own account: sign out, then create one with the organiser's own email.");
+    // Only organiser accounts run organisations. Customers and staff never become organisers.
+    if (account_type($u) !== 'organiser') throw new AppError(403, 'not_organiser_account', "Organisations are run from an organiser account. Sign out, then create an organiser account with a different email.");
     $b = check(body(), ['name' => R::str(['min' => 2, 'max' => 120]), 'contactEmail' => R::email(), 'contactPhone' => R::phone(['optional' => true]), 'description' => R::text(['optional' => true, 'max' => 2000])]);
     $org = tx(function () use ($u, $b) {
         $now = now_iso();
@@ -347,23 +346,16 @@ route('POST', '/api/organiser/signup', function () {
     tx(function () use ($b) {
         $now = now_iso();
         $existing = user_by_email($b['email']);
-        if ($existing && (int) $existing['guest'] !== 1) {
-            throw conflict('You already have a TicketRoom account with this email. Sign in, then set up your organisation from the organiser portal.', 'email_taken', ['email' => 'Already has an account.']);
+        // One email, one account: an email already used by a customer (even
+        // one who only bought as a guest), organiser or staff account is taken.
+        if ($existing) {
+            throw conflict('An account with this email already exists. Use a different email for your organiser account, or sign in on the organiser portal if it is already one.', 'email_taken', ['email' => 'Already has an account.']);
         }
-        if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0 AND id <> ?", [$b['phone'], $existing['id'] ?? ''])) {
+        if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0", [$b['phone']])) {
             throw conflict('This mobile number is already on another TicketRoom account.', 'phone_taken', ['phone' => 'Already on another account.']);
         }
-        // An email that has only bought as a guest: nothing is created for it
-        // until the inbox owner acts. They choose a password from the email
-        // (see send_finish_account), then set up the organisation signed in.
-        if ($existing) {
-            if (limit_ok('finishsend', 3, 3600, $existing['id'])) send_finish_account($existing);
-            audit('user.finish_account_sent', ['actor' => ['id' => $existing['id']], 'entityType' => 'user', 'entityId' => $existing['id'], 'ip' => client_ip(), 'details' => ['from' => 'organiser_signup']]);
-            return;
-        } else {
-            $u = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'phone' => $b['phone'] ?? null, 'full_name' => $b['fullName'],
-                'password_hash' => hash_secret($b['password']), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
-        }
+        $u = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'phone' => $b['phone'] ?? null, 'full_name' => $b['fullName'],
+            'password_hash' => hash_secret($b['password']), 'status' => 'active', 'account_type' => 'organiser', 'created_at' => $now, 'updated_at' => $now]);
         $o = insert('organisers', ['id' => uuid(), 'ref' => new_ref('organisers'), 'name' => $b['organisation'], 'slug' => org_slugify($b['organisation']) . '-' . strtolower(random_code(4)),
             'contact_email' => $b['email'], 'contact_phone' => $b['phone'] ?? null, 'description' => ($b['description'] ?? '') !== '' ? $b['description'] : null, 'status' => 'pending', 'created_at' => $now]);
         insert('organiser_members', ['organiser_id' => $o['id'], 'user_id' => $u['id'], 'role' => 'owner', 'created_at' => $now]);
@@ -433,12 +425,30 @@ route('POST', '/api/organiser/:orgId/members', function ($a) {
     org_require_approved(organiser_access($u, $a['orgId'], ['owner'])['organiser']);
     $b = check(body(), ['email' => R::email(), 'role' => R::oneOf(['manager', 'marketing', 'finance', 'viewer'])]);
     $f = user_by_email($b['email']);
-    if (!$f || $f['status'] !== 'active' || (int) $f['guest'] === 1) throw not_found('No TicketRoom account uses that email. Ask them to sign up first.');
-    $uid = $f['id'];
-    q('INSERT INTO organiser_members (organiser_id, user_id, role, created_at) VALUES (?,?,?,?) ON CONFLICT (organiser_id, user_id) DO UPDATE SET role = excluded.role',
-        [$a['orgId'], $uid, $b['role'], now_iso()]);
-    audit('organiser.member_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $a['orgId'], 'details' => ['role' => $b['role']]]);
-    return json_out(['ok' => true], 201);
+    // Team members are organiser accounts. Someone new gets one, with an email
+    // to set their password; a customer's or TicketRoom staff email is refused
+    // (they need a separate work email for the team).
+    if ($f && account_type($f) !== 'organiser') throw conflict("That email belongs to a TicketRoom account that isn't an organiser account. Ask them for a separate work email for your team.", 'not_organiser_account', ['email' => 'Not an organiser account.']);
+    if ($f && $f['status'] !== 'active') throw conflict('That account is suspended or closed.', 'account_inactive');
+    $org = row('SELECT name FROM organisers WHERE id = ?', [$a['orgId']]);
+    $invited = !$f;
+    $uid = tx(function () use ($u, $a, $b, $f, $org) {
+        $now = now_iso();
+        $uid = $f['id'] ?? null;
+        if (!$uid) {
+            $name = explode('@', $b['email'])[0];
+            $uid = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)),
+                'status' => 'active', 'account_type' => 'organiser', 'created_at' => $now, 'updated_at' => $now])['id'];
+            $token = random_token(32);
+            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $uid, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
+            outbox_enqueue(['to' => $b['email'], 'userId' => $uid] + tpl('orgMemberInvite', ['by' => $u['fullName'], 'organiser' => $org['name'], 'role' => $b['role'], 'url' => base_url() . "/organisers#/reset/$token"]));
+        }
+        q('INSERT INTO organiser_members (organiser_id, user_id, role, created_at) VALUES (?,?,?,?) ON CONFLICT (organiser_id, user_id) DO UPDATE SET role = excluded.role',
+            [$a['orgId'], $uid, $b['role'], $now]);
+        audit('organiser.member_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $a['orgId'], 'details' => ['role' => $b['role'], 'invited' => !$f]]);
+        return $uid;
+    });
+    return json_out(['ok' => true, 'invited' => $invited], 201);
 });
 
 route('DELETE', '/api/organiser/:orgId/members/:userId', function ($a) {
@@ -723,6 +733,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
         'canScan' => org_bool(['optional' => true, 'fallback' => true]), 'canManageTags' => R::bool()]);
     $found = user_by_email($b['email']);
     if ($found && $found['status'] !== 'active') throw conflict('That account is suspended or closed, so it cannot scan tickets.', 'account_inactive');
+    if ($found && account_type($found) === 'staff') throw conflict('That email belongs to a TicketRoom staff account. Scanners need their own email.', 'staff_account', ['email' => 'Use a different email.']);
     $uid = $found['id'] ?? null;
     $invited = false;
     // Someone new, or someone who has only bought tickets as a guest, gets an email to set a password.
@@ -731,9 +742,9 @@ route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
         $name = $b['fullName'] ?? ($found['full_name'] ?? explode('@', $b['email'])[0]);
         $uid = tx(function () use ($u, $b, $token, $name, $event, $org, $uid) {
             $now = now_iso();
-            if (!$uid) $uid = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now])['id'];
+            if (!$uid) $uid = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'account_type' => 'customer', 'created_at' => $now, 'updated_at' => $now])['id'];
             insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $uid, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
-            outbox_enqueue(['to' => $b['email'], 'userId' => $uid] + tpl('staffInvite', ['name' => $name, 'organiser' => $org['name'], 'event' => $event['title'], 'url' => base_url() . "/account#/reset/$token"]));
+            outbox_enqueue(['to' => $b['email'], 'userId' => $uid] + tpl('staffInvite', ['name' => $name, 'organiser' => $org['name'], 'event' => $event['title'], 'url' => base_url() . "/scan#/reset/$token"]));
             audit('staff.invited', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['eventId' => $event['id']]]);
             return $uid;
         });

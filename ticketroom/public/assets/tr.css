@@ -336,7 +336,11 @@ body.venue .btn-link { color: #C8D4EA; }
 .camera:empty { display: none; }
 body.maint { display: grid; place-items: center; min-height: 100vh; padding: 16px; background: linear-gradient(180deg, var(--navy-900), var(--navy-950)); color: #fff; text-align: center; }
 .maint-card { max-width: 560px; } .maint-card img { width: min(420px, 100%); height: auto; margin: 0 auto 12px; border-radius: 16px; }
-.maint-card a { color: var(--amber-500); } .maint-card p { color: #C8D4EA; }
+.maint-staff { background: var(--warn-bg); color: var(--warn); border-bottom: 1px solid #f0d9a8; font-size: .9rem; }
+.maint-staff .wrap { padding-top: 9px; padding-bottom: 9px; } .maint-staff a { color: inherit; font-weight: 700; }
+.maint-card a { color: var(--amber-500); }
+.maint-preview { background: var(--navy-900); color: #fff; border-radius: var(--radius); padding: 28px 20px; text-align: center; }
+.maint-preview img { width: min(260px, 80%); height: auto; border-radius: 12px; } .maint-preview p { color: #C8D4EA; } .maint-card p { color: #C8D4EA; }
 
 /* ---------- announcement banner (Back office → Site settings) ---------- */
 .site-banner { background: var(--amber-500); color: var(--navy-950); }

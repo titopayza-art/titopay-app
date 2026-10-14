@@ -9,7 +9,7 @@ const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const PEOPLE = {
   customer: [{ email: "sipho@example.co.za", password: "fan-password-123" }, "/account", ["#/orders", "#/transfers", "#/settings"]],
   organiser: [{ email: "naledi@example.co.za", password: "organiser-pass-1" }, "/organisers", ["#/events", "#/team", "#/settings"]],
-  admin: [{ email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" }, "/admin", ["#/organisers", "#/users", "#/integrations"]],
+  admin: [{ email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" }, "/admin", ["#/organisers", "#/users", "#/integrations"]],
 };
 const problems = [];
 

@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
@@ -639,9 +639,9 @@ async function team() {
   const { members } = await get(`${base()}/members`);
   render(main, html`${head("Team", "Give colleagues their own login with only the access they need.")}
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${members.map((m) => html`<tr><td>${m.full_name}</td><td>${m.email}</td><td>${m.role}</td><td>${can("owner") && m.role !== "owner" ? html`<button class="btn btn-ghost btn-sm" data-rm="${m.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>
-    ${can("owner") ? html`<section class="card mt"><h3>Add a team member</h3><form class="stack" id="tm"><div class="grid-2"><div class="field"><label for="me">Their TicketRoom email</label><input id="me" name="email" type="email" required></div>
+    ${can("owner") ? html`<section class="card mt"><h3>Add a team member</h3><form class="stack" id="tm"><div class="grid-2"><div class="field"><label for="me">Their work email</label><input id="me" name="email" type="email" required><span class="hint">Someone new gets an organiser login and an email to set their password. Customer accounts can't be added: team members use a separate work email.</span></div>
       <div class="field"><label for="mr">Role</label><select id="mr" name="role"><option value="manager">Manager: events, staff, vendors</option><option value="marketing">Marketing: campaigns, promos</option><option value="finance">Finance: payouts, refunds</option><option value="viewer">Viewer: read only</option></select></div></div><button class="btn btn-dark">Add</button></form></section>` : ""}`);
-  if ($("#tm")) onSubmit($("#tm"), async (v) => { await post(`${base()}/members`, v); toast("Added.", "good"); team(); });
+  if ($("#tm")) onSubmit($("#tm"), async (v) => { const r = await post(`${base()}/members`, v); toast(r.invited ? `Added. ${v.email} will get an email to set a password.` : "Added. They'll see your organisation when they next sign in.", "good"); team(); });
   $$("[data-rm]").forEach((b) => b.addEventListener("click", async () => { await del(`${base()}/members/${b.dataset.rm}`); team(); }));
 }
 
@@ -674,15 +674,19 @@ async function loadOrg() {
 
 (async () => {
   await header($("#header"), { portal: "organiser" });
+  // Links from emails work signed out: choose a new password, confirm an email.
+  if (emailLinkPage("organiser")) return;
   // Signed out: a welcome, not a bare sign-in box.
   const u = await me();
+  // One account, one portal: customer and staff accounts never get in here.
+  if (u && accountType(u) !== "organiser") return wrongAccountPage(u, "organiser");
   if (!u) {
     render($("#sidenav"), "");
     render(main, html`<section class="welcome card"><span class="tk-label">Organiser portal</span><h1>Sell tickets, scan people in, get paid</h1>
       <p class="lead">Sign in to manage your events. New to TicketRoom? Create your organiser account in one step: listing free events costs nothing.</p>
       <div class="row"><button class="btn btn-primary" data-in>Sign in</button><button class="btn btn-ghost" data-start>Start selling</button></div>
       <p class="small muted mb-0">Buying tickets instead? <a href="/">Browse events</a></p></section>`);
-    $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: () => location.reload() }));
+    $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: () => location.reload(), portal: "organiser" }));
     $("[data-start]").addEventListener("click", () => organiserSignupDialog());
     return;
   }

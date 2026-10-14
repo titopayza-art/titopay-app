@@ -9,7 +9,7 @@ const { chromium } = require("playwright");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3] || "/srv/trtest/public_html";
-const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" };
+const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 const ORG = { email: "naledi@example.co.za", password: "organiser-pass-1" };
 const FAN = { email: "sipho@example.co.za", password: "fan-password-123" };
 const problems = [];
@@ -101,11 +101,15 @@ const signupBody = (email, extra = {}) => ({ fullName: "Test Person", email, pas
     const d = n.locator("dialog");
     await d.getByLabel("Organisation or trading name").fill("Durban Beach Fest");
     await d.getByLabel("Your full name").fill("Ayesha Naidoo");
-    await d.getByLabel("Email").fill("ayesha@example.co.za");
+    await d.locator("#os-email").fill("ayesha@example.co.za");
     await d.getByLabel("Password", { exact: true }).fill("organiser-pass-2");
     await d.getByLabel("Confirm password").fill("organiser-pass-2");
     await d.getByRole("checkbox", { name: /I accept the/ }).check();
+    assert.equal(await d.locator("#os-email").inputValue(), "ayesha@example.co.za", "email typed in");
+    const sent = n.waitForResponse((r) => r.url().endsWith("/api/organiser/signup"));
     await d.getByRole("button", { name: "Create my organiser account" }).click();
+    const res = await sent;
+    assert.equal(res.status(), 201, `organiser sign-up: ${res.status()} ${(await res.text()).slice(0, 300)}`);
     await d.getByRole("heading", { name: "Check your inbox" }).waitFor();
     await n.goto(`${BASE}/account#/verify/${lastMail("ayesha@example.co.za").body.match(/#\/verify\/(\S+)/)[1]}`);
     await n.getByRole("link", { name: "Open my organiser portal" }).click();

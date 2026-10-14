@@ -22,11 +22,11 @@ function send_finish_account(array $u): void
 {
     $token = random_token(32);
     insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $u['id'], 'expires_at' => iso_in(86400), 'created_at' => now_iso()]);
-    outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('finishAccount', ['name' => $u['full_name'], 'url' => base_url() . "/account#/reset/$token"]));
+    outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('finishAccount', ['name' => $u['full_name'], 'url' => portal_link($u, "reset/$token")]));
 }
 function send_verification(array $u): void
 {
-    $url = base_url() . '/account#/verify/' . sign_link(['v' => $u['id'], 'e' => $u['email']], 7 * 86400);
+    $url = portal_link($u, 'verify/' . sign_link(['v' => $u['id'], 'e' => $u['email']], 7 * 86400));
     outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('verifyEmail', ['name' => $u['full_name'], 'url' => $url]));
 }
 
@@ -42,7 +42,9 @@ route('POST', '/api/auth/register', function () {
     tx(function () use ($b) {
         $now = now_iso();
         $existing = user_by_email($b['email']);
-        if ($existing && (int) $existing['guest'] !== 1) {
+        // Customer sign-up makes customer accounts only; any other account on
+        // this email (organiser or staff) means the email is taken.
+        if ($existing && ((int) $existing['guest'] !== 1 || account_type($existing) !== 'customer')) {
             throw conflict('An account with this email already exists. Sign in, or use "Forgot password?" if you can\'t remember it.', 'email_taken', ['email' => 'Already has an account.']);
         }
         if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0 AND id <> ?", [$b['phone'], $existing['id'] ?? ''])) {
@@ -54,7 +56,7 @@ route('POST', '/api/auth/register', function () {
             if (limit_ok('finishsend', 3, 3600, $u['id'])) send_finish_account($u);
         } else {
             $u = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'phone' => $b['phone'] ?? null, 'full_name' => $b['fullName'],
-                'password_hash' => hash_secret($b['password']), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+                'password_hash' => hash_secret($b['password']), 'status' => 'active', 'account_type' => 'customer', 'created_at' => $now, 'updated_at' => $now]);
             send_verification($u);
         }
         if ($b['marketingOptIn']) set_consent($u['id'], null, 'email', true, 'signup');
@@ -66,7 +68,8 @@ route('POST', '/api/auth/register', function () {
 
 route('POST', '/api/auth/login', function () {
     limit('login', 120, 900);
-    $b = check(body(), ['email' => R::email(), 'password' => R::str(['min' => 1, 'max' => 200])]);
+    $b = check(body(), ['email' => R::email(), 'password' => R::str(['min' => 1, 'max' => 200]), 'portal' => R::oneOf(array_keys(PORTAL_ACCEPTS), ['optional' => true])]);
+    $portal = $b['portal'] ?? 'site';
     $u = row("SELECT * FROM users WHERE lower(email) = ? AND status <> 'deleted'", [$b['email']]) ?? user_by_email($b['email']);
     // Compare against a real hash even for unknown emails, so timing does not reveal accounts.
     $ok = verify_secret($b['password'], $u['password_hash'] ?? '$2y$10$WPT59Gnb/QYXeEjTyv1sp.pD4KgnvD5SRlQY9iG6ybrv4y.LW5AXy') && $u;
@@ -89,6 +92,18 @@ route('POST', '/api/auth/login', function () {
         throw $generic;
     }
     if ($u['status'] === 'suspended') throw new AppError(403, 'suspended', 'This account is suspended. Contact hello@ticketroom.co.za.');
+    // Maintenance: only TicketRoom staff can sign in until it is over.
+    if (account_type($u) !== 'staff' && settings_all()['maintenance']['enabled']) {
+        throw new AppError(503, 'maintenance', settings_all()['maintenance']['message']);
+    }
+    // One account, one portal. The admin sign-in never says what kind of
+    // account an email has; staff accounts never sign in anywhere else.
+    $type = account_type($u);
+    if (!in_array($type, PORTAL_ACCEPTS[$portal], true)) {
+        if ($portal === 'admin' || $type === 'staff') throw $generic;
+        $where = ['customer' => 'the customer portal', 'organiser' => 'the organiser portal'][$type];
+        throw new AppError(403, 'wrong_portal', ($type === 'organiser' ? 'This is an organiser account.' : 'This is a customer account.') . " Sign in on {$where}.", ['portal' => ACCOUNT_PORTALS[$type]]);
+    }
     // Right password, email not confirmed yet: send a fresh link (a few per hour at most).
     if (!$u['email_verified_at']) {
         if (limit_ok('verifysend', 3, 3600, $u['id'])) send_verification($u);
@@ -163,8 +178,8 @@ route('POST', '/api/auth/verify-email', function () {
     }
     if ($r['first']) create_session($r['user']['id']);
     $tickets = (int) val("SELECT count(*) FROM tickets WHERE owner_user_id = ? AND status = 'valid'", [$r['user']['id']]);
-    $organiser = (bool) val('SELECT 1 FROM organiser_members WHERE user_id = ?', [$r['user']['id']]);
-    return ['ok' => true, 'signedIn' => $r['first'], 'firstName' => explode(' ', trim($r['user']['full_name']))[0], 'tickets' => $tickets, 'organiser' => $organiser];
+    $organiser = account_type($r['user']) === 'organiser';
+    return ['ok' => true, 'signedIn' => $r['first'], 'accountType' => account_type($r['user']), 'firstName' => explode(' ', trim($r['user']['full_name']))[0], 'tickets' => $tickets, 'organiser' => $organiser];
 });
 
 // "Didn't get the email?" Same answer whether or not the address has an account.
@@ -172,7 +187,7 @@ route('POST', '/api/auth/verify-email/resend', function () {
     limit('verifyresend', 5, 3600);
     $b = check(body(), ['email' => R::email(['optional' => true])]);
     $u = user() ? row('SELECT * FROM users WHERE id = ?', [user()['id']]) : (isset($b['email']) ? user_by_email($b['email']) : null);
-    if ($u && $u['status'] === 'active' && (!$u['email_verified_at'] || (int) $u['guest'] === 1) && limit_ok('verifysend', 3, 3600, $u['id'])) {
+    if ($u && $u['status'] === 'active' && account_type($u) !== 'staff' && (!$u['email_verified_at'] || (int) $u['guest'] === 1) && limit_ok('verifysend', 3, 3600, $u['id'])) {
         (int) $u['guest'] === 1 ? send_finish_account($u) : send_verification($u);
     }
     return ['ok' => true, 'message' => 'If that email is waiting to be confirmed, a new link is on its way.'];
@@ -182,13 +197,15 @@ route('POST', '/api/auth/password/forgot', function () {
     limit('forgot', 5, 3600);
     $b = check(body(), ['email' => R::email()]);
     $u = user_by_email($b['email']);
-    if ($u && $u['status'] === 'active') {
+    // Staff passwords are reset by the platform owner from the admin portal,
+    // never by email from the public sign-in. The answer is the same, so it
+    // reveals nothing about which emails are staff.
+    if ($u && $u['status'] === 'active' && account_type($u) !== 'staff') {
         $token = random_token(32);
         tx(function () use ($u, $token) {
             insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $u['id'], 'expires_at' => iso_in(3600), 'created_at' => now_iso()]);
-            outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('passwordReset', ['name' => $u['full_name'], 'url' => base_url() . "/account#/reset/$token"]));
+            outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('passwordReset', ['name' => $u['full_name'], 'url' => portal_link($u, "reset/$token")]));
         });
-        if (cfg('dev')) header("X-Dev-Reset-Token: $token");
     }
     return ['ok' => true, 'message' => 'If that email has an account, a reset link is on its way.'];
 });
@@ -213,8 +230,8 @@ route('POST', '/api/auth/password/reset', function () {
     $active = val("SELECT status FROM users WHERE id = ?", [$uid]) === 'active';
     if ($active) create_session($uid);
     $tickets = (int) val("SELECT count(*) FROM tickets WHERE owner_user_id = ? AND status = 'valid'", [$uid]);
-    return ['ok' => true, 'signedIn' => $active, 'tickets' => $tickets, 'staff' => (bool) val('SELECT 1 FROM platform_roles WHERE user_id = ?', [$uid]),
-        'organiser' => (bool) val('SELECT 1 FROM organiser_members WHERE user_id = ?', [$uid])];
+    $type = (string) val('SELECT account_type FROM users WHERE id = ?', [$uid]);
+    return ['ok' => true, 'signedIn' => $active, 'tickets' => $tickets, 'accountType' => $type, 'staff' => $type === 'staff', 'organiser' => $type === 'organiser'];
 });
 
 // POPIA: access to personal information.
@@ -238,6 +255,12 @@ route('POST', '/api/auth/me/delete', function () {
     $u = require_auth();
     $b = check(body(), ['password' => R::str(['max' => 200])]);
     if (!verify_secret($b['password'], val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Password is incorrect.');
+    // Staff accounts are closed by an admin under Staff & roles; an organisation's
+    // owner closes the organisation with TicketRoom first, so nothing is left without an owner.
+    if (account_type($u) === 'staff') throw forbidden('Staff accounts are closed by an admin under Staff & roles.');
+    if (val("SELECT 1 FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = ? AND m.role = 'owner' AND o.status IN ('pending','approved','suspended')", [$u['id']])) {
+        throw conflict('You own an organisation on TicketRoom. Write to hello@ticketroom.co.za to close it first, then you can delete your account.', 'owns_organisation');
+    }
     tx(function () use ($u) {
         if (val("SELECT 1 FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = ? AND t.status = 'valid' AND e.ends_at > ? LIMIT 1", [$u['id'], now_iso()])) {
             throw conflict('You have tickets for upcoming events. Transfer or use them before deleting your account.', 'has_live_tickets');

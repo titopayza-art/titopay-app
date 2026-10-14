@@ -54,6 +54,35 @@ $types = [
     'json' => 'application/json', 'webmanifest' => 'application/manifest+json', 'png' => 'image/png', 'jpg' => 'image/jpeg',
     'jpeg' => 'image/jpeg', 'webp' => 'image/webp', 'svg' => 'image/svg+xml', 'ico' => 'image/x-icon', 'txt' => 'text/plain; charset=utf-8',
 ];
+// Maintenance mode (switched on in the admin portal, Site settings): visitors
+// get the notice from the server, TicketRoom staff get the site. The admin
+// portal itself stays open so staff can sign in and switch it off.
+$maintenance = function () use ($root): ?string {
+    if (!is_file("$root/maintenance.on")) return null;
+    try {
+        require_once $root . '/api/bootstrap.php';
+        tr_load();
+        load_session();
+        $m = settings_all()['maintenance'];
+        if (!$m['enabled']) { maintenance_flag_sync(false); return null; }
+        return (user()['platformRoles'] ?? []) ? null : (string) $m['message'];
+    } catch (Throwable $e) {
+        return "We're making a few improvements to TicketRoom and will be back shortly.";
+    }
+};
+$maintenancePage = function (string $message): void {
+    http_response_code(503);
+    header('Retry-After: 900');
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store');
+    header("Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'");
+    $e = fn($s) => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+    echo '<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">'
+        . '<title>TicketRoom | Back soon</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/tr.css"></head>'
+        . '<body class="maint-on"><div class="maint-screen"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260">'
+        . '<h1>We\'ll be right back</h1><p>' . $e($message) . '</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main></div></body></html>';
+};
+
 foreach ($candidates as $rel) {
     $full = realpath("$root/$rel");
     if ($full === false || !is_file($full) || !str_starts_with($full, $root . DIRECTORY_SEPARATOR)) continue;
@@ -63,6 +92,7 @@ foreach ($candidates as $rel) {
     $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
     // Only web files: never PHP source, notes, archives or hidden files.
     if ($name[0] === '.' || !isset($types[$ext]) || $name === 'START-HERE.txt') break;
+    if ($ext === 'html' && $name !== 'admin.html' && ($msg = $maintenance()) !== null) { $maintenancePage($msg); exit; }
     header('Content-Type: ' . $types[$ext]);
     header('X-Content-Type-Options: nosniff');
     if ($ext === 'html') {

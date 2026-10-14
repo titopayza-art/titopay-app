@@ -478,15 +478,17 @@ function load_session(): void
     $GLOBALS['TR_SESSION'] = null;
     $token = $_COOKIE[SESSION_COOKIE] ?? '';
     if (!is_string($token) || $token === '' || strlen($token) > 100) return;
-    $r = row('SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at
+    $r = row('SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at, u.account_type
                 FROM sessions s JOIN users u ON u.id = s.user_id
                WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?', [sha256($token), now_iso()]);
     if (!$r || $r['status'] !== 'active') return;
-    $roles = array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$r['id']]), 'role');
+    // Staff powers belong to staff accounts only: a role row on a customer or
+    // organiser account, however it got there, counts for nothing.
+    $roles = $r['account_type'] === 'staff' ? array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$r['id']]), 'role') : [];
     $GLOBALS['TR_SESSION'] = ['id' => $r['session_id'], 'csrfToken' => $r['csrf_token']];
     $GLOBALS['TR_USER'] = [
         'id' => $r['id'], 'email' => $r['email'], 'fullName' => $r['full_name'], 'phone' => $r['phone'],
-        'emailVerified' => $r['email_verified_at'] !== null, 'platformRoles' => $roles,
+        'emailVerified' => $r['email_verified_at'] !== null, 'platformRoles' => $roles, 'accountType' => $r['account_type'],
         'primaryRole' => array_values(array_intersect(['admin', 'finance', 'support'], $roles))[0] ?? 'user',
     ];
 }

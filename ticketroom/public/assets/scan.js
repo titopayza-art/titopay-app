@@ -1,5 +1,5 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { html, render, $, $$, get, post, header, requireUser, toast, fmtTime, empty, spinner } from "/assets/core.js";
+import { html, render, $, $$, get, post, header, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType } from "/assets/core.js";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
 import * as offline from "/assets/scan-offline.js";
 
@@ -159,8 +159,11 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
     if (ev) { render($("#header"), html`<div class="wrap"><span class="wordmark">TICKET<b>ROOM</b></span></div>`); start(ev); return setNet(false); }
   }
   await header($("#header"), { portal: "scanner" });
-  const u = await requireUser("Staff sign in to scan tickets.");
+  // A scanner's "set your password" link opens here.
+  if (emailLinkPage("scanner")) return;
+  const u = await requireUser("Gate staff: sign in to scan tickets.", "scanner");
   if (!u) return render(main, empty("Sign in to scan."));
+  if (accountType(u) === "staff") return wrongAccountPage(u, "scanner");
   await header($("#header"), { portal: "scanner" });
   render(main, spinner());
   pickEvent();

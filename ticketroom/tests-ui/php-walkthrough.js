@@ -24,15 +24,15 @@ function lastMail(to) {
 // Open the confirmation link from the email, as the person would.
 async function confirmEmail(p, email) {
   const m = lastMail(email);
-  const link = m.body.match(/\/account#\/verify\/(\S+)/);
+  const link = m.body.match(/\/(account|organisers)#\/verify\/(\S+)/);
   assert.ok(link, `confirmation email for ${email}`);
-  await p.goto(`${BASE}/account#/verify/${link[1]}`);
+  await p.goto(`${BASE}/${link[1]}#/verify/${link[2]}`);
   await p.getByRole("heading", { name: /Welcome to TicketRoom/ }).waitFor();
 }
 const SHOTS = path.resolve(__dirname, "artifacts", "php");
 const problems = [];
 let step = 0;
-const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" };
+const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 
 async function page(browser, { width = 1280, height = 900 } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height } });
@@ -78,8 +78,11 @@ async function signIn(p, email, password) {
     assert.equal(await a.getByText("Set up TicketRoom").count(), 0, "no setup screen");
     await shot(a, "home-first-visit");
     // The administrator signs in with the temporary password and is told to change it.
-    await a.goto(`${BASE}/signin`);
+    // Staff sign in on the admin portal only: no "Create account", no "Forgot password".
+    await a.goto(`${BASE}/admin`);
     const d = a.locator("dialog");
+    await d.getByText("TicketRoom staff only").waitFor();
+    assert.equal(await d.getByRole("button", { name: /Create account|Forgot password/ }).count(), 0, "admin sign-in offers no sign-up or reset");
     await d.getByLabel("Email").fill(ADMIN.email);
     await d.getByLabel("Password").fill(TEMP);
     await d.getByRole("button", { name: "Sign in" }).click();
@@ -103,28 +106,37 @@ async function signIn(p, email, password) {
     await a.getByRole("heading", { name: "Site settings" }).waitFor();
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder stays gone");
     await shot(a, "admin-signed-in");
-    for (const [hash, heading] of [["#/", "Overview"], ["#/organisers", "Organiser accounts"], ["#/events", "All events"], ["#/users", "All users"], ["#/support", "Support & callbacks"],
+    for (const [hash, heading] of [["#/", "Overview"], ["#/organisers", "Organiser accounts"], ["#/events", "All events"], ["#/users", "Customers & organisers"], ["#/support", "Support & callbacks"],
       ["#/posters", "Advertising posters"], ["#/assistant", "Assistant"], ["#/emails", "Email templates"], ["#/integrations", "Integrations"], ["#/audit", "Audit log"], ["#/outbox", "Messages"],
       ["#/refunds", "Refunds"], ["#/payouts", "Payouts"], ["#/payments", "Payments & webhooks"], ["#/reconciliation", "Reconciliation"], ["#/ledger", "Ledger"]]) {
       await a.goto(`${BASE}/admin${hash}`);
       await a.getByRole("heading", { name: heading, exact: true }).first().waitFor();
     }
     assert.equal(await a.getByRole("link", { name: /Payouts/ }).isVisible(), true, "finance menu: payments, refunds and payouts are tracked");
-    // The staff account is never offered the organiser sign-up form.
+    // One account, one portal: a staff account gets no further than a note in the organiser portal.
     await a.goto(`${BASE}/organisers`);
-    await a.getByRole("heading", { name: "This is the organiser portal" }).waitFor();
+    await a.getByRole("heading", { name: "This portal isn't for this account" }).waitFor();
     assert.equal(await a.locator("#ce").count(), 0, "no organiser form for staff");
     const staffApply = await a.request.post(`${BASE}/api/organiser/apply`, { data: { name: "Should Fail", contactEmail: ADMIN.email }, headers: { "x-csrf-token": (await (await a.request.get(`${BASE}/api/auth/me`)).json()).csrfToken } });
     assert.equal(staffApply.status(), 403, "server refuses staff as organiser");
     await shot(a, "admin-messages");
 
-    // 2. Organiser signs up, applies, lists a free event.
+    // 2. Organiser signs up from the organiser portal (an organiser account), lists a free event.
     const o = await page(browser);
-    await signUp(o, "Naledi Dlamini", "naledi@example.co.za", "organiser-pass-1");
     await o.goto(`${BASE}/organisers`);
     await o.locator(".portal-bar.pb-organiser").getByText("Organiser portal").waitFor();
-    await o.getByLabel("Organisation or trading name").fill("Soweto Community Arts");
-    await o.getByRole("button", { name: "Submit for review" }).click();
+    await o.getByRole("button", { name: "Start selling" }).first().click();
+    const od = o.locator("dialog");
+    await od.getByLabel("Organisation or trading name").fill("Soweto Community Arts");
+    await od.getByLabel("Your full name").fill("Naledi Dlamini");
+    await od.getByLabel("Email").fill("naledi@example.co.za");
+    await od.getByLabel("Password", { exact: true }).fill("organiser-pass-1");
+    await od.getByLabel("Confirm password").fill("organiser-pass-1");
+    await od.getByRole("checkbox", { name: /I accept the/ }).check();
+    await od.getByRole("button", { name: "Create my organiser account" }).click();
+    await od.getByRole("heading", { name: "Check your inbox" }).waitFor();
+    await confirmEmail(o, "naledi@example.co.za");
+    await o.getByRole("link", { name: "Open my organiser portal" }).click();
     await o.getByText(/being reviewed/).waitFor();
     await shot(o, "organiser-pending");
 

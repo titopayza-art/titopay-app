@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, qrPanel, ApiError } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError } from "/assets/core.js";
 
 const main = $("#main");
 let R = new Set();
@@ -109,11 +109,12 @@ async function staffPage() {
   render(main, html`${head("Staff & roles", "Everyone who can open the admin portal. Give each person only the roles they need.")}
     ${isA() ? html`<section class="card stack"><h2>Add a staff member</h2>
       <form class="stack" id="sf"><div class="grid-2"><div class="field"><label for="sn">Full name</label><input id="sn" name="fullName" required maxlength="120"></div>
-        <div class="field"><label for="se">Email</label><input id="se" name="email" type="email" required><span class="hint">Someone new gets an email to set their password. An existing account just gets the roles.</span></div></div>
+        <div class="field"><label for="se">Work email</label><input id="se" name="email" type="email" required><span class="hint">A new staff account is made for this email, and they get a link to set their password. Customer and organiser emails can't be used.</span></div></div>
         ${roleBoxes("r_", ["support"])}<button class="btn btn-primary">Add to the team</button></form></section>` : ""}
-    <section class="mt"><h2>The team</h2>${tbl(["Name", "Email", "Roles", ""], staff.map((s) => html`<tr><td>${s.full_name}${s.id === meId ? html` <span class="tiny muted">(you)</span>` : ""}</td><td class="small">${s.email}</td>
-      <td>${s.roles.map((r) => html`<span class="badge ${r === "admin" ? "bad" : r === "finance" ? "info" : "good"}">${(ROLE_INFO.find(([k]) => k === r) || [, r])[1]}</span> `)}</td>
-      <td>${isA() && s.id !== meId ? html`<button class="btn btn-ghost btn-sm" data-edit="${s.id}">Change roles</button>` : ""}</td></tr>`), "No staff yet.")}</section>`);
+    <section class="mt"><h2>The team</h2>${tbl(["Name", "Email", "Roles", ""], staff.map((s) => html`<tr><td>${s.full_name}${s.owner ? html` <span class="badge info">Owner</span>` : ""}${s.id === meId ? html` <span class="tiny muted">(you)</span>` : ""}</td><td class="small">${s.email}</td>
+      <td>${s.status !== "active" ? html`<span class="badge plain">Off the team</span>` : s.roles.map((r) => html`<span class="badge ${r === "admin" ? "bad" : r === "finance" ? "info" : "good"}">${(ROLE_INFO.find(([k]) => k === r) || [, r])[1]}</span> `)}</td>
+      <td class="nowrap">${isA() && s.id !== meId && !s.owner ? html`<button class="btn btn-ghost btn-sm" data-edit="${s.id}">Change roles</button>${s.status === "active" ? html` <button class="btn btn-ghost btn-sm" data-reset="${s.id}">Send password link</button>` : ""}` : ""}</td></tr>`), "No staff yet.")}
+      <p class="small muted">Staff can't reset their own password from the sign-in box. If someone is locked out, send them a password link here; it works for 24 hours. The owner's account can only be changed by the owner.</p></section>`);
   const f = $("#sf");
   if (f) onSubmit(f, async (v) => {
     const roles = ROLE_INFO.map(([k]) => k).filter((k) => v[`r_${k}`]);
@@ -122,6 +123,11 @@ async function staffPage() {
     toast(r.invited ? `Added. ${v.email} will get an email to set a password.` : `Added. ${v.email} can sign in with their usual password.`, "good");
     staffPage();
   });
+  $$("[data-reset]").forEach((b) => b.addEventListener("click", async () => {
+    const s = staff.find((x) => x.id === b.dataset.reset);
+    if (!(await confirmDialog(`Send ${s.full_name} a password link?`, `${s.email} gets a link to choose a new password, valid for 24 hours. Their current password keeps working until they use it.`, { confirm: "Send link" }))) return;
+    try { const r = await post(`/api/admin/staff/${s.id}/reset`); toast(r.message, "good"); } catch (err) { toast(err.message, "bad"); }
+  }));
   $$("[data-edit]").forEach((b) => b.addEventListener("click", () => {
     const s = staff.find((x) => x.id === b.dataset.edit);
     const d = dialog(`Roles for ${s.full_name}`, html`<form class="stack" id="rf">${roleBoxes("e_", s.roles)}
@@ -153,11 +159,13 @@ const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { con
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
   render($("#sidenav"), html`<a href="#/">Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users">All users</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
-    <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">Ledger</a>
-    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
-    <div class="sect">Governance</div><a href="#/integrations">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
+    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
+    <div class="sect" data-feature="finance" data-role-need="admin finance">Finance</div><a href="#/refunds" data-feature="finance" data-role-need="admin finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance" data-role-need="admin finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance" data-role-need="admin finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance" data-role-need="admin finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance" data-role-need="admin finance">Ledger</a>
+    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
+    <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
     <div class="sect">You</div><a href="#/staff">Staff & roles</a><a href="#/password">My password</a>`);
+  // Each person sees only the sections their roles can open.
+  $$("#sidenav [data-role-need]").forEach((a) => { if (!a.dataset.roleNeed.split(" ").some((r) => R.has(r))) a.remove(); });
 }
 
 async function overview() {
@@ -250,28 +258,36 @@ async function events() {
   }));
 }
 
-async function users() {
+// Customers and organisers. TicketRoom staff are only under Staff & roles,
+// and nothing here can turn a customer or organiser into staff.
+async function users(params, type = "") {
   const draw = async (q = "") => {
-    const { users: list } = await get(`/api/admin/users?q=${encodeURIComponent(q)}`);
-    render($("#ul"), tbl(["Name", "Email", "Phone", "Roles", "Status", ""], list.map((u) => html`<tr><td>${u.full_name}</td><td>${u.email}${u.email_verified_at ? "" : html` <span class="tiny muted">(unverified)</span>`}</td><td>${u.phone || ""}</td><td>${u.roles.join(", ")}</td><td>${badge(u.status)}</td><td><button class="btn btn-ghost btn-sm" data-u="${u.id}">Open</button></td></tr>`)));
+    const { users: list, counts } = await get(`/api/admin/users?q=${encodeURIComponent(q)}&type=${type}`);
+    $$("[data-type]").forEach((b) => { b.setAttribute("aria-pressed", String(b.dataset.type === type)); const n = b.dataset.type ? counts[b.dataset.type] || 0 : (counts.customer || 0) + (counts.organiser || 0); $(".n", b).textContent = n; });
+    render($("#ul"), tbl(["Name", "Email", "Type", "Status", ""], list.map((u) => html`<tr><td>${u.full_name}${u.organisations ? html`<br><span class="tiny muted">${u.organisations}</span>` : ""}</td>
+      <td>${u.email}${u.guest ? html` <span class="tiny muted">(guest buyer)</span>` : u.email_verified_at ? "" : html` <span class="tiny muted">(unconfirmed)</span>`}</td>
+      <td><span class="badge ${u.account_type === "organiser" ? "info" : "plain"}">${u.account_type === "organiser" ? "Organiser" : "Customer"}</span></td><td>${badge(u.status)}</td>
+      <td><button class="btn btn-ghost btn-sm" data-u="${u.id}">Open</button></td></tr>`), "Nobody matches that search."));
     $$("[data-u]").forEach((b) => b.addEventListener("click", () => userDialog(b.dataset.u, () => draw(q))));
   };
-  render(main, html`${head("All users", "Everyone with a TicketRoom account: customers, organisers and staff.")}<form class="row" id="us"><input id="uq" class="grow" placeholder="Search name, email or phone" aria-label="Search users"><button class="btn btn-ghost">Search</button></form><div id="ul" class="mt">${spinner()}</div>`);
+  render(main, html`${head("Customers & organisers", "Everyone who buys tickets or runs events. TicketRoom staff are managed under Staff & roles.")}
+    <div class="row chip-select mb" role="group" aria-label="Show">${[["", "Everyone"], ["customer", "Customers"], ["organiser", "Organisers"]].map(([k, l]) => html`<button type="button" class="chip" data-type="${k}" aria-pressed="${k === type}">${l} <span class="n">·</span></button>`)}</div>
+    <form class="row" id="us"><input id="uq" class="grow" placeholder="Search name, email or phone" aria-label="Search"><button class="btn btn-ghost">Search</button></form><div id="ul" class="mt">${spinner()}</div>`);
   $("#us").addEventListener("submit", (e) => { e.preventDefault(); draw($("#uq").value); });
+  $$("[data-type]").forEach((b) => b.addEventListener("click", () => { type = b.dataset.type; draw($("#uq").value); }));
   draw();
 }
 
 async function userDialog(id, done) {
   const d = await get(`/api/admin/users/${id}`);
-  const u = d.user, has = (r) => d.roles.some((x) => x.role === r);
-  const dlg = dialog(u.full_name, html`<p class="small">${u.email} · ${u.phone || "no phone"} · joined ${fmtDate(u.created_at)} · ${badge(u.status)} ${u.has_pin ? "· PIN set" : ""}</p>
-    ${isA() ? html`<div class="row">${u.status === "active" ? html`<button class="btn btn-danger btn-sm" data-st="suspended">Suspend</button>` : u.status === "suspended" ? html`<button class="btn btn-good btn-sm" data-st="active">Reactivate</button>` : ""}
-      ${["admin", "finance", "support"].map((r) => html`<button class="btn btn-ghost btn-sm" data-role="${r}" data-grant="${!has(r)}">${has(r) ? `Remove ${r}` : `Make ${r}`}</button>`)}</div>` : ""}
-    <h3 class="mt">Orders</h3>${tbl(["Ref", "Event", "Status", "#Total"], d.orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.title}</td><td>${badge(o.status)}</td><td class="num">${moneyExact(o.total_cents)}</td></tr>`))}
-    <h3 class="mt">Tickets</h3>${tbl(["Code", "Event", "Status"], d.tickets.map((t) => html`<tr><td class="mono">${t.code}</td><td>${t.title}</td><td>${badge(t.status)}</td></tr>`))}
-    <h3 class="mt">Tags</h3>${tbl(["Tag", "Type", "Event", "Status"], d.tags.map((t) => html`<tr><td class="mono">${t.display_code}</td><td>${t.tag_type}</td><td>${t.title || ""}</td><td>${badge(t.status)}</td></tr>`))}`, { wide: true, onClose: done });
-  $$("[data-st]", dlg).forEach((b) => b.addEventListener("click", async () => { const why = await reason("Change account status", "This is logged."); if (why && await act(() => post(`/api/admin/users/${id}/status`, { status: b.dataset.st, reason: why }))) dlg.close(); }));
-  $$("[data-role]", dlg).forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/users/${id}/roles`, { role: b.dataset.role, grant: b.dataset.grant === "true" }))) dlg.close(); }));
+  const u = d.user;
+  const kind = u.account_type === "organiser" ? "Organiser account" : u.guest ? "Guest buyer (no password yet)" : "Customer account";
+  const dlg = dialog(u.full_name, html`<p class="small">${kind} · ${u.email} · ${u.phone || "no phone"} · joined ${fmtDate(u.created_at)} · ${badge(u.status)}</p>
+    ${isA() ? html`<div class="row">${u.status === "active" ? html`<button class="btn btn-danger btn-sm" data-st="suspended">Suspend account</button>` : u.status === "suspended" ? html`<button class="btn btn-good btn-sm" data-st="active">Reactivate account</button>` : ""}</div>` : ""}
+    ${d.organisations?.length ? html`<h3 class="mt">Organisations</h3>${tbl(["Organisation", "ID", "Role", "Status"], d.organisations.map((o) => html`<tr><td>${o.name}</td><td class="mono small">${o.ref || ""}</td><td>${o.role}</td><td>${badge(o.status)}</td></tr>`))}` : ""}
+    ${u.account_type === "organiser" ? "" : html`<h3 class="mt">Orders</h3>${tbl(["Ref", "Event", "Status", "#Total"], d.orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.title}</td><td>${badge(o.status)}</td><td class="num">${moneyExact(o.total_cents)}</td></tr>`))}
+    <h3 class="mt">Tickets</h3>${tbl(["Code", "Event", "Status"], d.tickets.map((t) => html`<tr><td class="mono">${t.code}</td><td>${t.title}</td><td>${badge(t.status)}</td></tr>`))}`}`, { wide: true, onClose: done });
+  $$("[data-st]", dlg).forEach((b) => b.addEventListener("click", async () => { const why = await reason(b.dataset.st === "suspended" ? "Suspend this account?" : "Reactivate this account?", "They are signed out straight away if suspended. This is logged."); if (why && await act(() => post(`/api/admin/users/${id}/status`, { status: b.dataset.st, reason: why }))) dlg.close(); }));
 }
 
 async function lookup() {
@@ -357,7 +373,7 @@ async function reconciliation() {
   const { runs, ledger, providers = [] } = await get("/api/admin/reconciliation");
   const today = new Date(); const from = new Date(today.getTime() - 7 * 864e5);
   render(main, html`${head("Reconciliation", "Compare TicketRoom's records with the provider's report. Every difference needs a note before it is resolved. Nothing is corrected automatically.")}
-    ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider">${(providers.length ? providers : ["simulated"]).map((x) => html`<option value="${x}">${x}</option>`)}</select></div>
+    ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider" ${raw(providers.length ? "" : "disabled")}>${providers.length ? providers.map((x) => html`<option value="${x}">${x === "yoco" ? "Yoco" : x === "payfast" ? "PayFast" : x}</option>`) : html`<option value="">No payment provider set up yet</option>`}</select></div>
       <div class="field"><label for="rfr">From</label><input id="rfr" name="from" type="date" value="${from.toISOString().slice(0, 10)}"></div><div class="field"><label for="rto">To (exclusive)</label><input id="rto" name="to" type="date" value="${new Date(today.getTime() + 864e5).toISOString().slice(0, 10)}"></div></div>
       <div class="field"><label for="rc">Provider report (CSV) <span class="muted">${providers.length ? "(export it from the provider's portal)" : "(optional, otherwise fetched from the provider)"}</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
     <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${c.account}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p></section>
@@ -495,9 +511,9 @@ async function siteSettings() {
     ${!isA() ? html`<p class="callout">View only. Changing site settings needs the admin role.</p>` : ""}
     <div class="grid-2">
     <section class="card stack ${s.maintenance.enabled ? "flat" : ""}" aria-labelledby="mt-h"><h2 id="mt-h">Maintenance mode ${s.maintenance.enabled ? html`<span class="badge bad">ON</span>` : html`<span class="badge good">off</span>`}</h2>
-      <p class="small muted mb-0">When on, visitors see a maintenance page. TicketRoom staff can still sign in and use the site. Webhooks from payment providers keep working.</p>
+      <p class="small muted mb-0">When on, every visitor gets the maintenance page from the server: nobody can browse, book, sign up or sign in except TicketRoom staff, who see the site as normal with a yellow reminder bar. Payment notifications from Yoco and PayFast keep arriving.</p>
       <form class="stack" id="f-mt"><div class="field"><label for="mt-msg">Message shown to visitors</label><textarea id="mt-msg" name="message" maxlength="500" ${ro}>${s.maintenance.message}</textarea></div>
-        <div class="row">${s.maintenance.enabled ? html`<button class="btn btn-good" name="enabled" value="0" ${ro}>Turn maintenance OFF</button>` : html`<button class="btn btn-danger" name="enabled" value="1" ${ro}>Turn maintenance ON</button>`}<button type="button" class="btn btn-ghost" data-save-mt ${ro}>Save message only</button></div></form></section>
+        <div class="row">${s.maintenance.enabled ? html`<button class="btn btn-good" name="enabled" value="0" ${ro}>Turn maintenance OFF</button>` : html`<button class="btn btn-danger" name="enabled" value="1" ${ro}>Turn maintenance ON</button>`}<button type="button" class="btn btn-ghost" data-save-mt ${ro}>Save message only</button><button type="button" class="btn btn-ghost" data-preview-mt>See what visitors see</button></div></form></section>
 
     <section class="card stack" aria-labelledby="bn-h"><h2 id="bn-h">Announcement banner ${s.banner.enabled ? html`<span class="badge good">showing</span>` : html`<span class="badge">hidden</span>`}</h2>
       <p class="small muted mb-0">Shown at the top of every public page. Visitors can hide it for their visit; turn it off here to remove it for everyone.</p>
@@ -553,6 +569,7 @@ async function siteSettings() {
     if (on && !(await confirmDialog("Turn maintenance mode on?", "Visitors will see the maintenance page until you turn it off. Staff can still sign in.", { confirm: "Turn on", danger: true }))) return;
     save("maintenance", { enabled: on, message: $("#mt-msg").value }, on ? "Maintenance mode is ON." : "Maintenance mode is off. The site is live.");
   });
+  $("[data-preview-mt]").addEventListener("click", () => dialog("What visitors see", html`<div class="maint-preview"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="260" height="130"><h2>We'll be right back</h2><p>${$("#mt-msg").value}</p><p class="small">Questions? hello@ticketroom.co.za</p></div>`));
   $("[data-save-mt]").addEventListener("click", () => save("maintenance", { enabled: s.maintenance.enabled, message: $("#mt-msg").value }, "Message saved."));
   $("#f-bn").addEventListener("submit", (e) => { e.preventDefault(); const v = fv(e.target); save("banner", { enabled: e.target.enabled.checked, text: v.text, linkText: v.linkText || undefined, linkUrl: v.linkUrl || undefined }, "Banner saved."); });
   $("#f-hr").addEventListener("submit", (e) => {
@@ -646,10 +663,10 @@ async function assistantPage() {
 async function emailsPage() {
   const { emails, settings: st, delivery } = await get("/api/admin/emails");
   const ro = raw(isA() ? "" : "disabled");
-  const groups = ["Attendee", "Everyone", "Organiser", "Staff"];
+  const groups = ["Attendee", "Everyone", "Organiser", "Subscriber", "Staff"];
   const auto = (e) => e.setting ? (st[e.setting] ? html`<span class="badge good">automatic · on</span>` : html`<span class="badge">automatic · off</span>`) : html`<span class="badge info">sent when it happens</span>`;
   render(main, html`${head("Email templates", "Every email TicketRoom sends. Each is sent as a branded HTML email with a plain-text version.")}
-    ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Add the hello@ticketroom.co.za mailbox settings (SMTP_HOST, SMTP_USER, SMTP_PASS) to the app's .env file and restart.</p>` : ""}
+    ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Set up the mailbox under <a href="#/integrations">Integrations</a> → Email, then send yourself a test.</p>` : ""}
     <section class="card stack"><h2>Automatic emails</h2>
       <form class="stack" id="f-em">
         <label class="check"><input type="checkbox" name="reminderDayBefore" ${raw(st.reminderDayBefore ? "checked" : "")} ${ro}><span><strong>Day-before reminder</strong> to every ticket holder, about 24 hours before the event</span></label>
@@ -658,11 +675,11 @@ async function emailsPage() {
         <div class="field"><label for="em-d">Send the abandoned-checkout email after</label><select id="em-d" name="abandonedDelayHours" ${ro}>${[1, 2, 3, 6, 12, 24].map((h) => html`<option value="${h}" ${raw(h === st.abandonedDelayHours ? "selected" : "")}>${h} hour${h === 1 ? "" : "s"}</option>`)}</select></div>
         <p class="tiny muted mb-0">Each email is sent at most once. Reminders need the background jobs cron (see the setup guide) or the app to be running.</p>
         ${isA() ? html`<div><button class="btn btn-dark">Save</button></div>` : ""}</form></section>
-    ${groups.map((g) => html`<h2 class="mt-lg">${g === "Everyone" ? "Account & support" : `${g} emails`}</h2><div class="grid-2">${emails.filter((e) => e.audience === g).map((e) => html`<article class="card stack">
+    ${groups.map((g) => html`<h2 class="mt-lg">${({ Attendee: "Customer emails", Everyone: "Account & support", Organiser: "Organiser emails", Subscriber: "Subscriber emails", Staff: "Staff emails" })[g]}</h2><div class="grid-2">${emails.filter((e) => e.audience === g).map((e) => html`<article class="card stack">
       <div class="row between"><h3 class="mb-0">${e.name}</h3>${auto(e)}</div>
       <p class="small muted mb-0">${e.trigger}</p>
       <p class="small mb-0"><strong>Subject:</strong> ${e.subject}</p>
-      <div class="row"><button class="btn btn-ghost btn-sm" data-prev="${e.key}">Preview</button>${isA() ? html`<button class="btn btn-ghost btn-sm" data-test="${e.key}">Send me a test</button>` : ""}</div></article>`)}</div>`)}`);
+      <div class="row"><button class="btn btn-ghost btn-sm" data-prev="${e.key}">Preview</button>${isA() ? html`<button class="btn btn-ghost btn-sm" data-test="${e.key}">Send a test</button>` : ""}</div></article>`)}</div>`)}`);
   $("#f-em").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const f = ev.target;
@@ -679,7 +696,12 @@ async function emailsPage() {
       $(".email-frame", d).hidden = c.dataset.v !== "html"; $(".email-text", d).hidden = c.dataset.v !== "text";
     }));
   }));
-  $$("[data-test]").forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/emails/${b.dataset.test}/test`); toast(`Test sent to ${r.to}.`, "good"); } catch (err) { toast(err.message, "bad"); } }));
+  $$("[data-test]").forEach((b) => b.addEventListener("click", async () => {
+    const e = emails.find((x) => x.key === b.dataset.test);
+    const to = await confirmDialog(`Send a test: ${e.name}`, "The email goes out straight away with sample details, marked [TEST] in the subject.", { confirm: "Send", input: { label: "Email address", type: "email", required: true, value: (await me()).email } });
+    if (!to) return;
+    try { const r = await post(`/api/admin/emails/${b.dataset.test}/test`, { to }); toast(r.detail, r.ok ? "good" : "bad"); } catch (err) { toast(err.message, "bad"); }
+  }));
 }
 
 // ---------------- integrations ----------------
@@ -689,47 +711,64 @@ async function emailsPage() {
 const INTEG_HELP = {
   payments: "Choose your payment provider and paste its keys. Start in Test mode, buy a ticket with a test card, then switch to Live.",
   email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
-  sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets.",
+  sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets. Use BulkSMS or Clickatell, or connect your own provider through its web API.",
 };
+// Write-only boxes: never pre-filled, and kept out of the browser's password
+// filling (they open for typing only when tapped).
+const writeOnly = (id, name, plain, set) => html`<input id="${id}" name="${name}" type="${plain ? "text" : "password"}" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore readonly data-unlock placeholder="${set ? "Saved. Leave blank to keep it." : ""}" ${raw(isA() ? "" : "disabled")}>`;
 function integrationCard(i) {
   const field = (f) => f.options
     ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><select id="ig-${i.key}-${f.name}" name="${f.name}" ${raw(isA() ? "" : "disabled")}>${Object.entries(f.options).map(([v, l]) => html`<option value="${v}" ${raw(v === f.value ? "selected" : "")}>${l}</option>`)}</select>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
     : f.secret
       ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">saved</span>` : html`<span class="badge plain">not set</span>`}</label>
-          <input id="ig-${i.key}-${f.name}" name="${f.name}" type="password" autocomplete="new-password" placeholder="${f.set ? "Saved. Leave blank to keep it." : ""}" ${raw(isA() ? "" : "disabled")}>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
+          ${writeOnly(`ig-${i.key}-${f.name}`, f.name, f.plain, f.set)}${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
       : html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><input id="ig-${i.key}-${f.name}" name="${f.name}" value="${f.value || ""}" placeholder="${f.placeholder || ""}" autocomplete="off" ${raw(isA() ? "" : "disabled")}>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`;
   return html`<section class="card stack integ" data-integ="${i.key}">
     <div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.status === "active" ? "active" : "draft")}${i.status === "active" ? html` <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment}</span>` : html` <span class="badge plain">not set up</span>`}</span></div>
     <p class="muted mb-0">${INTEG_HELP[i.key] || ""}</p>
+    ${i.key === "payments" && isA() ? html`<div class="callout small row between"><span><strong>Want to try payments now?</strong> Use PayFast's shared test account: test mode, no real money, nothing to sign up for. Switch to your own keys and Live when you're ready.</span><button type="button" class="btn btn-ghost btn-sm" data-sandbox>Use the test account</button></div>` : ""}
     ${i.notifyUrl ? html`<p class="small mb-0">Payment notifications arrive at <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : ". PayFast is told this address with every payment."}</p>` : ""}
-    <form class="stack" data-form="${i.key}"><div class="grid-2">${i.fields.map(field)}</div>
-      ${isA() ? html`<div class="grid-2"><div class="field"><label for="ig-${i.key}-pw">Your password</label><input id="ig-${i.key}-pw" name="currentPassword" type="password" autocomplete="current-password" required><span class="hint">Needed to change these settings.</span></div></div>
-        <div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
-          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send me a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send me a test SMS</button>` : ""}</div>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
+    <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
+      ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
+          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : ""}</div>
+        <p class="tiny muted mb-0">Saving asks for your password. Saved keys and passwords are encrypted and never shown again, not even to admins.</p>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
     </form></section>`;
 }
+// Saving provider settings needs the admin's own password, asked fresh each time.
+const askPassword = (what) => confirmDialog(`Save ${what}?`, "Type your TicketRoom password to confirm. These settings send email as TicketRoom and move money.", { confirm: "Save", input: { label: "Your password", type: "password", required: true, autocomplete: "current-password" } });
 async function integrations() {
   const d = await get("/api/admin/integrations");
   const editable = d.integrations.every((i) => i.fields);
-  render(main, html`${head("Integrations", editable ? "Set up email, card payments and SMS yourself. Keys and passwords are stored encrypted and are never shown again. You only see whether each one is saved." : "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
+  render(main, html`${head("Integrations", editable ? "Set up email, card payments and SMS yourself. Keys, passwords and usernames are stored encrypted and are never shown again: you only see whether each one is saved." : "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
     <p class="callout small">Fees: buyers pay ${moneyExact(d.defaults.bookingFeeCents)} per paid ticket${d.defaults.bookingFeeBps ? ` + ${d.defaults.bookingFeeBps / 100}%` : ""}; organisers pay ${d.defaults.organiserCommissionBps / 100}% commission (override per organiser under Organisers). Free events pay nothing.</p>
     <div class="stack">${d.integrations.map((i) => i.fields ? integrationCard(i) : html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "—"}</span></span></div>
       <dl class="dl"><dt>Provider</dt><dd>${i.provider}</dd><dt>Endpoint</dt><dd class="mono small">${i.endpoint || "—"}</dd>${i.webhookUrl ? html`<dt>Webhook URL</dt><dd class="mono small">${i.webhookUrl}</dd>` : ""}
         ${Object.entries(i.credentials || {}).map(([k, v]) => html`<dt>${k}</dt><dd>${v === "set" ? html`<span class="badge good">set</span>` : html`<span class="badge bad">missing</span>`}</dd>`)}
         <dt>Last 24h</dt><dd>${i.calls || 0} calls, ${i.failures || 0} failures${i.avg_ms ? `, avg ${i.avg_ms} ms` : ""}${i.problems ? html` · <span class="badge bad">${i.problems} webhook problems</span>` : ""}</dd></dl>
       ${isA() ? html`<div><button class="btn btn-ghost btn-sm" data-health="${i.key}">Run health check</button></div>` : ""}</section>`)}</div>`);
+  // Write-only boxes open for typing only when tapped, so browsers never fill saved logins into them.
+  // Opened on touch-down, so the phone keyboard appears on the first tap; keyboard users open it on focus.
+  $$("[data-unlock]").forEach((el) => { const open = () => el.removeAttribute("readonly"); for (const ev of ["pointerdown", "touchstart", "focus"]) el.addEventListener(ev, open, { once: true, passive: true }); });
   // Show only the fields for the chosen provider.
   $$("[data-form]").forEach((f) => {
     const sel = f.elements.provider;
     const sync = () => $$("[data-for]", f).forEach((x) => x.classList.toggle("hidden", !sel || x.dataset.for !== sel.value));
     sel?.addEventListener("change", sync); sync();
-    onSubmit(f, async (v) => {
+    onSubmit(f, async () => {
       const values = {};
-      for (const el of f.elements) if (el.name && el.name !== "currentPassword" && !el.closest(".hidden")) values[el.name] = el.value;
-      const r = await put(`/api/admin/integrations/${f.dataset.form}`, { currentPassword: v.currentPassword, values });
+      for (const el of f.elements) if (el.name && !el.closest(".hidden")) values[el.name] = el.value;
+      const card = d.integrations.find((x) => x.key === f.dataset.form);
+      const pw = await askPassword(`${card.label.toLowerCase()} settings`);
+      if (!pw) return;
+      const r = await put(`/api/admin/integrations/${f.dataset.form}`, { currentPassword: pw, values });
       toast(r.warning || (r.changed.length ? "Saved." : "Nothing changed."), r.warning ? "bad" : "good");
       integrations();
     });
+  });
+  $("[data-sandbox]")?.addEventListener("click", async () => {
+    const pw = await askPassword("PayFast's test account");
+    if (!pw) return;
+    try { const r = await post("/api/admin/integrations/payments/sandbox", { currentPassword: pw }); toast(r.message, "good"); integrations(); } catch (err) { toast(err.message, "bad"); }
   });
   $$("[data-health]").forEach((b) => b.addEventListener("click", async () => {
     try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Working. ${r.detail || ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
@@ -737,8 +776,10 @@ async function integrations() {
   }));
   $$("[data-test]").forEach((b) => b.addEventListener("click", async () => {
     let body = {};
-    if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567" } }); if (!phone) return; body = { phone }; }
-    try { const r = await post(`/api/admin/integrations/${b.dataset.test}/test`, body); toast(r.detail, r.ok ? "good" : "bad"); } catch (err) { toast(err.message, "bad"); }
+    if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567", type: "tel" } }); if (!phone) return; body = { phone }; }
+    else { const to = await confirmDialog("Send a test email", "We'll send one short email to this address straight away and tell you what happened.", { confirm: "Send", input: { label: "Email address", type: "email", required: true, value: (await me()).email } }); if (!to) return; body = { to }; }
+    b.disabled = true;
+    try { const r = await post(`/api/admin/integrations/${b.dataset.test}/test`, body); toast(r.detail, r.ok ? "good" : "bad"); } catch (err) { toast(err.message, "bad"); } finally { b.disabled = false; }
   }));
 }
 
@@ -746,8 +787,10 @@ async function integrations() {
   // Nothing on this page says "admin" until a staff account has signed in.
   // Staff who are already signed in get the admin header in one go.
   const signedIn = await me();
-  await header($("#header"), roles(signedIn).size ? { portal: "admin" } : {});
-  const u = await requireUser("Sign in to continue.");
+  await header($("#header"), roles(signedIn).size ? { portal: "admin" } : { box: "admin" });
+  // A new-password link a staff member was sent opens here, signed out.
+  if (emailLinkPage("admin")) return;
+  const u = await requireUser("TicketRoom staff sign in.", "admin");
   if (!u) return render(main, empty("Sign in to continue."));
   R = roles(await me(true));
   // Not staff: this address shows nothing about the admin portal.

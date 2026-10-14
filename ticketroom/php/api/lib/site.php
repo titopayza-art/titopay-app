@@ -71,9 +71,20 @@ function setting_clean(string $key, $v): array
     }
     throw bad('Unknown setting.');
 }
+// Maintenance mode is enforced by the web server too: while it is on, a file
+// named maintenance.on sits next to index.php and .htaccess sends every page
+// through index.php, which shows visitors the notice and staff the site.
+function maintenance_flag_file(): string { return dirname(TR_APP) . '/maintenance.on'; }
+function maintenance_flag_sync(bool $on): void
+{
+    $f = maintenance_flag_file();
+    if ($on && !is_file($f)) @file_put_contents($f, "Maintenance mode is on. Turn it off in the admin portal: Site settings.\n");
+    if (!$on && is_file($f)) @unlink($f);
+}
 function setting_set(array $actor, string $key, $value): array
 {
     $clean = setting_clean($key, $value);
+    if ($key === 'maintenance') maintenance_flag_sync((bool) $clean['enabled']);
     q('INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at',
         [$key, json_encode($clean, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $actor['id'], now_iso()]);
     audit("settings.{$key}_updated", ['actor' => $actor, 'entityType' => 'site_setting', 'entityId' => $key, 'details' => in_array($key, ['maintenance', 'banner'], true) ? ['enabled' => $clean['enabled']] : []]);

@@ -21,9 +21,11 @@ CREATE TABLE users (
   updated_at        TEXT NOT NULL,
   deleted_at        TEXT,
   email_key         TEXT,
-  guest             INTEGER NOT NULL DEFAULT 0
+  guest             INTEGER NOT NULL DEFAULT 0,
+  account_type      TEXT NOT NULL DEFAULT 'customer' CHECK (account_type IN ('customer','organiser','staff'))
 );
 CREATE UNIQUE INDEX users_email_uq ON users (lower(email));
+CREATE INDEX users_type_idx ON users (account_type, created_at);
 CREATE INDEX users_email_key_idx ON users (email_key);
 CREATE INDEX users_phone_idx ON users (phone);
 

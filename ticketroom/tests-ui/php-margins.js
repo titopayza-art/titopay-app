@@ -7,14 +7,14 @@ const who = {
   visitor: [null, ["/", "/sell", "/advertise", "/help", "/contact", "/unsubscribe", "/legal/privacy", "/legal/terms", "/signin", "/nope", "/events/free-jazz-in-the-park"]],
   fan: [["sipho@example.co.za", "fan-password-123"], ["/account#/tickets", "/account#/orders", "/account#/transfers", "/account#/settings"]],
   org: [["naledi@example.co.za", "organiser-pass-1"], ["/organisers#/", "/organisers#/events", "/organisers#/marketing", "/organisers#/team", "/organisers#/settings", "/scan"]],
-  admin: [["hello@ticketroom.co.za", "Admin-pass-#2026"], ["/admin#/", "/admin#/organisers", "/admin#/events", "/admin#/users", "/admin#/support", "/admin#/site", "/admin#/password"]],
+  admin: [["hello@ticketroom.co.za", "Admin-pass-#2026", "admin"], ["/admin#/", "/admin#/organisers", "/admin#/events", "/admin#/users", "/admin#/support", "/admin#/site", "/admin#/password"]],
 };
 (async () => {
   const b = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, args: ["--no-sandbox"] });
   let bad = 0;
   for (const [k, [cred, urls]] of Object.entries(who)) {
     const p = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage();
-    if (cred) await p.request.post(B + "/api/auth/login", { data: { email: cred[0], password: cred[1] } });
+    if (cred) await p.request.post(B + "/api/auth/login", { data: { email: cred[0], password: cred[1], portal: cred[2] || "site" } });
     // the live site's first event slug
     for (let u of urls) {
       if (u.startsWith("/events/")) { const ev = await (await p.request.get(B + "/api/public/events")).json(); u = `/events/${ev.events[0]?.slug}`; }

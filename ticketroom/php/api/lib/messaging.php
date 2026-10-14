@@ -58,15 +58,35 @@ function outbox_deliver(int $limit = 25): int
                 q("INSERT INTO meta (key, value) VALUES ('mail_paused_until', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) (time() + MAIL_PAUSE_SECONDS)]);
                 error_log('[ticketroom] mail server unreachable, email paused for ' . MAIL_PAUSE_SECONDS . 's: ' . $e->getMessage());
                 // Not this message's fault: it keeps all its tries for when the server is back.
-                q('UPDATE message_outbox SET attempts = attempts - 1, last_error = ? WHERE id = ?', [substr($e->getMessage(), 0, 300), $m['id']]);
+                q('UPDATE message_outbox SET attempts = attempts - 1, last_error = ? WHERE id = ?', [substr(integration_scrub($e->getMessage()), 0, 300), $m['id']]);
                 continue;
             }
             $final = $m['attempts'] + 1 >= 5;
-            q('UPDATE message_outbox SET status = ?, last_error = ? WHERE id = ?', [$final ? 'failed' : 'queued', substr($e->getMessage(), 0, 300), $m['id']]);
+            q('UPDATE message_outbox SET status = ?, last_error = ? WHERE id = ?', [$final ? 'failed' : 'queued', substr(integration_scrub($e->getMessage()), 0, 300), $m['id']]);
             if ($final && $m['campaign_id']) q('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?', [$m['campaign_id']]);
         }
     }
     return $sent;
+}
+
+// Sends one email straight away (tests from the admin portal), bypassing the
+// queue, and records it in Messages like any other.
+function send_now(string $to, string $subject, string $body, ?string $userId = null): array
+{
+    $mode = mail_mode();
+    $id = uuid();
+    try {
+        $msgId = send_email($mode, $to, $subject, $body);
+        q("INSERT INTO message_outbox (id, channel, kind, to_address, subject, body, user_id, status, provider, provider_message_id, attempts, sent_at, created_at) VALUES (?,?,?,?,?,?,?,'sent',?,?,1,?,?)",
+            [$id, 'email', 'transactional', $to, $subject, $body, $userId, $mode, $msgId, now_iso(), now_iso()]);
+        q("DELETE FROM meta WHERE key = 'mail_paused_until'");
+        return ['ok' => true, 'detail' => $mode === 'log' ? "Recorded, not sent: email is set to \"Do not send\". Choose SMTP mailbox under Integrations." : "Sent to $to. Check the inbox (and spam) in a minute."];
+    } catch (Throwable $e) {
+        $err = integration_scrub($e->getMessage());
+        q("INSERT INTO message_outbox (id, channel, kind, to_address, subject, body, user_id, status, attempts, last_error, created_at) VALUES (?,?,?,?,?,?,?,'failed',1,?,?)",
+            [$id, 'email', 'transactional', $to, $subject, $body, $userId, substr($err, 0, 300), now_iso()]);
+        return ['ok' => false, 'detail' => "Not sent: $err"];
+    }
 }
 
 // ============================================================== delivery
@@ -348,6 +368,12 @@ function tpl(string $name, array $a): array
         case 'teamInvite':
             return ['subject' => "You've been added to the TicketRoom team",
                 'body' => $hi . "{$a['by']} has added you to the TicketRoom team as {$a['roles']}. " . ($a['url'] ? "Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\n" : "Sign in with your usual TicketRoom password.\n\n") . "After signing in you land in the admin portal. Keep your password to yourself: this account can see customer details." . FOOTER];
+        case 'staffPasswordReset':
+            return ['subject' => 'Choose a new TicketRoom password',
+                'body' => $hi . "{$a['by']} has sent you a link to choose a new password for the TicketRoom admin portal. It works for 24 hours.\n\nChoose my password: {$a['url']}\n\nIf you didn't ask for this, tell {$a['by']} straight away." . FOOTER];
+        case 'orgMemberInvite':
+            return ['subject' => "{$a['organiser']} added you to their team on TicketRoom",
+                'body' => $hi . "{$a['by']} has added you to the {$a['organiser']} team on TicketRoom, with the " . ucfirst($a['role']) . " role. Set a password to open the organiser portal. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nAfter that, sign in at ticketroom.co.za/organisers." . FOOTER];
         case 'staffInvite':
             return ['subject' => "{$a['organiser']} added you as a ticket scanner on TicketRoom",
                 'body' => $hi . "{$a['organiser']} has added you as a ticket scanner for {$a['event']}. Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket." . FOOTER];
@@ -369,6 +395,13 @@ function email_catalog(): array
     $o = ['buyer_name' => 'Lerato Mokoena', 'reference' => 'TR-7KQ2M9', 'total_cents' => 0];
     return [
         ['key' => 'orderConfirmedFree', 'name' => 'Free tickets confirmed', 'audience' => 'Attendee', 'trigger' => 'Right after someone gets free tickets', 'sample' => fn() => tpl('orderConfirmed', ['order' => $o, 'event' => $ev, 'ticketCount' => 2])],
+        ['key' => 'orderConfirmedPaid', 'name' => 'Paid tickets confirmed', 'audience' => 'Attendee', 'trigger' => 'As soon as the payment provider confirms a card payment', 'sample' => fn() => tpl('orderConfirmed', ['order' => ['total_cents' => 34000] + $o, 'event' => $ev, 'ticketCount' => 2])],
+        ['key' => 'finishAccount', 'name' => 'Finish creating your account', 'audience' => 'Attendee', 'trigger' => 'When someone who bought as a guest signs up with the same email', 'sample' => fn() => tpl('finishAccount', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'supportReply', 'name' => 'Reply to a customer question', 'audience' => 'Everyone', 'trigger' => 'When customer care or the organiser replies to a question', 'sample' => fn() => tpl('supportReply', ['name' => 'Lerato Mokoena', 'subject' => 'Is there parking at the venue?', 'reference' => 'SC-3QJAPVRK', 'message' => 'Yes, there is secure parking at the venue for R20 per car. Gates open an hour before the show.', 'from' => 'Ayanda, TicketRoom customer care'])],
+        ['key' => 'queryPassedOn', 'name' => 'Question passed to the organiser', 'audience' => 'Everyone', 'trigger' => 'When customer care passes a question to the organiser', 'sample' => fn() => tpl('queryPassedOn', ['name' => 'Lerato Mokoena', 'organiser' => 'Soweto Community Arts', 'reference' => 'SC-3QJAPVRK'])],
+        ['key' => 'queryForOrganiser', 'name' => 'Customer question for the organiser', 'audience' => 'Organiser', 'trigger' => 'When customer care passes a question to the organiser', 'sample' => fn() => tpl('queryForOrganiser', ['organiser' => 'Soweto Community Arts', 'reference' => 'SC-3QJAPVRK', 'customer' => 'Lerato Mokoena', 'event' => 'Soweto Sunset Sessions', 'subject' => 'Is there parking at the venue?', 'body' => 'Hi, I have two tickets for Saturday. Is there safe parking nearby?', 'note' => 'Customer asks about parking.'])],
+        ['key' => 'payoutRequested', 'name' => 'Payout requested', 'audience' => 'Organiser', 'trigger' => 'When an organiser asks for a payout', 'sample' => fn() => tpl('payoutRequested', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321'])],
+        ['key' => 'payoutRejected', 'name' => 'Payout not approved', 'audience' => 'Organiser', 'trigger' => 'When finance turns down a payout request', 'sample' => fn() => tpl('payoutRejected', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'note' => 'The bank account name does not match the organisation. Please update your bank details.'])],
         ['key' => 'eventReminderDay', 'name' => 'Event reminder: day before', 'audience' => 'Attendee', 'trigger' => 'Automatic, about 24 hours before the event starts', 'setting' => 'reminderDayBefore', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketCount' => 2, 'soon' => false])],
         ['key' => 'eventReminderSoon', 'name' => 'Event reminder: starting soon', 'audience' => 'Attendee', 'trigger' => 'Automatic, within 3 hours of the start', 'setting' => 'reminderSoon', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $today, 'ticketCount' => 2, 'soon' => true])],
         ['key' => 'checkoutAbandoned', 'name' => 'Abandoned checkout', 'audience' => 'Attendee', 'trigger' => 'Automatic, once, after an unfinished booking (delay set below)', 'setting' => 'abandonedCheckout', 'sample' => fn() => tpl('checkoutAbandoned', ['name' => 'Lerato Mokoena', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions", 'unsubscribeUrl' => "$B/unsubscribe?t=sample"])],
@@ -385,11 +418,13 @@ function email_catalog(): array
         ['key' => 'organiserRejected', 'name' => 'Organiser not approved', 'audience' => 'Organiser', 'trigger' => 'When admin rejects an organiser', 'sample' => fn() => tpl('organiserRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'reason' => "We couldn't verify the contact details."])],
         ['key' => 'eventPublished', 'name' => 'Event published', 'audience' => 'Organiser', 'trigger' => 'When admin approves an event', 'sample' => fn() => tpl('eventPublished', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
         ['key' => 'eventChangesRequested', 'name' => 'Event needs changes', 'audience' => 'Organiser', 'trigger' => 'When admin sends an event back', 'sample' => fn() => tpl('eventChangesRequested', ['name' => 'Naledi Dlamini', 'event' => $ev, 'reason' => 'Please add the full venue address and a poster image.'])],
-        ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/account#/reset/sample"])],
-        ['key' => 'refundDone', 'name' => 'Refund paid', 'audience' => 'Customers', 'trigger' => 'When a refund reaches the customer\'s card', 'sample' => fn() => tpl('refundDone', ['name' => 'Sipho', 'order' => ['reference' => 'TR-8K2M4Q', 'buyer_name' => 'Sipho'], 'event' => ['title' => 'Soweto Sunset Sessions'], 'amountCents' => 32000])],
-        ['key' => 'payoutPaid', 'name' => 'Payout paid', 'audience' => 'Organisers', 'trigger' => 'When finance records the EFT', 'sample' => fn() => tpl('payoutPaid', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321', 'bankReference' => 'TR PO-4H8T2W'])],
-        ['key' => 'gatePass', 'name' => 'Gate pass', 'audience' => 'Crew and guests', 'trigger' => 'When an organiser issues a gate pass with an email address', 'sample' => fn() => tpl('gatePass', ['name' => 'Lerato', 'organiser' => 'Soweto Community Arts', 'role' => 'Crew', 'event' => 'Soweto Sunset Sessions', 'when' => 'Sat 21 Nov 2026, 15:00', 'venue' => 'Thokoza Park, Soweto', 'url' => "$B/pass?t=sample", 'reentry' => true])],
-        ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/admin#/reset/sample"])],
+        ['key' => 'staffPasswordReset', 'name' => 'Staff password reset', 'audience' => 'Staff', 'trigger' => 'When an admin sends a staff member a new-password link', 'sample' => fn() => tpl('staffPasswordReset', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'url' => "$B/admin#/reset/sample"])],
+        ['key' => 'orgMemberInvite', 'name' => 'Added to an organiser team', 'audience' => 'Organiser', 'trigger' => 'When an organiser adds a new team member', 'sample' => fn() => tpl('orgMemberInvite', ['by' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'role' => 'manager', 'url' => "$B/organisers#/reset/sample"])],
+        ['key' => 'refundDone', 'name' => 'Refund paid', 'audience' => 'Attendee', 'trigger' => 'When a refund reaches the customer\'s card', 'sample' => fn() => tpl('refundDone', ['name' => 'Sipho', 'order' => ['reference' => 'TR-8K2M4Q', 'buyer_name' => 'Sipho'], 'event' => ['title' => 'Soweto Sunset Sessions'], 'amountCents' => 32000])],
+        ['key' => 'payoutPaid', 'name' => 'Payout paid', 'audience' => 'Organiser', 'trigger' => 'When finance records the EFT', 'sample' => fn() => tpl('payoutPaid', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321', 'bankReference' => 'TR PO-4H8T2W'])],
+        ['key' => 'gatePass', 'name' => 'Gate pass', 'audience' => 'Attendee', 'trigger' => 'When an organiser issues a gate pass with an email address', 'sample' => fn() => tpl('gatePass', ['name' => 'Lerato', 'organiser' => 'Soweto Community Arts', 'role' => 'Crew', 'event' => 'Soweto Sunset Sessions', 'when' => 'Sat 21 Nov 2026, 15:00', 'venue' => 'Thokoza Park, Soweto', 'url' => "$B/pass?t=sample", 'reentry' => true])],
+        ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/scan#/reset/sample"])],
     ];
 }
 

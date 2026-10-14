@@ -4,11 +4,31 @@ declare(strict_types=1);
 
 // ============================================================== access
 // Out-of-tenancy objects return 404, not 403, so their existence is hidden.
+// ============================================================== account types
+// One account, one portal. Customers buy tickets, organisers run events,
+// staff run TicketRoom; each signs in on its own portal only.
+const ACCOUNT_PORTALS = ['customer' => '/account', 'organiser' => '/organisers', 'staff' => '/admin'];
+const ACCOUNT_NAMES = ['customer' => 'customer', 'organiser' => 'organiser', 'staff' => 'TicketRoom staff'];
+// Which accounts each sign-in box accepts ('site' is the public website).
+const PORTAL_ACCEPTS = ['site' => ['customer', 'organiser'], 'customer' => ['customer'], 'organiser' => ['organiser'], 'admin' => ['staff'], 'scanner' => ['customer', 'organiser']];
+function account_type(?array $u): string { return (string) ($u['account_type'] ?? $u['accountType'] ?? 'customer'); }
+// Where an emailed link for this account opens: its own portal.
+function portal_link(array $u, string $hash): string { return base_url() . ACCOUNT_PORTALS[account_type($u)] . "#/$hash"; }
+function require_account(string ...$types): array
+{
+    $u = require_auth();
+    if (!in_array(account_type($u), $types, true)) throw forbidden('This part of TicketRoom is not for your kind of account.');
+    return $u;
+}
+
 function organiser_access(array $u, string $orgId, array $roles = ['owner', 'manager', 'marketing', 'finance', 'viewer']): array
 {
     $org = row('SELECT o.*, m.role AS member_role FROM organisers o LEFT JOIN organiser_members m ON m.organiser_id = o.id AND m.user_id = ? WHERE o.id = ?', [$u['id'], $orgId]);
     if (!$org) throw not_found('Organiser not found.');
-    if (has_role($u, 'admin')) return ['organiser' => $org, 'role' => $org['member_role'] ?: 'admin'];
+    // Only the organisation's own team works here. TicketRoom staff oversee
+    // organisers from the admin portal and never act as one (no bank details,
+    // payouts, campaigns or replies in an organiser's name).
+    if (account_type($u) !== 'organiser') throw not_found('Organiser not found.');
     if (!$org['member_role']) throw not_found('Organiser not found.');
     if (!in_array($org['member_role'], $roles, true)) throw forbidden('Your role in this organisation does not allow that.');
     return ['organiser' => $org, 'role' => $org['member_role']];
@@ -26,7 +46,9 @@ function event_staff_access(array $u, string $eventId, string $cap = 'can_scan')
                  LEFT JOIN event_staff s ON s.event_id = e.id AND s.user_id = ?
                  LEFT JOIN organiser_members m ON m.organiser_id = e.organiser_id AND m.user_id = ? WHERE e.id = ?', [$u['id'], $u['id'], $eventId]);
     if (!$ev) throw not_found('Event not found.');
-    if (has_role($u, 'admin', 'support') || in_array($ev['member_role'], ['owner', 'manager'], true) || !empty($ev[$cap])) return $ev;
+    // The organiser's owners and managers, and the gate staff they added. Never TicketRoom staff.
+    if (account_type($u) === 'staff') throw not_found('Event not found.');
+    if (in_array($ev['member_role'], ['owner', 'manager'], true) || !empty($ev[$cap])) return $ev;
     throw not_found('Event not found.');
 }
 
@@ -53,9 +75,9 @@ function user_by_email(string $email): ?array
 
 function profile(string $userId): array
 {
-    $u = row('SELECT id, email, full_name, phone, email_verified_at, created_at FROM users WHERE id = ?', [$userId]);
+    $u = row('SELECT id, email, full_name, phone, email_verified_at, created_at, account_type FROM users WHERE id = ?', [$userId]);
     $u['has_pin'] = false;
-    $u['platform_roles'] = array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$userId]), 'role');
+    $u['platform_roles'] = $u['account_type'] === 'staff' ? array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$userId]), 'role') : [];
     $u['organisers'] = array_map(fn($r) => ['id' => $r['id'], 'name' => $r['name'], 'status' => $r['status'], 'role' => $r['role']],
         rows('SELECT o.id, o.name, o.status, m.role FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = ? ORDER BY m.created_at', [$userId]));
     $u['vendors'] = [];
@@ -386,7 +408,7 @@ function start_transfer(array $user, string $ticketId, string $toEmail): array
             'claim_token_hash' => sha256($token), 'status' => 'pending', 'created_at' => now_iso(), 'expires_at' => iso_in(7 * 86400)]);
         outbox_enqueue(['to' => $toEmail, 'userId' => $recipient ?: null] + tpl('transferOffer', ['fromName' => $user['fullName'], 'event' => $t, 'claimUrl' => base_url() . "/account#/claim/$token"]));
         audit('ticket.transfer_started', ['actor' => $user, 'entityType' => 'ticket', 'entityId' => $t['id'], 'details' => ['toEmail' => $toEmail]]);
-        return ['id' => $tr['id'], 'expiresAt' => $tr['expires_at']] + (cfg('dev') ? ['devClaimToken' => $token] : []);
+        return ['id' => $tr['id'], 'expiresAt' => $tr['expires_at']];
     });
 }
 function claim_transfer(array $user, ?string $token, ?string $transferId): array

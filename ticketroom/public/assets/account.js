@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -319,33 +319,6 @@ async function saved() {
 
 // The link in the confirmation email. Confirming signs the person in, and any
 // tickets bought as a guest with this email are already in the account.
-async function verify({ token }) {
-  render(main, spinner());
-  const open = () => { location.replace("/account#/tickets"); location.reload(); };
-  try {
-    const r = await post("/api/auth/verify-email", { token });
-    render(main, html`<section class="welcome card"><span class="tk-label">Email confirmed</span><h1>Welcome to TicketRoom${r.firstName ? `, ${r.firstName}` : ""}</h1>
-      <p class="lead">Your account is ready.${r.tickets ? ` ${r.tickets} ticket${r.tickets === 1 ? " you bought as a guest is" : "s you bought as a guest are"} now in your account.` : ""}</p>
-      <div class="row">${r.organiser ? html`<a class="btn btn-primary" href="/organisers">Open my organiser portal</a><button class="btn btn-ghost" data-go>My tickets</button>` : html`<button class="btn btn-primary" data-go>Go to my tickets</button><a class="btn btn-ghost" href="/">Browse events</a>`}</div></section>`);
-    $("[data-go]").addEventListener("click", open);
-  } catch (err) {
-    render(main, html`<section class="welcome card"><span class="tk-label">Confirm your email</span><h1>This link has expired</h1>
-      <p class="lead">${err.message} Sign in with your email and password and we'll send you a fresh link straight away.</p>
-      <div class="row"><button class="btn btn-primary" data-in>Sign in</button></div></section>`);
-    $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: open }));
-  }
-}
-
-function reset({ token }) {
-  render(main, html`${head("Choose your password", "Use at least 10 characters. You'll be signed in straight away.")}<div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"><span class="hint">At least 10 characters.</span></div><div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
-  onSubmit($("#rs"), async (v) => { matchPasswords(v, "password", "passwordConfirm"); const r = await post("/api/auth/password/reset", { token, password: v.password });
-    // The emailed link proved who you are: straight in, to the right portal.
-    toast("Password saved. You're signed in.", "good");
-    location.replace(r.staff ? "/admin" : r.organiser ? "/organisers" : "/account#/tickets");
-    if (!r.staff && !r.organiser) location.reload();
-  });
-}
-
 // Signed out: a calm welcome instead of a sign-in box over an empty page.
 // With no signal, the tickets saved on this phone still open.
 function welcome() {
@@ -359,8 +332,8 @@ function welcome() {
     <div class="row"><button class="btn btn-primary" data-in>Sign in</button><button class="btn btn-ghost" data-up>Create account</button></div>
     <p class="small muted mb-0">Looking for something to do? <a href="/">Browse events</a></p></section>`);
   const done = () => location.reload();
-  $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: done }));
-  $("[data-up]").addEventListener("click", () => authDialog("signup", { onDone: done }));
+  $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: done, portal: "customer" }));
+  $("[data-up]").addEventListener("click", () => authDialog("signup", { onDone: done, portal: "customer" }));
 }
 
 (async () => {
@@ -372,16 +345,15 @@ function welcome() {
   if (standalone && !launched && !location.hash && navigator.onLine !== false) return location.replace("/");
   await header($("#header"), { portal: "customer" });
   // Links from emails work signed out: choose a new password, confirm an email.
-  const reset0 = location.hash.match(/^#\/reset\/(.+)$/);
-  if (reset0) return reset({ token: reset0[1] });
-  const verify0 = location.hash.match(/^#\/verify\/(.+)$/);
-  if (verify0) return verify({ token: verify0[1] });
+  if (emailLinkPage("customer")) return;
   const u = await me();
   if (!u) return welcome();
+  // One account, one portal: organisers and staff have their own.
+  if (accountType(u) !== "customer") return wrongAccountPage(u, "customer");
   nav();
   router([
     ["/", tickets], ["/tickets", tickets], ["/saved", saved], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],
-    ["/wallet", gate("cashless", wallets)], ["/wallet/:eventId", gate("cashless", wallet)], ["/refunds", refunds], ["/payment-methods", gate("payments", paymentMethods)], ["/settings", settings], ["/verify/:token", verify], ["/reset/:token", reset],
+    ["/wallet", gate("cashless", wallets)], ["/wallet/:eventId", gate("cashless", wallet)], ["/refunds", refunds], ["/payment-methods", gate("payments", paymentMethods)], ["/settings", settings],
   ], () => { location.hash = "#/tickets"; });
 })();
 void poster;
