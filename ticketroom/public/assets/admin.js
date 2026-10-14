@@ -288,8 +288,16 @@ async function lookup() {
   $("#oo").addEventListener("submit", async (e) => {
     e.preventDefault();
     const { orders } = await get(`/api/admin/orders?q=${encodeURIComponent($("#oq").value.trim())}`);
-    render($("#res"), tbl(["Ref", "Buyer", "Event", "#Total", "Status", "Payments"], orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.buyer_name}<div class="tiny muted">${o.buyer_email}</div></td><td>${o.title}</td><td class="num">${moneyExact(o.total_cents)}</td><td>${badge(o.status)}</td>
-      <td class="small">${(o.payments || []).map((p) => html`<div>${p.provider} <span class="mono">${p.ref || "—"}</span> ${badge(p.status)}</div>`)}</td></tr>`)));
+    render($("#res"), tbl(["Ref", "Buyer", "Event", "#Total", "Status", "Payments", ""], orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.buyer_name}<div class="tiny muted">${o.buyer_email}</div></td><td>${o.title}</td><td class="num">${moneyExact(o.total_cents)}${o.refunded_cents ? html`<div class="tiny">refunded ${moneyExact(o.refunded_cents)}</div>` : ""}</td><td>${badge(o.status)}</td>
+      <td class="small">${(o.payments || []).map((p) => html`<div>${p.provider} <span class="mono">${p.ref || "—"}</span> ${badge(p.status)}</div>`)}</td>
+      <td>${["paid", "partially_refunded"].includes(o.status) && o.total_cents > o.refunded_cents && (o.payments || []).length ? html`<button class="btn btn-ghost btn-sm" data-refund="${o.reference}">Refund</button>` : ""}</td></tr>`)));
+    // Customer care raises the refund; finance approves it (two people, as always).
+    $$("[data-refund]").forEach((b) => b.addEventListener("click", () => {
+      const dlg = dialog(`Refund ${b.dataset.refund}`, html`<form class="stack"><p class="mb-0">Refunds every unrefunded ticket on this order. Finance approves it, then the money goes back to the buyer's card.</p>
+        <div class="field"><label for="rr">Reason</label><input id="rr" name="reason" required minlength="3" maxlength="400" placeholder="e.g. Customer can't attend, organiser agreed"></div>
+        <label class="check"><input type="checkbox" name="includeFees"><span>Refund the booking fee too</span></label><button class="btn btn-dark">Ask finance to refund</button></form>`);
+      onSubmit($("form", dlg), async (v) => { const r = await post(`/api/admin/orders/${b.dataset.refund}/refund`, { reason: v.reason, includeFees: !!v.includeFees }); dlg.close(); toast(`Refund ${r.refund.reference} (${moneyExact(r.refund.amountCents)}) is waiting for finance.`, "good"); });
+    }));
   });
 }
 
@@ -343,12 +351,12 @@ async function payments() {
 }
 
 async function reconciliation() {
-  const { runs, ledger } = await get("/api/admin/reconciliation");
+  const { runs, ledger, providers = [] } = await get("/api/admin/reconciliation");
   const today = new Date(); const from = new Date(today.getTime() - 7 * 864e5);
   render(main, html`${head("Reconciliation", "Compare TicketRoom's records with the provider's report. Every difference needs a note before it is resolved. Nothing is corrected automatically.")}
-    ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider"><option value="simulated">simulated</option></select></div>
+    ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider">${(providers.length ? providers : ["simulated"]).map((x) => html`<option value="${x}">${x}</option>`)}</select></div>
       <div class="field"><label for="rfr">From</label><input id="rfr" name="from" type="date" value="${from.toISOString().slice(0, 10)}"></div><div class="field"><label for="rto">To (exclusive)</label><input id="rto" name="to" type="date" value="${new Date(today.getTime() + 864e5).toISOString().slice(0, 10)}"></div></div>
-      <div class="field"><label for="rc">Provider CSV <span class="muted">(optional, otherwise fetched from the provider)</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
+      <div class="field"><label for="rc">Provider report (CSV) <span class="muted">${providers.length ? "(export it from the provider's portal)" : "(optional, otherwise fetched from the provider)"}</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
     <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${c.account}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p></section>
     <h2 class="mt-lg">Runs</h2>${tbl(["When", "Period", "Source", "Matched", "Exceptions", "#Provider total", "#Internal total", ""], runs.map((r) => html`<tr><td class="small">${fmtDateTime(r.created_at)}<div class="tiny muted">${r.created_by_name || ""}</div></td><td class="small">${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}</td><td>${r.source}</td><td>${r.summary.matched || 0}</td><td>${r.summary.exceptions ? html`<span class="badge bad">${r.summary.exceptions}</span>` : "0"}</td><td class="num">${moneyExact(r.summary.providerTotalCents)}</td><td class="num">${moneyExact(r.summary.internalTotalCents)}</td><td><button class="btn btn-ghost btn-sm" data-run="${r.id}">Open</button></td></tr>`))}`);
   if ($("#rf")) onSubmit($("#rf"), async (v) => { await post("/api/admin/reconciliation", { provider: v.provider, from: new Date(v.from).toISOString(), to: new Date(v.to).toISOString(), csv: v.csv }); toast("Reconciliation complete.", "good"); reconciliation(); });
@@ -629,18 +637,62 @@ async function emailsPage() {
 }
 
 // ---------------- integrations ----------------
+// Integrations: TicketRoom sets up its own email, card payments and SMS here.
+// Keys and passwords go to the server, encrypted, and never come back: the
+// page only shows whether each one is saved. Saving asks for your password.
+const INTEG_HELP = {
+  payments: "Choose your payment provider and paste its keys. Start in Test mode, buy a ticket with a test card, then switch to Live.",
+  email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
+  sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets.",
+};
+function integrationCard(i) {
+  const field = (f) => f.options
+    ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><select id="ig-${i.key}-${f.name}" name="${f.name}" ${raw(isA() ? "" : "disabled")}>${Object.entries(f.options).map(([v, l]) => html`<option value="${v}" ${raw(v === f.value ? "selected" : "")}>${l}</option>`)}</select>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
+    : f.secret
+      ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">saved</span>` : html`<span class="badge plain">not set</span>`}</label>
+          <input id="ig-${i.key}-${f.name}" name="${f.name}" type="password" autocomplete="new-password" placeholder="${f.set ? "Saved. Leave blank to keep it." : ""}" ${raw(isA() ? "" : "disabled")}>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
+      : html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><input id="ig-${i.key}-${f.name}" name="${f.name}" value="${f.value || ""}" placeholder="${f.placeholder || ""}" autocomplete="off" ${raw(isA() ? "" : "disabled")}>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`;
+  return html`<section class="card stack integ" data-integ="${i.key}">
+    <div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.status === "active" ? "active" : "draft")}${i.status === "active" ? html` <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment}</span>` : html` <span class="badge plain">not set up</span>`}</span></div>
+    <p class="muted mb-0">${INTEG_HELP[i.key] || ""}</p>
+    ${i.notifyUrl ? html`<p class="small mb-0">Payment notifications arrive at <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : ". PayFast is told this address with every payment."}</p>` : ""}
+    <form class="stack" data-form="${i.key}"><div class="grid-2">${i.fields.map(field)}</div>
+      ${isA() ? html`<div class="grid-2"><div class="field"><label for="ig-${i.key}-pw">Your password</label><input id="ig-${i.key}-pw" name="currentPassword" type="password" autocomplete="current-password" required><span class="hint">Needed to change these settings.</span></div></div>
+        <div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
+          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send me a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send me a test SMS</button>` : ""}</div>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
+    </form></section>`;
+}
 async function integrations() {
   const d = await get("/api/admin/integrations");
-  render(main, html`${head("Integrations", "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
+  const editable = d.integrations.every((i) => i.fields);
+  render(main, html`${head("Integrations", editable ? "Set up email, card payments and SMS yourself. Keys and passwords are stored encrypted and are never shown again. You only see whether each one is saved." : "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
     <p class="callout small">Fees: buyers pay ${moneyExact(d.defaults.bookingFeeCents)} per paid ticket${d.defaults.bookingFeeBps ? ` + ${d.defaults.bookingFeeBps / 100}%` : ""}; organisers pay ${d.defaults.organiserCommissionBps / 100}% commission (override per organiser under Organisers). Free events pay nothing.</p>
-    <div class="stack">${d.integrations.map((i) => html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "—"}</span></span></div>
+    <div class="stack">${d.integrations.map((i) => i.fields ? integrationCard(i) : html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "—"}</span></span></div>
       <dl class="dl"><dt>Provider</dt><dd>${i.provider}</dd><dt>Endpoint</dt><dd class="mono small">${i.endpoint || "—"}</dd>${i.webhookUrl ? html`<dt>Webhook URL</dt><dd class="mono small">${i.webhookUrl}</dd>` : ""}
         ${Object.entries(i.credentials || {}).map(([k, v]) => html`<dt>${k}</dt><dd>${v === "set" ? html`<span class="badge good">set</span>` : html`<span class="badge bad">missing</span>`}</dd>`)}
         <dt>Last 24h</dt><dd>${i.calls || 0} calls, ${i.failures || 0} failures${i.avg_ms ? `, avg ${i.avg_ms} ms` : ""}${i.problems ? html` · <span class="badge bad">${i.problems} webhook problems</span>` : ""}</dd></dl>
       ${isA() ? html`<div><button class="btn btn-ghost btn-sm" data-health="${i.key}">Run health check</button></div>` : ""}</section>`)}</div>`);
+  // Show only the fields for the chosen provider.
+  $$("[data-form]").forEach((f) => {
+    const sel = f.elements.provider;
+    const sync = () => $$("[data-for]", f).forEach((x) => x.classList.toggle("hidden", !sel || x.dataset.for !== sel.value));
+    sel?.addEventListener("change", sync); sync();
+    onSubmit(f, async (v) => {
+      const values = {};
+      for (const el of f.elements) if (el.name && el.name !== "currentPassword" && !el.closest(".hidden")) values[el.name] = el.value;
+      const r = await put(`/api/admin/integrations/${f.dataset.form}`, { currentPassword: v.currentPassword, values });
+      toast(r.warning || (r.changed.length ? "Saved." : "Nothing changed."), r.warning ? "bad" : "good");
+      integrations();
+    });
+  });
   $$("[data-health]").forEach((b) => b.addEventListener("click", async () => {
-    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Healthy${r.detail ? `. ${r.detail}` : ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
+    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Working. ${r.detail || ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
     catch (err) { toast(err.message, "bad"); }
+  }));
+  $$("[data-test]").forEach((b) => b.addEventListener("click", async () => {
+    let body = {};
+    if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567" } }); if (!phone) return; body = { phone }; }
+    try { const r = await post(`/api/admin/integrations/${b.dataset.test}/test`, body); toast(r.detail, r.ok ? "good" : "bad"); } catch (err) { toast(err.message, "bad"); }
   }));
 }
 

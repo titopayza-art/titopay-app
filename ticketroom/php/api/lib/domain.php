@@ -122,7 +122,7 @@ function sales_open(array $e, ?float $now = null): bool
     if ($e['sales_start_at'] && to_unix($e['sales_start_at']) > $now) return false;
     return to_unix($e['sales_end_at'] ?: $e['ends_at']) > $now;
 }
-function card_payments_enabled(): bool { return false; } // the PHP edition has no payment gateway yet
+function card_payments_enabled(): bool { return pay_ready(); }
 
 // Prices come from the database only; client-sent prices are never read.
 function order_quote(array $event, array $items, ?string $promoCode): array
@@ -177,10 +177,10 @@ function create_order(array $user, array $in): array
         $used = (int) val('SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
         $wanted = array_sum(array_map(fn($l) => $l['quantity'] * max(1, (int) ($l['ticketType']['admits'] ?? 1)), $qt['lines']));
         if ($used + $wanted > $event['capacity']) throw conflict('Not enough tickets left for this event.', 'sold_out');
-        if ($qt['total'] > 0) throw new AppError(503, 'payments_not_configured', 'Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.');
+        if ($qt['total'] > 0 && !pay_ready()) throw new AppError(503, 'payments_not_configured', 'Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.');
         // Free tickets: the per-person limit counts every order this person
         // already has for the event, so one account cannot take them all.
-        foreach ($qt['lines'] as $l) {
+        foreach ($qt['total'] > 0 ? [] : $qt['lines'] as $l) {
             $have = (int) val("SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi JOIN orders o ON o.id = oi.order_id
                                 WHERE o.user_id = ? AND o.event_id = ? AND oi.ticket_type_id = ? AND o.status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded')",
                 [$user['id'], $event['id'], $l['ticketType']['id']]);
@@ -208,7 +208,8 @@ function create_order(array $user, array $in): array
             insert('order_items', ['id' => uuid(), 'order_id' => $order['id'], 'ticket_type_id' => $l['ticketType']['id'], 'quantity' => $l['quantity'], 'unit_price_cents' => $l['unitPrice'], 'unit_fee_cents' => $l['unitFee']]);
         }
         foreach (['email', 'sms'] as $ch) if (!empty($in['marketingOptIn'][$ch])) set_consent($user['id'], $event['organiser_id'], $ch, true, "checkout:{$order['reference']}");
-        $order = fulfil_order($order['id'])['order'];
+        // Free orders are done now; paid ones wait for the provider to confirm payment.
+        if ((int) $order['total_cents'] === 0) $order = fulfil_order($order['id'])['order'];
         audit('order.created', ['actor' => $user, 'entityType' => 'order', 'entityId' => $order['id'], 'organiserId' => $event['organiser_id'], 'details' => ['reference' => $order['reference'], 'total' => $order['total_cents']]]);
         return ['order' => $order, 'replay' => false];
     });
@@ -235,6 +236,11 @@ function fulfil_order(string $orderId): array
     $event = row('SELECT * FROM events WHERE id = ?', [$order['event_id']]);
     $guest = (int) val('SELECT guest FROM users WHERE id = ?', [$order['user_id']]) === 1;
     outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $guest ? order_link($order) : null]));
+    // A short SMS too, when the buyer gave a mobile number and SMS is set up.
+    if ($order['buyer_phone'] && sms_ready()) {
+        outbox_enqueue(['channel' => 'sms', 'to' => $order['buyer_phone'], 'userId' => $order['user_id'],
+            'body' => "TicketRoom: you're booked for {$event['title']} (" . plural($n, 'ticket') . "). Order {$order['reference']}. Tickets: " . ($guest ? order_link($order) : base_url() . '/account#/tickets')]);
+    }
     return ['order' => $order];
 }
 function release_holds(array $order): void
@@ -246,6 +252,10 @@ function expire_due_orders(): int
 {
     $n = 0;
     foreach (rows("SELECT id FROM orders WHERE status = 'pending_payment' AND expires_at < ? LIMIT 100", [now_iso()]) as $o) {
+        // Before letting a reservation go, check the provider hasn't taken the money already.
+        foreach (rows("SELECT id FROM payments WHERE order_id = ? AND status = 'pending' AND provider = 'yoco'", [$o['id']]) as $p) {
+            try { payment_sync($p['id']); } catch (Throwable $e) { error_log('[payments] expiry check: ' . $e->getMessage()); }
+        }
         tx(function () use ($o, &$n) {
             $order = row('SELECT * FROM orders WHERE id = ?', [$o['id']]);
             if ($order['status'] !== 'pending_payment') return;

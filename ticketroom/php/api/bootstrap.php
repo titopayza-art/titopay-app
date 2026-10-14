@@ -12,6 +12,8 @@ require TR_APP . '/lib/messaging.php';
 require TR_APP . '/lib/domain.php';
 require TR_APP . '/lib/qr.php';
 require TR_APP . '/lib/wallet.php';
+require TR_APP . '/lib/integrations.php';
+require TR_APP . '/lib/payments.php';
 
 // The data folder holds everything the site creates for itself: the
 // database, uploaded posters, the signing keys and your own settings. It goes
@@ -207,14 +209,25 @@ const UPGRADES = [
         'CREATE INDEX IF NOT EXISTS payments_order_idx ON payments (order_id)',
         'CREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status, created_at)',
         'CREATE TABLE IF NOT EXISTS webhook_events ( id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT \'received\' CHECK (status IN (\'received\',\'processed\',\'ignored\',\'failed\',\'rejected\')), result TEXT, error TEXT, attempts INTEGER NOT NULL DEFAULT 1, received_at TEXT NOT NULL, processed_at TEXT, UNIQUE (provider, event_id) )',
-        'CREATE TABLE IF NOT EXISTS refunds ( id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL REFERENCES orders(id), payment_id TEXT REFERENCES payments(id), amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), kind TEXT NOT NULL CHECK (kind IN (\'customer\',\'event_cancelled\',\'unfulfilled\',\'goodwill\')), reason TEXT NOT NULL, ticket_ids TEXT, status TEXT NOT NULL CHECK (status IN (\'requested\',\'approved\',\'processing\',\'completed\',\'rejected\',\'failed\')), manual INTEGER NOT NULL DEFAULT 0, provider_reference TEXT, note TEXT, requested_by TEXT REFERENCES users(id), decided_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT )',
+        'CREATE TABLE IF NOT EXISTS refunds ( id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL REFERENCES orders(id), payment_id TEXT REFERENCES payments(id), amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0), fee_refund_cents INTEGER NOT NULL DEFAULT 0 CHECK (fee_refund_cents >= 0), kind TEXT NOT NULL CHECK (kind IN (\'customer\',\'event_cancelled\',\'unfulfilled\',\'goodwill\')), reason TEXT NOT NULL, ticket_ids TEXT, status TEXT NOT NULL CHECK (status IN (\'requested\',\'processing\',\'manual_pending\',\'completed\',\'rejected\',\'failed\')), provider_reference TEXT, failure_reason TEXT, note TEXT, requested_by TEXT REFERENCES users(id), decided_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, CHECK (amount_cents + fee_refund_cents > 0) )',
         'CREATE INDEX IF NOT EXISTS refunds_status_idx ON refunds (status, created_at)',
         'CREATE INDEX IF NOT EXISTS refunds_order_idx ON refunds (order_id)',
-        'CREATE TABLE IF NOT EXISTS payouts ( id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, organiser_id TEXT NOT NULL REFERENCES organisers(id), amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), status TEXT NOT NULL CHECK (status IN (\'requested\',\'approved\',\'paid\',\'rejected\')), bank_name TEXT, account_holder TEXT, account_last4 TEXT, branch_code TEXT, eft_reference TEXT, note TEXT, requested_by TEXT REFERENCES users(id), decided_by TEXT REFERENCES users(id), paid_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, paid_at TEXT )',
+        'CREATE TABLE IF NOT EXISTS payouts ( id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, organiser_id TEXT NOT NULL REFERENCES organisers(id), amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), status TEXT NOT NULL CHECK (status IN (\'requested\',\'approved\',\'paid\',\'rejected\')), bank_name TEXT, bank_account_holder TEXT, bank_account_last4 TEXT, bank_branch_code TEXT, bank_reference TEXT, note TEXT, requested_by TEXT REFERENCES users(id), approved_by TEXT REFERENCES users(id), paid_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, paid_at TEXT )',
         'CREATE INDEX IF NOT EXISTS payouts_org_idx ON payouts (organiser_id, status)',
         'CREATE TABLE IF NOT EXISTS integration_settings ( key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_by TEXT REFERENCES users(id), updated_at TEXT NOT NULL )',
         'CREATE TABLE IF NOT EXISTS support_messages ( id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES support_cases(id), author_id TEXT REFERENCES users(id), author_kind TEXT NOT NULL CHECK (author_kind IN (\'customer\',\'ticketroom\',\'organiser\',\'system\')), body TEXT NOT NULL, emailed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL )',
         'CREATE INDEX IF NOT EXISTS support_messages_case_idx ON support_messages (case_id, id)',
+        'CREATE TABLE IF NOT EXISTS ledger_journals ( id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, reference TEXT NOT NULL, created_at TEXT NOT NULL )',
+        'CREATE TABLE IF NOT EXISTS ledger_entries ( id INTEGER PRIMARY KEY AUTOINCREMENT, journal_id INTEGER NOT NULL REFERENCES ledger_journals(id), account TEXT NOT NULL, amount_cents INTEGER NOT NULL )',
+        'CREATE INDEX IF NOT EXISTS ledger_entries_account_idx ON ledger_entries (account)',
+        'CREATE INDEX IF NOT EXISTS ledger_entries_journal_idx ON ledger_entries (journal_id)',
+        'CREATE TRIGGER IF NOT EXISTS ledger_journals_no_update BEFORE UPDATE ON ledger_journals BEGIN SELECT RAISE(ABORT, \'ledger is append-only\'); END',
+        'CREATE TRIGGER IF NOT EXISTS ledger_journals_no_delete BEFORE DELETE ON ledger_journals BEGIN SELECT RAISE(ABORT, \'ledger is append-only\'); END',
+        'CREATE TRIGGER IF NOT EXISTS ledger_entries_no_update BEFORE UPDATE ON ledger_entries BEGIN SELECT RAISE(ABORT, \'ledger is append-only\'); END',
+        'CREATE TRIGGER IF NOT EXISTS ledger_entries_no_delete BEFORE DELETE ON ledger_entries BEGIN SELECT RAISE(ABORT, \'ledger is append-only\'); END',
+        'CREATE TABLE IF NOT EXISTS recon_runs ( id TEXT PRIMARY KEY, provider TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT NOT NULL, summary TEXT NOT NULL, created_by TEXT REFERENCES users(id), created_at TEXT NOT NULL )',
+        'CREATE TABLE IF NOT EXISTS recon_items ( id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES recon_runs(id), provider_reference TEXT NOT NULL, outcome TEXT NOT NULL, provider_amount_cents INTEGER, internal_amount_cents INTEGER, provider_status TEXT, internal_status TEXT, resolved INTEGER NOT NULL DEFAULT 0, resolution_note TEXT, resolved_by TEXT REFERENCES users(id), resolved_at TEXT )',
+        'CREATE INDEX IF NOT EXISTS recon_items_run_idx ON recon_items (run_id)',
     ],
 ];
 // Fills in the duplicate-check key for accounts made before it existed.
@@ -260,7 +273,7 @@ function tr_error_response(Throwable $e): Response
 // While maintenance mode is on, visitors' API calls get a 503 and the pages
 // show the maintenance message (core.js). Sign-in, settings and the back
 // office keep working so staff can turn it off again.
-const MAINT_EXEMPT = '#^/api/(health|config|auth/|site(/|$)|admin/)#';
+const MAINT_EXEMPT = '#^/api/(health|config|auth/|site(/|$)|admin/|webhooks/)#';
 
 // ---------------------------------------------------------------- jobs
 // Shared hosting has no always-on worker: due jobs run right after a response
@@ -350,13 +363,16 @@ function tr_handle(): void
             $raw = (string) file_get_contents('php://input', false, null, 0, 102401);
             if (strlen($raw) > 102400) throw new AppError(413, 'too_large', 'That request is too large.');
         }
-        csrf_check($method, $path);
+        // Payment providers post their notifications as JSON (Yoco) or a form
+        // (PayFast), with no session: they are checked by signature instead.
+        $isHook = str_starts_with($path, '/api/webhooks/');
+        if (!$isHook) csrf_check($method, $path);
         $body = [];
-        if ($raw !== '') {
+        if ($raw !== '' && !$isHook) {
             $body = json_decode($raw, true);
             if (!is_array($body)) throw new AppError(400, 'bad_json', 'Malformed JSON.');
         }
-        $GLOBALS['TR_REQ'] = ['method' => $method, 'path' => $path, 'body' => $body];
+        $GLOBALS['TR_REQ'] = ['method' => $method, 'path' => $path, 'body' => $body, 'raw' => $raw];
         foreach (glob(TR_APP . '/routes/*.php') as $f) require_once $f;
         $res = dispatch($method, $path);
     } catch (Throwable $e) {

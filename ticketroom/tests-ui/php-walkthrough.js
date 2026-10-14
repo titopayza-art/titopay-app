@@ -104,11 +104,12 @@ async function signIn(p, email, password) {
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder stays gone");
     await shot(a, "admin-signed-in");
     for (const [hash, heading] of [["#/", "Overview"], ["#/organisers", "Organiser accounts"], ["#/events", "All events"], ["#/users", "All users"], ["#/support", "Support & callbacks"],
-      ["#/posters", "Advertising posters"], ["#/assistant", "Assistant"], ["#/emails", "Email templates"], ["#/integrations", "Integrations"], ["#/audit", "Audit log"], ["#/outbox", "Messages"]]) {
+      ["#/posters", "Advertising posters"], ["#/assistant", "Assistant"], ["#/emails", "Email templates"], ["#/integrations", "Integrations"], ["#/audit", "Audit log"], ["#/outbox", "Messages"],
+      ["#/refunds", "Refunds"], ["#/payouts", "Payouts"], ["#/payments", "Payments & webhooks"], ["#/reconciliation", "Reconciliation"], ["#/ledger", "Ledger"]]) {
       await a.goto(`${BASE}/admin${hash}`);
       await a.getByRole("heading", { name: heading, exact: true }).first().waitFor();
     }
-    assert.equal(await a.getByRole("link", { name: /Payouts/ }).isVisible(), false, "finance menu hidden");
+    assert.equal(await a.getByRole("link", { name: /Payouts/ }).isVisible(), true, "finance menu: payments, refunds and payouts are tracked");
     // The staff account is never offered the organiser sign-up form.
     await a.goto(`${BASE}/organisers`);
     await a.getByRole("heading", { name: "This is the organiser portal" }).waitFor();

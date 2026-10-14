@@ -56,7 +56,6 @@ route('POST', '/api/me/transfers/claim', function () {
 route('GET', '/api/me/orders', fn() => ['orders' => rows('SELECT o.reference, o.status, o.total_cents, o.refunded_cents, o.created_at, o.paid_at, e.title, e.slug, e.starts_at
     FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = ? ORDER BY o.created_at DESC LIMIT 100', [require_auth()['id']])]);
 
-route('GET', '/api/me/refunds', function () { require_auth(); return ['refunds' => []]; });
 route('GET', '/api/me/support', fn() => ['cases' => rows('SELECT reference, category, subject, status, resolution, created_at, updated_at FROM support_cases WHERE user_id = ? ORDER BY created_at DESC', [require_auth()['id']])]);
 
 // Not in this edition: answer consistently so pages can show "coming soon".

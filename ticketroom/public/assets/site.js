@@ -484,6 +484,25 @@ async function contact() {
   wireSupport(main);
 }
 
+// ---------------- PayFast hand-over ----------------
+// PayFast takes payment on its own page, reached by posting a signed form.
+// This page fetches that form from TicketRoom and sends the buyer on.
+async function payPage() {
+  document.title = "Taking you to PayFast | TicketRoom";
+  const q = new URLSearchParams(location.search);
+  render(main, html`<div class="wrap section"><section class="welcome card center"><span class="tk-label">Secure payment</span><h1>Taking you to PayFast…</h1><p class="lead">You'll pay on PayFast's secure page, then come straight back to your tickets.</p>${spinner()}</section></div>`);
+  try {
+    const f = await get(`/api/public/payments/${encodeURIComponent(q.get("p") || "")}/payfast?k=${encodeURIComponent(q.get("k") || "")}`);
+    const form = document.createElement("form");
+    form.method = "post"; form.action = f.action; form.hidden = true;
+    for (const [k, v] of Object.entries(f.fields)) { const i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = v; form.append(i); }
+    document.body.append(form);
+    form.submit();
+  } catch (err) {
+    render(main, html`<div class="wrap section"><section class="welcome card"><span class="tk-label">Payment</span><h1>We couldn't open the payment page</h1><p class="lead">${err.message}</p><a class="btn btn-primary" href="/">Back to events</a></section></div>`);
+  }
+}
+
 // ---------------- gate pass ----------------
 // Crew, artists, media and guests open their pass from the private link the
 // organiser sent. No account needed; the link is the key, so it is not indexed.
@@ -565,6 +584,7 @@ document.documentElement.dataset.manualReady = "1";
     else if (p === "/contact") await contact();
     else if (p === "/unsubscribe") unsubscribe();
     else if (p === "/pass") await passPage();
+    else if (p === "/pay") await payPage();
     else if (p === "/" || p === "/browse") await home();
     else if (p === "/signin") {
       // Staff land in the admin portal, organisers in the organiser portal, everyone else in the customer portal.

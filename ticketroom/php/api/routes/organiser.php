@@ -665,26 +665,7 @@ route('GET', '/api/organiser/:orgId/events/:eventId/attendees', function ($a) {
     return ['attendees' => array_slice($list, 0, 500), 'total' => (int) $tot['total'], 'checkedIn' => (int) $tot['checked_in'], 'page' => $page, 'more' => $more];
 });
 
-// Ticket refunds: free orders have nothing to refund (as in Node); paid
-// refunds need the payment gateway, which this edition does not have.
-route('POST', '/api/organiser/:orgId/events/:eventId/orders/:orderId/refund', function ($a) {
-    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ['owner', 'finance']);
-    check(body(), ['reason' => R::str(['min' => 3, 'max' => 400]), 'ticketIds' => R::arr(R::uuid(), ['optional' => true, 'max' => 50]), 'includeFees' => R::bool()]);
-    $o = row('SELECT * FROM orders WHERE id = ? AND event_id = ?', [$a['orderId'], $event['id']]);
-    if (!$o) throw not_found('Order not found.');
-    if (!in_array($o['status'], ['paid', 'partially_refunded'], true)) throw conflict('Only paid orders can be refunded.', 'order_not_refundable');
-    if ((int) $o['total_cents'] === 0) throw conflict('Free orders have nothing to refund.', 'order_not_refundable');
-    throw not_available();
-});
-
-route('GET', '/api/organiser/:orgId/refunds', function ($a) {
-    organiser_access(require_auth(), $a['orgId'], ['owner', 'manager', 'finance']);
-    return ['refunds' => []];
-});
-route('POST', '/api/organiser/:orgId/refunds/:refundId/decide', function ($a) {
-    organiser_access(require_auth(), $a['orgId'], ['owner', 'manager']);
-    throw not_available();
-});
+// Ticket refunds, finance and payouts: routes/finance.php.
 
 // ============================================================== event staff
 route('GET', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
@@ -762,22 +743,6 @@ foreach (['POST /api/organiser/:orgId/events/:eventId/vendors', 'PATCH /api/orga
 }
 route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/payout', function ($a) {
     event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_MONEY);
-    throw not_available();
-});
-
-// ============================================================== finance (not in this edition: zero balances)
-route('GET', '/api/organiser/:orgId/finance', function ($a) {
-    ['organiser' => $org] = organiser_access(require_auth(), $a['orgId'], ['owner', 'finance', 'manager']);
-    $hold = (int) $org['payout_hold_days'];
-    $now = microtime(true);
-    $events = array_map(fn($e) => [
-        'event_id' => $e['id'], 'title' => $e['title'], 'status' => $e['status'], 'ends_at' => $e['ends_at'], 'payout_hold_days' => $hold, 'balance_cents' => 0,
-        'releasable' => !in_array($e['status'], ['cancelled', 'suspended'], true) && to_unix($e['ends_at']) + $hold * 86400 < $now, 'code' => null,
-    ], rows('SELECT id, title, status, ends_at FROM events WHERE organiser_id = ? ORDER BY ends_at', [$a['orgId']]));
-    return ['events' => $events, 'totalCents' => 0, 'availableCents' => 0, 'inFlightCents' => 0, 'pendingRefundsCents' => 0, 'payouts' => []];
-});
-route('POST', '/api/organiser/:orgId/payouts', function ($a) {
-    organiser_access(require_auth(), $a['orgId'], ORG_MONEY);
     throw not_available();
 });
 

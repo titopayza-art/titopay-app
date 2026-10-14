@@ -66,7 +66,7 @@ foreach ($candidates as $rel) {
     header('Content-Type: ' . $types[$ext]);
     header('X-Content-Type-Options: nosniff');
     if ($ext === 'html') {
-        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://www.payfast.co.za https://sandbox.payfast.co.za; frame-ancestors 'none'");
         header('X-Frame-Options: DENY');
     }
     header('Cache-Control: ' . (in_array($ext, ['html', 'css', 'js', 'webmanifest'], true) ? 'no-cache' : 'public, max-age=86400'));

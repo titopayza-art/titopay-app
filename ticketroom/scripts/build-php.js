@@ -68,6 +68,7 @@ const PUBLIC = [
   ["contact.html", "Contact us | TicketRoom", "Email hello@ticketroom.co.za or ask us to call you back. We reply within 24 to 48 hours.", "/contact"],
   ["unsubscribe.html", "Unsubscribe | TicketRoom", "", ""],
   ["pass.html", "Gate pass | TicketRoom", "", ""],
+  ["pay.html", "Payment | TicketRoom", "", ""],
   ["signin.html", "Sign in | TicketRoom", "", "/signin"],
   ["404.html", "Page not found | TicketRoom", "", ""],
 ];

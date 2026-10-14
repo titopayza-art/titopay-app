@@ -33,8 +33,7 @@ function adm_drop_absent_bool(array $b, string $field): array
 }
 // Search text cleaned like Node: no LIKE wildcards or backslashes, at most 80 chars.
 function adm_search(string $name): string { return mb_substr(preg_replace('/[%_\\\\]/', '', (string) qs($name, '')), 0, 80); }
-// No ledger in this edition: always empty and balanced.
-function adm_ledger(): array { return ['entries' => 0, 'sumCents' => 0, 'balanced' => true, 'unbalancedJournals' => [], 'clearing' => []]; }
+function adm_ledger(): array { return ledger_check(); }
 function adm_int_or_zero($v): int { return (int) ($v ?? 0); }
 
 // ---- dashboard ---------------------------------------------------------------
@@ -49,15 +48,15 @@ route('GET', '/api/admin/dashboard', function () {
                          COALESCE(SUM(CASE WHEN paid_at > ? THEN 1 ELSE 0 END),0) AS orders24
                     FROM orders WHERE status IN ('paid','partially_refunded','refunded','paid_unfulfilled')", [$since, $since]);
     $ops = [
-        'refunds_pending' => 0,
-        'refunds_failed' => 0,
-        'payouts_open' => 0,
-        'webhook_problems' => 0,
-        'recon_exceptions' => 0,
+        'refunds_pending' => (int) val("SELECT count(*) FROM refunds WHERE status IN ('requested','manual_pending')"),
+        'refunds_failed' => (int) val("SELECT count(*) FROM refunds WHERE status = 'failed'"),
+        'payouts_open' => (int) val("SELECT count(*) FROM payouts WHERE status IN ('requested','approved')"),
+        'webhook_problems' => (int) val("SELECT count(*) FROM webhook_events WHERE status IN ('failed','rejected') AND received_at > ?", [iso_in(-7 * 86400)]),
+        'recon_exceptions' => (int) val('SELECT count(*) FROM recon_items WHERE resolved = 0'),
         'support_open' => (int) val("SELECT count(*) FROM support_cases WHERE status IN ('open','in_progress')"),
         'unfulfilled' => (int) val("SELECT count(*) FROM orders WHERE status = 'paid_unfulfilled'"),
         'messages_failed' => (int) val("SELECT count(*) FROM message_outbox WHERE status = 'failed'"),
-        'stale_payments' => 0,
+        'stale_payments' => (int) val("SELECT count(*) FROM payments WHERE status = 'pending' AND created_at < ?", [iso_in(-3600)]),
     ];
     $ints = fn(array $r) => array_map('intval', $r);
     return ['users' => $ints($users), 'organisers' => $ints($orgs), 'events' => $ints($events), 'sales' => $ints($sales), 'ops' => $ops, 'ledger' => adm_ledger()];
@@ -184,11 +183,15 @@ route('POST', '/api/admin/events/:id/cancel', function ($a) {
         if ($ev['status'] === 'cancelled') throw conflict('Already cancelled.', 'bad_transition');
         $now = now_iso();
         q("UPDATE events SET status = 'cancelled', status_reason = ?, updated_at = ? WHERE id = ?", [$b['reason'], $now, $ev['id']]);
+        // Every paid order gets a full refund, booking fee included, for finance to approve.
         $raised = 0;
-        $holders = rows("SELECT DISTINCT u.id, u.email, u.full_name FROM tickets t JOIN users u ON u.id = t.owner_user_id
-                          WHERE t.event_id = ? AND t.status IN ('valid','refunded')", [$ev['id']]);
+        foreach (rows("SELECT * FROM orders WHERE event_id = ? AND status IN ('paid','partially_refunded') AND total_cents > refunded_cents", [$ev['id']]) as $o) {
+            try { refund_create($o, $u, [], true, 'event_cancelled', 'Event cancelled: ' . $b['reason']); $raised++; } catch (AppError $e) { /* nothing left to refund */ }
+        }
+        $holders = rows("SELECT DISTINCT u.id, u.email, u.full_name, MAX(t.price_cents) AS paid FROM tickets t JOIN users u ON u.id = t.owner_user_id
+                          WHERE t.event_id = ? AND t.status IN ('valid','refunded') GROUP BY u.id", [$ev['id']]);
         foreach ($holders as $h) {
-            outbox_enqueue(['to' => $h['email'], 'userId' => $h['id']] + tpl('eventCancelled', ['name' => $h['full_name'], 'event' => $ev, 'reason' => $b['reason'], 'paid' => false]));
+            outbox_enqueue(['to' => $h['email'], 'userId' => $h['id']] + tpl('eventCancelled', ['name' => $h['full_name'], 'event' => $ev, 'reason' => $b['reason'], 'paid' => (int) $h['paid'] > 0]));
         }
         q("UPDATE tickets SET status = 'revoked', revoked_reason = 'event cancelled', updated_at = ? WHERE event_id = ? AND status = 'valid' AND price_cents = 0", [$now, $ev['id']]);
         audit('event.cancelled', ['actor' => $u, 'entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['reason' => $b['reason'], 'refundsRaised' => $raised]]);
@@ -314,7 +317,7 @@ route('GET', '/api/admin/orders', function () {
                     FROM orders o JOIN events e ON e.id = o.event_id
                    WHERE ? = '' OR lower(o.reference) LIKE lower(?) OR lower(o.buyer_email) LIKE lower(?)
                    ORDER BY o.created_at DESC LIMIT 100", [$s, $like, $like]);
-    foreach ($list as &$o) $o['payments'] = null; // no payments in this edition (Node: json_agg of no rows)
+    foreach ($list as &$o) $o['payments'] = array_map(fn($p) => ['provider' => $p['provider'], 'ref' => $p['provider_reference'], 'status' => $p['status']], rows('SELECT provider, provider_reference, status FROM payments WHERE order_id = ? ORDER BY created_at', [$o['id']]));
     return ['orders' => $list];
 });
 
@@ -354,25 +357,7 @@ route('POST', '/api/admin/tickets/:id/revoke', function ($a) {
     return ['ok' => true];
 });
 
-// ---- payments, webhooks, refunds, payouts, reconciliation, ledger (not in this edition)
-route('GET', '/api/admin/payments', function () { adm_any(); return ['payments' => []]; });
-route('POST', '/api/admin/payments/:id/recheck', function () { adm_any(); throw not_available(); });
-route('GET', '/api/admin/webhooks', function () { adm_any(); return ['webhooks' => []]; });
-route('GET', '/api/admin/refunds', function () { adm_any(); return ['refunds' => []]; });
-route('POST', '/api/admin/refunds/bulk-approve', function () { adm_finance(); throw not_available(); });
-foreach (['decide', 'complete-manually', 'retry'] as $act) {
-    route('POST', "/api/admin/refunds/:id/$act", function () { adm_finance(); throw not_available(); });
-}
-route('GET', '/api/admin/payouts', function () { adm_any(); return ['payouts' => []]; });
-foreach (['decide', 'mark-paid', 'reveal-account'] as $act) {
-    route('POST', "/api/admin/payouts/:id/$act", function () { adm_finance(); throw not_available(); });
-}
-route('GET', '/api/admin/reconciliation', function () { adm_any(); return ['runs' => [], 'ledger' => adm_ledger()]; });
-route('POST', '/api/admin/reconciliation', function () { adm_finance(); throw not_available(); });
-route('GET', '/api/admin/reconciliation/:id', function () { adm_any(); throw not_found('Run not found.'); });
-route('POST', '/api/admin/reconciliation/items/:id/resolve', function () { adm_finance(); throw not_available(); });
-route('GET', '/api/admin/ledger/accounts', function () { adm_any(); return ['accounts' => []]; });
-route('GET', '/api/admin/ledger/journals', function () { adm_any(); return ['journals' => []]; });
+// Payments, webhooks, refunds, payouts, reconciliation and the ledger: routes/finance.php.
 
 // ---- tags & terminals (not in this edition) ----------------------------------------
 route('POST', '/api/admin/tag-batches', function () { adm_admin(); throw not_available(); });
@@ -382,36 +367,7 @@ route('POST', '/api/admin/tags/:id/status', function () { adm_admin_or_support()
 route('GET', '/api/admin/terminals', function () { adm_any(); return ['terminals' => []]; });
 route('POST', '/api/admin/terminals/:id/status', function () { adm_admin(); throw not_available(); });
 
-// ---- integrations -------------------------------------------------------------------
-route('GET', '/api/admin/integrations', function () {
-    adm_any();
-    $set = fn($v) => $v ? 'set' : 'missing';
-    $mode = mail_mode();
-    $email = [
-        'key' => 'email', 'label' => 'Email', 'provider' => $mode,
-        'environment' => $mode === 'log' ? 'mock' : 'live',
-        'endpoint' => $mode === 'smtp' ? cfg('mail.smtpHost') . ':' . cfg('mail.smtpPort', 465) : ($mode === 'mail' ? "hosting server's PHP mail()" : 'log only (not sent)'),
-        'credentials' => $mode === 'smtp' ? ['smtpHost' => $set(cfg('mail.smtpHost')), 'smtpUser' => $set(cfg('mail.smtpUser')), 'smtpPass' => $set(cfg('mail.smtpPass'))] : (object) [],
-    ];
-    return [
-        'defaults' => ['bookingFeeCents' => (int) cfg('fees.ticketFeeFixedCents', 1000), 'bookingFeeBps' => (int) cfg('fees.ticketFeeBps', 0), 'organiserCommissionBps' => (int) cfg('fees.organiserCommissionBps', 500)],
-        'integrations' => [
-            ['key' => 'payments', 'label' => 'Card payments', 'provider' => 'none', 'environment' => 'not set up', 'endpoint' => 'not available in this edition yet', 'credentials' => (object) []],
-            $email,
-            ['key' => 'sms', 'label' => 'SMS', 'provider' => 'none', 'environment' => 'not set up', 'endpoint' => 'not available in this edition yet', 'credentials' => (object) []],
-        ],
-    ];
-});
-
-route('POST', '/api/admin/integrations/:key/health', function ($a) {
-    $u = adm_admin();
-    $key = $a['key'];
-    if ($key === 'email') $result = smtp_health();
-    elseif (in_array($key, ['payments', 'sms', 'titopay'], true)) $result = ['ok' => false, 'detail' => 'Not available in this edition yet.'];
-    else throw not_found('Unknown integration.');
-    audit('integration.health_checked', ['actor' => $u, 'entityType' => 'integration', 'entityId' => $key, 'details' => ['ok' => $result['ok']]]);
-    return $result;
-});
+// Integrations (email, card payments, SMS): routes/finance.php.
 
 // ---- site settings ------------------------------------------------------------------
 route('GET', '/api/admin/settings', function () {

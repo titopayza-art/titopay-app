@@ -36,9 +36,11 @@ function outbox_deliver(int $limit = 25): int
                 $g = val("SELECT granted FROM marketing_consents WHERE user_id = ? AND COALESCE(organiser_id,'') = COALESCE(?,'') AND channel = ?", [$m['user_id'], $m['organiser_id'], $m['channel']]);
                 if (!$g) { q("UPDATE message_outbox SET status = 'suppressed', last_error = 'consent withdrawn' WHERE id = ?", [$m['id']]); continue; }
             }
-            if ($m['channel'] !== 'email') throw new RuntimeException('SMS is not configured in this edition');
-            $mode = mail_mode();
-            $msgId = send_email($mode, $m['to_address'], (string) ($m['subject'] ?: 'TicketRoom'), $m['body']);
+            if ($m['channel'] === 'sms') { $mode = sms_provider(); $msgId = sms_send($m['to_address'], $m['body']); }
+            else {
+                $mode = mail_mode();
+                $msgId = send_email($mode, $m['to_address'], (string) ($m['subject'] ?: 'TicketRoom'), $m['body']);
+            }
             q("UPDATE message_outbox SET status = 'sent', provider = ?, provider_message_id = ?, sent_at = ?, last_error = NULL WHERE id = ?", [$mode, $msgId, now_iso(), $m['id']]);
             if ($m['campaign_id']) q('UPDATE campaigns SET delivered_count = delivered_count + 1 WHERE id = ?', [$m['campaign_id']]);
             $sent++;
@@ -258,6 +260,16 @@ function tpl(string $name, array $a): array
             return ['subject' => "Still want to go to {$e['title']}?",
                 'body' => $hi . "You started booking tickets for {$e['title']} but didn't finish, so we couldn't hold them for you. There are still tickets available.\n\n"
                     . when_str($e['starts_at']) . "\n" . place($e) . "\n\nFinish my booking: {$a['eventUrl']}\n\nIf something went wrong at checkout, ask us to call you back at $B/contact and we'll sort it out.\n\nThis is the only reminder we'll send about it. To stop emails like this, unsubscribe here: {$a['unsubscribeUrl']}" . FOOTER];
+        case 'refundDone':
+            $o = $a['order']; $e = $a['event'];
+            return ['subject' => "Your refund for {$e['title']} ({$o['reference']})",
+                'body' => $hi . 'We have refunded ' . format_zar((int) $a['amountCents']) . " for your order {$o['reference']} ({$e['title']}).\n\nIt goes back to the card or account you paid with. Banks usually show it within 3 to 7 working days. Any refunded tickets no longer work at the gate.\n\nQuestions? Reply to this email or ask us to call you back at $B/contact." . FOOTER];
+        case 'payoutRequested':
+            return ['subject' => "Payout {$a['reference']} requested", 'body' => $hi . "We've received your payout request of " . format_zar((int) $a['amountCents']) . " for {$a['organiser']}. TicketRoom finance checks every request, then pays it by EFT to {$a['bank']}. You'll get an email when it's paid.\n\nSee your balance: $B/organisers#/finance" . FOOTER];
+        case 'payoutPaid':
+            return ['subject' => "Payout {$a['reference']} is on its way", 'body' => $hi . 'We have paid ' . format_zar((int) $a['amountCents']) . " to {$a['bank']} for {$a['organiser']}. Bank reference: {$a['bankReference']}.\n\nEFTs usually clear within 1 to 2 working days.\n\nSee your balance: $B/organisers#/finance" . FOOTER];
+        case 'payoutRejected':
+            return ['subject' => "Payout {$a['reference']} was not approved", 'body' => $hi . 'Your payout request of ' . format_zar((int) $a['amountCents']) . " was not approved.\n\nThe reason: {$a['note']}\n\nThe amount is back in your available balance. Reply to this email if you have questions." . FOOTER];
         case 'eventCancelled':
             $e = $a['event'];
             return ['subject' => "{$e['title']} has been cancelled",
@@ -345,6 +357,8 @@ function email_catalog(): array
         ['key' => 'eventPublished', 'name' => 'Event published', 'audience' => 'Organiser', 'trigger' => 'When admin approves an event', 'sample' => fn() => tpl('eventPublished', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
         ['key' => 'eventChangesRequested', 'name' => 'Event needs changes', 'audience' => 'Organiser', 'trigger' => 'When admin sends an event back', 'sample' => fn() => tpl('eventChangesRequested', ['name' => 'Naledi Dlamini', 'event' => $ev, 'reason' => 'Please add the full venue address and a poster image.'])],
         ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'refundDone', 'name' => 'Refund paid', 'audience' => 'Customers', 'trigger' => 'When a refund reaches the customer\'s card', 'sample' => fn() => tpl('refundDone', ['name' => 'Sipho', 'order' => ['reference' => 'TR-8K2M4Q', 'buyer_name' => 'Sipho'], 'event' => ['title' => 'Soweto Sunset Sessions'], 'amountCents' => 32000])],
+        ['key' => 'payoutPaid', 'name' => 'Payout paid', 'audience' => 'Organisers', 'trigger' => 'When finance records the EFT', 'sample' => fn() => tpl('payoutPaid', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321', 'bankReference' => 'TR PO-4H8T2W'])],
         ['key' => 'gatePass', 'name' => 'Gate pass', 'audience' => 'Crew and guests', 'trigger' => 'When an organiser issues a gate pass with an email address', 'sample' => fn() => tpl('gatePass', ['name' => 'Lerato', 'organiser' => 'Soweto Community Arts', 'role' => 'Crew', 'event' => 'Soweto Sunset Sessions', 'when' => 'Sat 21 Nov 2026, 15:00', 'venue' => 'Thokoza Park, Soweto', 'url' => "$B/pass?t=sample", 'reentry' => true])],
         ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/account#/reset/sample"])],
     ];

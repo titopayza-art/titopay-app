@@ -99,8 +99,18 @@ route('POST', '/api/public/orders', function () {
     }
     $r = create_order($u, $b);
     $o = $r['order'];
+    $payment = null;
+    if ($o['status'] === 'pending_payment') {
+        // A paid order: open the provider's payment page. If the provider
+        // can't be reached, the reservation is released and nothing is charged.
+        try { $payment = payment_start($o); }
+        catch (AppError $e) {
+            tx(function () use ($o) { $cur = row('SELECT * FROM orders WHERE id = ?', [$o['id']]); if ($cur['status'] === 'pending_payment') { release_holds($cur); q("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ?", [now_iso(), $o['id']]); } });
+            throw $e;
+        }
+    }
     return json_out(['order' => ['reference' => $o['reference'], 'status' => $o['status'], 'totalCents' => $o['total_cents'], 'expiresAt' => $o['expires_at']],
-        'accessKey' => user() ? null : order_key($o['id']), 'payment' => $r['payment'] ?? null], $r['replay'] ? 200 : 201);
+        'accessKey' => user() ? null : order_key($o['id']), 'payment' => $payment], $r['replay'] ? 200 : 201);
 });
 
 // An order and its tickets, for the buyer (signed in, or with the private link).
@@ -108,6 +118,15 @@ route('GET', '/api/public/orders/:ref', function ($a) {
     limit('orderview', 120, 60);
     $key = qs('k');
     $o = order_access($a['ref'], $key);
+    // Waiting for payment: ask the provider directly every few seconds, in case its notification is slow.
+    if ($o['status'] === 'pending_payment') {
+        $p = row("SELECT id, updated_at FROM payments WHERE order_id = ? AND status = 'pending' AND provider = 'yoco' ORDER BY created_at DESC LIMIT 1", [$o['id']]);
+        if ($p && to_unix($p['updated_at']) < microtime(true) - 6) {
+            q('UPDATE payments SET updated_at = ? WHERE id = ?', [now_iso(), $p['id']]);
+            try { payment_sync($p['id']); } catch (Throwable $e) { error_log('[payments] sync: ' . $e->getMessage()); }
+            $o = order_access($a['ref'], $key);
+        }
+    }
     $items = rows('SELECT oi.quantity, oi.unit_price_cents, oi.unit_fee_cents, tt.name FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = ?', [$o['id']]);
     $owner = row('SELECT email, guest FROM users WHERE id = ?', [$o['user_id']]);
     $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
@@ -135,7 +154,26 @@ route('GET', '/api/public/orders/:ref/tickets/:id/qr.svg', function ($a) {
     return raw_out(tr_qr_svg(qr_payload($t), ['ecc' => 'M', 'margin' => 1, 'dark' => '#0B1A33', 'light' => '#FFFFFF']), 'image/svg+xml', 200, ['Cache-Control' => 'no-store']);
 });
 
-route('POST', '/api/public/orders/:ref/pay', function () { require_auth(); throw not_available(); });
+// Try paying again (the payment page was closed or the card declined), while the tickets are still held.
+route('POST', '/api/public/orders/:ref/pay', function ($a) {
+    limit('repay', 10, 600);
+    $o = order_access($a['ref'], qs('k'));
+    if ($o['status'] !== 'pending_payment') throw conflict('This order is not waiting for payment.', 'order_not_pending');
+    if (to_unix($o['expires_at']) < microtime(true)) throw conflict('Your reservation has expired. Please start again from the event page.', 'order_expired');
+    return ['payment' => payment_start(row('SELECT * FROM orders WHERE id = ?', [$o['id']]))];
+});
+
+// PayFast: the signed form the buyer's browser posts to PayFast (see /pay).
+route('GET', '/api/public/payments/:id/payfast', function ($a) {
+    limit('payform', 30, 600);
+    $d = verify_link(qs('k'));
+    if (!$d || ($d['p'] ?? '') !== $a['id']) throw not_found('This payment link has expired. Go back to your order and try again.');
+    $p = row("SELECT * FROM payments WHERE id = ? AND provider = 'payfast' AND status = 'pending'", [$a['id']]);
+    if (!$p) throw conflict('This payment is no longer open.', 'payment_closed');
+    $o = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
+    if ($o['status'] !== 'pending_payment') throw conflict('This order is not waiting for payment.', 'order_not_pending');
+    return payfast_form($p, $o);
+});
 
 route('POST', '/api/public/orders/:ref/cancel', function ($a) {
     $key = qs('k');

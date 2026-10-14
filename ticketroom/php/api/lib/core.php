@@ -63,6 +63,11 @@ function cfg(?string $key = null, $default = null)
 {
     $c = $GLOBALS['TR_CONFIG'] ?? [];
     if ($key === null) return $c;
+    // Email, payment and SMS settings saved in the admin portal win over config.php.
+    if (preg_match('/^(mail|payments|sms)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
+        $v = integration_value($m[1], $m[2]);
+        if ($v !== null) return $v;
+    }
     $cur = $c;
     foreach (explode('.', $key) as $part) {
         if (!is_array($cur) || !array_key_exists($part, $cur)) return $default;
@@ -139,13 +144,18 @@ function tx(callable $fn)
     try {
         $out = $fn();
         $pdo->exec('COMMIT');
-        return $out;
     } catch (Throwable $e) {
         try { $pdo->exec('ROLLBACK'); } catch (Throwable) { /* already rolled back */ }
+        $GLOBALS['TR_AFTER_COMMIT'] = [];
         throw $e;
     } finally {
         $depth = 0;
     }
+    // Work that must only happen once the data is saved (calls to payment providers).
+    $after = $GLOBALS['TR_AFTER_COMMIT'] ?? [];
+    $GLOBALS['TR_AFTER_COMMIT'] = [];
+    foreach ($after as $f) $f();
+    return $out;
 }
 function uuid(): string
 {

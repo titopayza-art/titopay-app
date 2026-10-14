@@ -565,40 +565,42 @@ CREATE TABLE IF NOT EXISTS refunds (
   reference          TEXT NOT NULL UNIQUE,
   order_id           TEXT NOT NULL REFERENCES orders(id),
   payment_id         TEXT REFERENCES payments(id),
-  amount_cents       INTEGER NOT NULL CHECK (amount_cents > 0),
+  amount_cents       INTEGER NOT NULL CHECK (amount_cents >= 0),
+  fee_refund_cents   INTEGER NOT NULL DEFAULT 0 CHECK (fee_refund_cents >= 0),
   kind               TEXT NOT NULL CHECK (kind IN ('customer','event_cancelled','unfulfilled','goodwill')),
   reason             TEXT NOT NULL,
   ticket_ids         TEXT,
-  status             TEXT NOT NULL CHECK (status IN ('requested','approved','processing','completed','rejected','failed')),
-  manual             INTEGER NOT NULL DEFAULT 0,
+  status             TEXT NOT NULL CHECK (status IN ('requested','processing','manual_pending','completed','rejected','failed')),
   provider_reference TEXT,
+  failure_reason     TEXT,
   note               TEXT,
   requested_by       TEXT REFERENCES users(id),
   decided_by         TEXT REFERENCES users(id),
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,
-  completed_at       TEXT
+  completed_at       TEXT,
+  CHECK (amount_cents + fee_refund_cents > 0)
 );
 CREATE INDEX IF NOT EXISTS refunds_status_idx ON refunds (status, created_at);
 CREATE INDEX IF NOT EXISTS refunds_order_idx ON refunds (order_id);
 CREATE TABLE IF NOT EXISTS payouts (
-  id               TEXT PRIMARY KEY,
-  reference        TEXT NOT NULL UNIQUE,
-  organiser_id     TEXT NOT NULL REFERENCES organisers(id),
-  amount_cents     INTEGER NOT NULL CHECK (amount_cents > 0),
-  status           TEXT NOT NULL CHECK (status IN ('requested','approved','paid','rejected')),
-  bank_name        TEXT,
-  account_holder   TEXT,
-  account_last4    TEXT,
-  branch_code      TEXT,
-  eft_reference    TEXT,
-  note             TEXT,
-  requested_by     TEXT REFERENCES users(id),
-  decided_by       TEXT REFERENCES users(id),
-  paid_by          TEXT REFERENCES users(id),
-  created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL,
-  paid_at          TEXT
+  id                  TEXT PRIMARY KEY,
+  reference           TEXT NOT NULL UNIQUE,
+  organiser_id        TEXT NOT NULL REFERENCES organisers(id),
+  amount_cents        INTEGER NOT NULL CHECK (amount_cents > 0),
+  status              TEXT NOT NULL CHECK (status IN ('requested','approved','paid','rejected')),
+  bank_name           TEXT,
+  bank_account_holder TEXT,
+  bank_account_last4  TEXT,
+  bank_branch_code    TEXT,
+  bank_reference      TEXT,
+  note                TEXT,
+  requested_by        TEXT REFERENCES users(id),
+  approved_by         TEXT REFERENCES users(id),
+  paid_by             TEXT REFERENCES users(id),
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  paid_at             TEXT
 );
 CREATE INDEX IF NOT EXISTS payouts_org_idx ON payouts (organiser_id, status);
 CREATE TABLE IF NOT EXISTS integration_settings (
@@ -617,3 +619,45 @@ CREATE TABLE IF NOT EXISTS support_messages (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS support_messages_case_idx ON support_messages (case_id, id);
+CREATE TABLE IF NOT EXISTS ledger_journals (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind                TEXT NOT NULL,
+  reference           TEXT NOT NULL,
+  created_at          TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ledger_entries (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  journal_id          INTEGER NOT NULL REFERENCES ledger_journals(id),
+  account             TEXT NOT NULL,
+  amount_cents        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ledger_entries_account_idx ON ledger_entries (account);
+CREATE INDEX IF NOT EXISTS ledger_entries_journal_idx ON ledger_entries (journal_id);
+CREATE TRIGGER IF NOT EXISTS ledger_journals_no_update BEFORE UPDATE ON ledger_journals BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_journals_no_delete BEFORE DELETE ON ledger_journals BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_entries_no_update BEFORE UPDATE ON ledger_entries BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_entries_no_delete BEFORE DELETE ON ledger_entries BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TABLE IF NOT EXISTS recon_runs (
+  id                  TEXT PRIMARY KEY,
+  provider            TEXT NOT NULL,
+  period_start        TEXT NOT NULL,
+  period_end          TEXT NOT NULL,
+  summary             TEXT NOT NULL,
+  created_by          TEXT REFERENCES users(id),
+  created_at          TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recon_items (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id                TEXT NOT NULL REFERENCES recon_runs(id),
+  provider_reference    TEXT NOT NULL,
+  outcome               TEXT NOT NULL,
+  provider_amount_cents INTEGER,
+  internal_amount_cents INTEGER,
+  provider_status       TEXT,
+  internal_status       TEXT,
+  resolved              INTEGER NOT NULL DEFAULT 0,
+  resolution_note       TEXT,
+  resolved_by           TEXT REFERENCES users(id),
+  resolved_at           TEXT
+);
+CREATE INDEX IF NOT EXISTS recon_items_run_idx ON recon_items (run_id);

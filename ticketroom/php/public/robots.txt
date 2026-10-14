@@ -7,3 +7,4 @@ Disallow: /pos
 Disallow: /orders/
 Disallow: /unsubscribe
 Disallow: /pass
+Disallow: /pay
