@@ -10,7 +10,7 @@ most of it waiting for the certificate.
 | What | Where it comes from |
 | --- | --- |
 | cPanel login | Afrihost Client Zone → **Hosting** → your package → **cPanel** |
-| `ticketroom.zip` | The build you were given. `version.txt` inside it names the build. |
+| `ticketroom-<date>.zip` | The build you were given. `version.txt` inside it names the build. |
 | The temporary admin password | Given to you with the zip. It is not written in any file. |
 | A password for the `hello@ticketroom.co.za` mailbox | You create it in step 4. |
 
@@ -18,6 +18,36 @@ most of it waiting for the certificate.
 it still resolves somewhere else.
 
 ---
+
+## Already live? Updating to a new version
+
+This package is build **{{BUILD}}**. Updating takes five minutes and keeps
+every account, event, order and setting.
+
+1. cPanel → **File Manager** → `public_html`. **Settings** (top right) →
+   tick **Show Hidden Files (dotfiles)**.
+2. **Delete every `.zip` file in `public_html`** (for example an old
+   `ticketroom.zip`). cPanel will not upload a file over one with the same
+   name unless you tick **Overwrite existing files**, and then you end up
+   extracting the old version again. Do not delete `data`, `ticketroom-data`
+   or `tr-data`: that is your data.
+3. **Upload** the new zip into `public_html`. Wait for the bar to reach 100%.
+4. Right-click the zip → **Extract** → into `/public_html` → **Extract
+   File(s)**. Existing files are replaced.
+5. Delete the zip.
+6. Open **https://ticketroom.co.za/version.txt**. It must say
+   `TicketRoom build {{BUILD}}`. An older build means step 2 or 4 did not
+   happen: do them again.
+7. Sign in to the admin portal. The Overview line says "Running build
+   {{BUILD}}".
+8. On your phone, close the TicketRoom tab or app and open it again. If you
+   added TicketRoom to your home screen before, remove that icon and add it
+   again from Safari (Share → **Add to Home Screen**) or Chrome
+   (⋮ → **Add to Home screen**).
+
+The database upgrades itself the first time the new version is opened.
+Accounts made before email confirmation was required are asked to confirm
+their email once, the next time they sign in; the link is sent for them.
 
 ## 1. Set the PHP version
 
@@ -46,12 +76,13 @@ cPanel → **File Manager** → `public_html`.
 
 ## 3. Upload the site
 
-1. Upload `ticketroom.zip` into `public_html`.
+1. Upload the TicketRoom zip into `public_html`.
 2. Right-click it → **Extract**, into `public_html` itself.
 3. You should now see `index.html`, `api`, `assets`, `data` and `legal`
    directly in `public_html`, not inside another folder. If they went into a
    folder, move its contents up one level.
-4. **Delete `ticketroom.zip` from the server.**
+4. **Delete the zip from the server.** Then open
+   https://ticketroom.co.za/version.txt: it should say `TicketRoom build {{BUILD}}`.
 
 Permissions: `data` must be writable: `755` (or `775` if the host runs PHP as
 a different user). Right-click → **Change Permissions**.

@@ -381,10 +381,28 @@ function tr_handle(): void
     } catch (Throwable $e) {
         $res = tr_error_response($e);
     }
+    // Respond first, then do background work (sending email, expiring holds).
+    // PHP-FPM and LiteSpeed can end the response early; elsewhere (mod_php,
+    // CGI) the reply is sent whole with its length and the connection closed,
+    // so the visitor never waits for email to go out.
+    $early = function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    if (!$early) {
+        ignore_user_abort(true);
+        while (ob_get_level() > 0) ob_end_clean();
+        ob_start();
+    }
     emit($res);
-
-    // Respond first, then do background work.
     if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
     elseif (function_exists('litespeed_finish_request')) litespeed_finish_request();
+    elseif (!headers_sent()) {
+        if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');
+        header('Content-Length: ' . ob_get_length());
+        header('Connection: close');
+        ob_end_flush();
+        flush();
+    } else {
+        ob_end_flush();
+        flush();
+    }
     try { run_due_jobs(); } catch (Throwable $e) { error_log('[ticketroom] jobs: ' . $e->getMessage()); }
 }

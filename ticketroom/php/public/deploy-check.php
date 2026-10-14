@@ -27,12 +27,12 @@ $add = function (string $section, string $label, ?bool $ok, string $detail = '')
 
 // ---- The upload
 $build = is_file("$root/version.txt") ? trim((string) file_get_contents("$root/version.txt")) : '';
-$add('Upload', 'Build', $build !== '', $build ?: 'version.txt is missing: the upload is incomplete. Extract ticketroom.zip again.');
+$add('Upload', 'Build', $build !== '', $build ?: 'version.txt is missing: the upload is incomplete. Extract the TicketRoom zip again.');
 $docroot = rtrim((string) realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? '')), '/');
 $add('Upload', 'Files are in the folder the domain shows', $docroot === $root, $docroot === $root ? $root
     : "These files are in $root but the domain shows $docroot. Move them there (cPanel → Domains shows each domain's Document Root).");
 foreach (['index.html', 'event.html', 'admin.html', 'assets/core.js', 'api/index.php', 'api/config.php', 'api/schema.sql', 'api/lib/core.php'] as $f) {
-    if (!is_file("$root/$f")) $add('Upload', "Missing file: $f", false, 'Extract ticketroom.zip again and overwrite everything.');
+    if (!is_file("$root/$f")) $add('Upload', "Missing file: $f", false, 'Extract the TicketRoom zip again and overwrite everything.');
 }
 foreach (['.htaccess' => 'Clean addresses and the private folders depend on it.', 'api/.htaccess' => 'Keeps the code in api/ private.'] as $f => $why) {
     $add('Upload', "Hidden file $f", is_file("$root/$f"), is_file("$root/$f") ? '' : "Not uploaded. $why In File Manager turn on Settings → Show Hidden Files, then extract the zip again.");
@@ -110,6 +110,7 @@ if ($data) {
 // ---- Leftovers from earlier uploads
 $left = [];
 foreach (['tr-app', 'ticketroom-app', 'holding', 'ticketroom.zip', 'stayhope.zip'] as $f) if (file_exists("$root/$f")) $left[] = $f;
+foreach (glob("$root/*.zip") ?: [] as $z) if (!in_array(basename($z), $left, true)) $left[] = basename($z);
 if (is_dir("$root/tr-data") && $data !== "$root/tr-data") $left[] = 'tr-data';
 $add('Tidy up', 'Files from earlier uploads', !$left, $left ? 'Delete these from public_html: ' . implode(', ', $left) . '.' : 'None.');
 $add('Tidy up', 'This page', null, 'When everything above is green, delete data/unlock-check so this page locks again.');

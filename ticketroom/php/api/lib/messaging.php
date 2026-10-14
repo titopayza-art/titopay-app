@@ -21,16 +21,24 @@ function mail_mode(): string
     return cfg('mail.smtpHost') && (string) cfg('mail.smtpPass', '') !== '' ? 'smtp' : 'mail';
 }
 // Sends one batch. Marketing is re-checked against consent at send time.
+// When the mail server cannot be reached, email waits two minutes before the
+// next try instead of every message waiting out its own connection timeout.
+const MAIL_PAUSE_SECONDS = 120;
+function mail_paused(): bool { return (int) val("SELECT value FROM meta WHERE key = 'mail_paused_until'") > time(); }
 function outbox_deliver(int $limit = 25): int
 {
-    $claimed = tx(function () use ($limit) {
+    $emailOff = mail_paused();
+    $claimed = tx(function () use ($limit, $emailOff) {
         $list = rows("SELECT o.*, c.organiser_id FROM message_outbox o LEFT JOIN campaigns c ON c.id = o.campaign_id
-                       WHERE o.status = 'queued' AND o.attempts < 5 ORDER BY o.created_at LIMIT $limit");
+                       WHERE o.status = 'queued' AND o.attempts < 5" . ($emailOff ? " AND o.channel = 'sms'" : '') . " ORDER BY o.created_at LIMIT $limit");
         foreach ($list as $m) q('UPDATE message_outbox SET attempts = attempts + 1 WHERE id = ?', [$m['id']]);
         return $list;
     });
     $sent = 0;
+    $down = false;
     foreach ($claimed as $m) {
+        // Mail server unreachable: put the rest back untouched and try later.
+        if ($down && $m['channel'] !== 'sms') { q('UPDATE message_outbox SET attempts = attempts - 1 WHERE id = ?', [$m['id']]); continue; }
         try {
             if ($m['kind'] === 'marketing') {
                 $g = val("SELECT granted FROM marketing_consents WHERE user_id = ? AND COALESCE(organiser_id,'') = COALESCE(?,'') AND channel = ?", [$m['user_id'], $m['organiser_id'], $m['channel']]);
@@ -45,6 +53,14 @@ function outbox_deliver(int $limit = 25): int
             if ($m['campaign_id']) q('UPDATE campaigns SET delivered_count = delivered_count + 1 WHERE id = ?', [$m['campaign_id']]);
             $sent++;
         } catch (Throwable $e) {
+            if ($m['channel'] !== 'sms' && str_starts_with($e->getMessage(), 'SMTP connect failed')) {
+                $down = true;
+                q("INSERT INTO meta (key, value) VALUES ('mail_paused_until', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) (time() + MAIL_PAUSE_SECONDS)]);
+                error_log('[ticketroom] mail server unreachable, email paused for ' . MAIL_PAUSE_SECONDS . 's: ' . $e->getMessage());
+                // Not this message's fault: it keeps all its tries for when the server is back.
+                q('UPDATE message_outbox SET attempts = attempts - 1, last_error = ? WHERE id = ?', [substr($e->getMessage(), 0, 300), $m['id']]);
+                continue;
+            }
             $final = $m['attempts'] + 1 >= 5;
             q('UPDATE message_outbox SET status = ?, last_error = ? WHERE id = ?', [$final ? 'failed' : 'queued', substr($e->getMessage(), 0, 300), $m['id']]);
             if ($final && $m['campaign_id']) q('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?', [$m['campaign_id']]);
@@ -127,7 +143,7 @@ function smtp_open(): array
     $port = (int) cfg('mail.smtpPort', 465);
     $user = (string) cfg('mail.smtpUser');
     $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
-    $fp = @stream_socket_client(($port === 465 ? 'ssl://' : 'tcp://') . "$host:$port", $errno, $err, 15, STREAM_CLIENT_CONNECT, $ctx);
+    $fp = @stream_socket_client(($port === 465 ? 'ssl://' : 'tcp://') . "$host:$port", $errno, $err, 10, STREAM_CLIENT_CONNECT, $ctx);
     if (!$fp) throw new RuntimeException("SMTP connect failed: $err");
     stream_set_timeout($fp, 20);
     $c = ['fp' => $fp];

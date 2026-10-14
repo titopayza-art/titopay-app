@@ -364,6 +364,12 @@ function welcome() {
 }
 
 (async () => {
+  // Home-screen icons added before this version open /account. A fresh launch
+  // from the icon goes to the home page, like a new icon does.
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  let launched = true;
+  try { launched = !!sessionStorage.getItem("tr-launched"); sessionStorage.setItem("tr-launched", "1"); } catch { /* storage blocked */ }
+  if (standalone && !launched && !location.hash && navigator.onLine !== false) return location.replace("/");
   await header($("#header"), { portal: "customer" });
   // Links from emails work signed out: choose a new password, confirm an email.
   const reset0 = location.hash.match(/^#\/reset\/(.+)$/);

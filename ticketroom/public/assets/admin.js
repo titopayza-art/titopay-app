@@ -165,7 +165,9 @@ async function overview() {
   nav({ orgs: d.organisers.pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open });
   // text is [one, many]: "1 refund awaiting…", "3 refunds awaiting…".
   const alert = (n, text, href, kind = "warn") => n ? html`<a class="callout ${kind} row between" href="${href}"><span><strong>${n}</strong> ${n === 1 ? text[0] : text[1]}</span><span>→</span></a>` : "";
-  render(main, html`${head("Overview", `Signed in as ${[...R].join(", ")}.`)}
+  // Which build is running, so an upload can be checked at a glance.
+  const build = await fetch("/version.txt", { cache: "no-store" }).then((r) => (r.ok ? r.text() : "")).then((t) => (t.match(/build (\S+)/) || [])[1] || "").catch(() => "");
+  render(main, html`${head("Overview", `Signed in as ${[...R].join(", ")}.${build ? ` Running build ${build}.` : ""}`)}
     <div class="kpis"><div class="kpi"><div class="k">GMV (24h)</div><div class="v">${money(d.sales.gmv24)}</div><div class="s">${d.sales.orders24} orders</div></div>
       <div class="kpi"><div class="k">GMV (all time)</div><div class="v">${money(d.sales.gmv_all)}</div></div>
       <div class="kpi"><div class="k">Users</div><div class="v">${d.users.total}</div><div class="s">+${d.users.new7} this week</div></div>

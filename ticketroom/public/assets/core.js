@@ -285,6 +285,8 @@ export function portalsFor(u) {
 export const homePortal = (u) => (isStaff(u) ? "/admin" : u?.organisers?.length ? "/organisers" : "/account");
 
 export async function header(el, { portal, active } = {}) {
+  // The app is open in this tab: a later visit to /account is on purpose (see account.js).
+  try { sessionStorage.setItem("tr-launched", "1"); } catch { /* storage blocked */ }
   const [u, site] = await Promise.all([me(), siteInfo()]);
   const here = PORTALS[portal];
   const mine = portalsFor(u);

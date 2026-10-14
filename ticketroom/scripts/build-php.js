@@ -43,6 +43,8 @@ fs.mkdirSync(OUT, { recursive: true });
 
 // ---- root files
 for (const f of [".htaccess", "index.php", "deploy-check.php", "set-password.php", "START-HERE.txt", "DEPLOY-AFRIHOST.md", "robots.txt"]) copy(path.join(ROOT, "php", "public", f), path.join(OUT, f));
+// The guides name the build they came with, so an upload can be checked against version.txt.
+for (const f of ["START-HERE.txt", "DEPLOY-AFRIHOST.md"]) write(f, fs.readFileSync(path.join(ROOT, "php", "public", f), "utf8").replaceAll("{{BUILD}}", BUILD));
 copy(path.join(ROOT, "php", "public", "data"), path.join(OUT, "data"));
 write("version.txt", `TicketRoom build ${BUILD}\n`);
 for (const f of ["sw.js", "manifest.webmanifest"]) copy(path.join(ROOT, "public", f), path.join(OUT, f));

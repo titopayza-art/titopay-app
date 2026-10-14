@@ -341,6 +341,8 @@ route('PUT', '/api/admin/integrations/:key', function ($a) {
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
     $values = is_array(body()['values'] ?? null) ? body()['values'] : [];
     $changed = tx(fn() => integration_save($group, $values, $b['clear'] ?? [], $u['id']));
+    // New mail settings: try them straight away rather than after a pause.
+    if ($group === 'mail') q("DELETE FROM meta WHERE key = 'mail_paused_until'");
     $warning = null;
     // Yoco: register TicketRoom's notification address and keep the signing secret.
     if ($group === 'payments' && pay_provider() === 'yoco' && (string) cfg('payments.yocoSecretKey', '') !== ''
