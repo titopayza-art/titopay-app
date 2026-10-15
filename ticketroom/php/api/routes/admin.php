@@ -60,6 +60,7 @@ route('GET', '/api/admin/dashboard', function () {
         'payments_test' => pay_ready() && pay_test() ? 1 : 0,
         'test_orders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'"),
         'verification_pending' => (int) val("SELECT count(*) FROM verification_documents WHERE status = 'submitted'"),
+        'promotions_social' => (int) val("SELECT count(*) FROM event_promotions WHERE status = 'active' AND social_status = 'requested'"),
     ];
     $ints = fn(array $r) => array_map('intval', $r);
     return ['users' => $ints($users), 'organisers' => $ints($orgs), 'events' => $ints($events), 'sales' => $ints($sales), 'ops' => $ops, 'ledger' => adm_ledger()];

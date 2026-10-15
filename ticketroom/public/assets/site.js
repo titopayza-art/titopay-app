@@ -609,13 +609,14 @@ async function sandboxPayPage(q) {
   let d;
   try { d = await get(`/api/public/payments/${id}/sandbox?k=${encodeURIComponent(k)}`); } catch (err) { return fail(err.message); }
   if (d.payment.status !== "pending") { location.replace(d.returnUrl); return; }
+  const promo = d.purpose === "promotion";
   render(main, html`<div class="wrap section"><section class="sandbox-pay card">
     <p class="sandbox-flag" role="note"><strong>Sandbox</strong> Practice payment. No real money moves and no card is charged.</p>
     <span class="tk-label">Pay TicketRoom</span>
     <h1 class="mb-0">${moneyExact(d.payment.amountCents)}</h1>
-    <p class="muted">${d.order.title} · Order ${d.order.reference}</p>
+    <p class="muted">${promo ? `Promote package for ${d.order.title} · ${d.order.reference}` : `${d.order.title} · Order ${d.order.reference}`}</p>
     <div class="sandbox-card" aria-hidden="true"><span>TEST CARD</span><b>4242 4242 4242 4242</b><span>${d.order.buyer_name || "Practice buyer"} · 12/30</span></div>
-    <p class="small">Choose what the bank says. Tickets from an approved practice payment are marked <strong>TEST</strong> and will not open the gate.</p>
+    <p class="small">${promo ? html`Choose what the bank says. A Promote package from an approved practice payment is marked <strong>TEST</strong> and never counts as revenue.` : html`Choose what the bank says. Tickets from an approved practice payment are marked <strong>TEST</strong> and will not open the gate.`}</p>
     <div class="stack">
       <button class="btn btn-primary btn-block" data-outcome="paid">Approve payment</button>
       <button class="btn btn-ghost btn-block" data-outcome="failed">Decline (card refused)</button>

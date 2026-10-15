@@ -159,7 +159,7 @@ const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { con
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
   render($("#sidenav"), html`<a href="#/">Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
+    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a><a href="#/promotions" data-feature="promote">Promotions${c(counts.promotions)}</a>
     <div class="sect" data-feature="finance" data-role-need="admin finance">Finance</div><a href="#/refunds" data-feature="finance" data-role-need="admin finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance" data-role-need="admin finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance" data-role-need="admin finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance" data-role-need="admin finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance" data-role-need="admin finance">Ledger</a>
     <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
@@ -170,7 +170,7 @@ function nav(counts = {}) {
 
 async function overview() {
   const d = await get("/api/admin/dashboard");
-  nav({ orgs: d.organisers.pending, verif: d.ops.verification_pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open });
+  nav({ orgs: d.organisers.pending, verif: d.ops.verification_pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open, promotions: d.ops.promotions_social });
   // text is [one, many]: "1 refund awaiting…", "3 refunds awaiting…".
   const alert = (n, text, href, kind = "warn") => n ? html`<a class="callout ${kind} row between" href="${href}"><span><strong>${n}</strong> ${n === 1 ? text[0] : text[1]}</span><span>→</span></a>` : "";
   // Which build is running, so an upload can be checked at a glance.
@@ -347,6 +347,58 @@ async function refunds() {
     const r = await post("/api/admin/refunds/bulk-approve", { refundIds: actionable.map((x) => x.id) });
     toast(`${r.results.filter((x) => !x.error).length} processed, ${r.results.filter((x) => x.error).length} failed.`, "good"); refunds();
   });
+}
+
+// Promote packages: the socials queue, revenue (live and TEST kept apart)
+// and refunds when an event is cancelled.
+async function promotions() {
+  const filter = sessionStorage.getItem("adm_pm") || "social";
+  const { promotions: list, revenue: rv } = await get(`/api/admin/promotions${filter === "all" ? "" : `?status=${filter}`}`);
+  const canSocial = isA() || isS();
+  render(main, html`${head("Promotions", "Organisers pay once to promote an event until it ends. Post their events on our socials, and refund a package if its event is cancelled.")}
+    <div class="kpis"><div class="kpi"><div class="k">Promote revenue</div><div class="v">${money(rv.liveCents)}</div><div class="s">${rv.live} paid package${rv.live === 1 ? "" : "s"}, less refunds</div></div>
+      <div class="kpi"><div class="k">Test purchases</div><div class="v">${money(rv.testCents)}</div><div class="s">${rv.test} TEST package${rv.test === 1 ? "" : "s"}, never revenue</div></div>
+      <div class="kpi"><div class="k">Active now</div><div class="v">${rv.active}</div><div class="s">promoted until their events end</div></div>
+      <div class="kpi"><div class="k">Social posts to do</div><div class="v">${rv.socialQueue}</div><div class="s">requested or scheduled</div></div></div>
+    <div class="chips mt">${[["social", "Social queue"], ["active", "Active"], ["pending_payment", "Unpaid"], ["ended", "Ended"], ["refunded", "Refunded"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
+    <div class="mt">${tbl(["Ref", "Event", "Paid", "Status", "Social", ""], list.map((p) => html`<tr>
+      <td class="mono small">${p.reference}${p.test ? html` <span class="badge amber">TEST</span>` : ""}</td>
+      <td><a href="/events/${p.event_slug}" target="_blank" rel="noopener">${p.event_title}</a><div class="tiny muted">${p.organiser_name} · ${p.bought_by_email || ""}</div>${p.event_status === "cancelled" || p.cancellation_requested_at ? html`<div class="tiny"><span class="badge bad">event ${p.event_status === "cancelled" ? "cancelled" : "cancellation requested"}</span></div>` : ""}</td>
+      <td class="small">${moneyExact(p.price_cents)}${p.paid_at ? html`<div class="tiny muted">${p.paid_with === "balance" ? "from balance" : p.payment_provider || "card"} · ${fmtDate(p.paid_at)}</div>` : ""}</td>
+      <td>${badge(p.status)}${p.status === "active" ? html`<div class="tiny muted">until ${fmtDate(p.ends_at)}</div>` : ""}${p.refund_status && p.refund_status !== "completed" ? html`<div class="tiny">refund ${p.refund_status.replace("_", " ")}${p.refund_failure ? `: ${p.refund_failure}` : ""}</div>` : ""}</td>
+      <td>${p.social_status ? badge(p.social_status) : html`<span class="tiny muted">no request</span>`}</td>
+      <td><div class="row">${p.social_request ? html`<button class="btn btn-ghost btn-sm" data-soc="${p.id}">${canSocial && p.social_status !== "posted" ? "Social post" : "View request"}</button>` : ""}
+        ${isF() && ["active", "ended"].includes(p.status) && (p.event_status === "cancelled" || p.cancellation_requested_at) && (!p.refund_status || p.refund_status === "failed") ? html`<button class="btn btn-ghost btn-sm" data-refund="${p.id}">Refund</button>` : ""}
+        ${isF() && p.refund_status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-manual="${p.id}">Record refund</button>` : ""}</div></td></tr>`),
+      filter === "social" ? "No social posts waiting." : "No promotions here.")}</div>`);
+  $$("[data-f]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_pm", b.dataset.f); promotions(); }));
+  $$("[data-refund]").forEach((b) => b.addEventListener("click", async () => {
+    const why = await reason("Refund this Promote package", "The money goes back the way it was paid: card (by the provider) or the organiser's balance.");
+    if (why && await act(() => post(`/api/admin/promotions/${b.dataset.refund}/refund`, { reason: why }), "Refund sent.")) promotions();
+  }));
+  $$("[data-manual]").forEach((b) => b.addEventListener("click", async () => {
+    const ref = await reason("Record the refund", "Refund it in the PayFast dashboard first, then enter its reference here.", "PayFast reference");
+    if (ref && await act(() => post(`/api/admin/promotions/${b.dataset.manual}/refund/complete`, { providerReference: ref }), "Refund recorded.")) promotions();
+  }));
+  $$("[data-soc]").forEach((b) => b.addEventListener("click", () => {
+    const p = list.find((x) => x.id === b.dataset.soc), r = p.social_request || {};
+    const dlg = dialog(`Social post: ${p.event_title}`, html`<div class="stack">
+      <p class="small muted mb-0">Asked by ${r.requestedBy || "the organiser"} on ${fmtDateTime(r.requestedAt)} · ${p.organiser_name}</p>
+      <div class="card flat"><p class="mb-0 prose">${r.caption}</p></div>
+      <p class="small mb-0"><strong>Preferred dates:</strong> ${r.preferredDates || "any"}</p>
+      ${r.links?.length ? html`<p class="small mb-0"><strong>Their links:</strong> ${r.links.map((u) => html`<a href="${u}" target="_blank" rel="noopener">${u}</a> `)}</p>` : ""}
+      ${r.images?.length ? html`<div class="row">${r.images.map((id) => html`<a href="/media/${id}" target="_blank" rel="noopener" download><img class="promote-thumb" src="/media/${id}" alt="Picture for the post"></a>`)}</div><p class="tiny muted mb-0">Open a picture to download it.</p>` : html`<p class="small muted mb-0">No pictures.</p>`}
+      ${canSocial && p.social_status !== "posted" ? html`<form class="stack" id="smf"><div class="field"><label for="sms">Status</label><select id="sms" name="status"><option value="scheduled" ${raw(p.social_status !== "scheduled" ? "selected" : "")}>Scheduled</option><option value="posted" ${raw(p.social_status === "scheduled" ? "selected" : "")}>Posted (live)</option></select></div>
+        <div class="field"><label for="smn">Note to the organiser <span class="muted">(optional)</span></label><input id="smn" name="notes" maxlength="1000" value="${p.social_notes || ""}" placeholder="e.g. Going out on Instagram and Facebook on Friday at 18:00"></div>
+        <div class="field"><label for="sml">Post links <span class="muted">(one per line, needed for Posted)</span></label><textarea id="sml" name="links" rows="2">${(p.social_links || []).join("\n")}</textarea></div>
+        <button class="btn btn-primary">Save</button><p class="tiny muted mb-0">Marking it posted emails the organiser the links.</p></form>`
+        : p.social_links?.length ? html`<p class="small mb-0"><strong>Posted:</strong> ${p.social_links.map((u) => html`<a href="${u}" target="_blank" rel="noopener">${u}</a> `)}</p>` : ""}</div>`, { wide: true });
+    const f = $("#smf", dlg);
+    if (f) onSubmit(f, async (v) => {
+      await post(`/api/admin/promotions/${p.id}/social`, { status: v.status, notes: v.notes || undefined, links: String(v.links || "").split(/\s+/).filter(Boolean) });
+      dlg.close(); toast(v.status === "posted" ? "Marked as posted. The organiser has been emailed." : "Marked as scheduled.", "good"); promotions();
+    });
+  }));
 }
 
 async function payouts() {
@@ -911,6 +963,6 @@ async function integrations() {
   await header($("#header"), { portal: "admin" });
   document.title = "Admin portal | TicketRoom";
   nav();
-  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
+  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support], ["/promotions", promotions],
     ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();

@@ -247,7 +247,9 @@ export const badge = (status) => {
     refunded: "info", partially_refunded: "info", reversed: "info", transferred: "info",
     failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain",
     // organiser verification
-    missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn" };
+    missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn",
+    // Promote
+    posted: "good", ended: "plain" };
   return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
 };
 

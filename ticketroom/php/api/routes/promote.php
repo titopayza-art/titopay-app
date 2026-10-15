@@ -89,7 +89,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/promotion/social', function
 // Promoted events across the organisation (the Marketing page).
 route('GET', '/api/organiser/:orgId/promotions', function ($a) {
     organiser_access(require_auth(), $a['orgId'], ORG_ALL);
-    return ['promotions' => array_map('promo_view', rows("SELECT p.*, e.title AS event_title FROM event_promotions p JOIN events e ON e.id = p.event_id
+    return ['priceCents' => promo_price(), 'promotions' => array_map('promo_view', rows("SELECT p.*, e.title AS event_title FROM event_promotions p JOIN events e ON e.id = p.event_id
                                                             WHERE p.organiser_id = ? AND p.status IN ('active','ended','refunded') ORDER BY p.paid_at DESC LIMIT 100", [$a['orgId']]))];
 });
 

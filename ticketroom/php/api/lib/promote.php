@@ -79,6 +79,10 @@ function promo_blocked(array $org, array $event): ?array
     if (!in_array($event['status'], ['published', 'pending_approval'], true)) return ['event_not_promotable', 'Only published events, or events waiting to be published, can be promoted.'];
     if (to_unix($event['ends_at']) <= microtime(true)) return ['event_over', 'This event has ended.'];
     if (promo_active($event['id'])) return ['already_promoted', 'This event is already promoted until it ends.'];
+    // The verification (FICA) rules that let the event be listed still hold:
+    // approved for a published event, submitted for one waiting to be published.
+    try { kyc_require_for_event($event, $event['status'] === 'published' ? 'approved' : 'submitted'); }
+    catch (AppError $e) { return ['verification_required', $e->getMessage()]; }
     return null;
 }
 
@@ -131,6 +135,9 @@ function promo_payment_start(array $promo, array $u): array
 function promo_pay_from_balance(array $u, array $org, array $event): array
 {
     return tx(function () use ($u, $org, $event) {
+        // Spending the balance follows the payout rules: a verified organiser and bank account.
+        try { kyc_require_for_payout($org['id']); }
+        catch (AppError $e) { throw conflict('Paying from your balance needs the same verification as a payout. ' . $e->getMessage() . ' Or pay by card.', $e->errCode, $e->details); }
         $promo = promo_open($u, $org, $event);
         $price = (int) $promo['price_cents'];
         $money = organiser_money(row('SELECT * FROM organisers WHERE id = ?', [$org['id']]));
