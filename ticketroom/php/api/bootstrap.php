@@ -14,6 +14,7 @@ require TR_APP . '/lib/qr.php';
 require TR_APP . '/lib/wallet.php';
 require TR_APP . '/lib/integrations.php';
 require TR_APP . '/lib/payments.php';
+require TR_APP . '/lib/verification.php';
 require TR_APP . '/lib/promote.php';
 
 // The data folder holds everything the site creates for itself: the
@@ -255,11 +256,22 @@ const UPGRADES = [
     10 => [
         'ALTER TABLE events ADD COLUMN lineup TEXT',
     ],
-    // Promote: the R1500 once-off event promotion package, its payments,
-    // and campaign tracking links.
-    13 => [
-        'ALTER TABLE tracking_links ADD COLUMN campaign_id TEXT',
-        'ALTER TABLE campaigns ADD COLUMN promotion_id TEXT',
+    // (11 belongs to another feature.)
+    // Organiser verification (FICA / KYC). Only its own new tables, created
+    // if missing, so it works whatever 11 did.
+    12 => ['@verification'],
+    // Promote: the R1500 once-off event promotion package, its payments and
+    // campaign tracking links. Only its own tables and columns, each added if
+    // missing (see tr_promote_tables), so it works whatever 11 and 12 did.
+    13 => ['@promote'],
+];
+// Promote's tables and columns (version 13), each only if missing.
+function tr_promote_tables(): void
+{
+    foreach (['tracking_links' => 'campaign_id', 'campaigns' => 'promotion_id'] as $t => $c) {
+        if (!val("SELECT 1 FROM pragma_table_info('$t') WHERE name = ?", [$c])) db()->exec("ALTER TABLE $t ADD COLUMN $c TEXT");
+    }
+    foreach ([
         'CREATE TABLE IF NOT EXISTS event_promotions (id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL REFERENCES events(id), organiser_id TEXT NOT NULL REFERENCES organisers(id), status TEXT NOT NULL CHECK (status IN (\'pending_payment\',\'active\',\'ended\',\'refunded\',\'cancelled\')), price_cents INTEGER NOT NULL CHECK (price_cents > 0), paid_with TEXT CHECK (paid_with IN (\'card\',\'balance\')), test INTEGER NOT NULL DEFAULT 0, social_status TEXT CHECK (social_status IN (\'requested\',\'scheduled\',\'posted\')), social_request TEXT, social_notes TEXT, social_links TEXT, social_updated_at TEXT, refund_status TEXT CHECK (refund_status IN (\'processing\',\'manual_pending\',\'completed\',\'failed\')), refund_reference TEXT, refund_reason TEXT, refund_provider_reference TEXT, refund_failure TEXT, refunded_by TEXT REFERENCES users(id), refunded_at TEXT, created_by TEXT NOT NULL REFERENCES users(id), paid_at TEXT, ends_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
         'CREATE UNIQUE INDEX IF NOT EXISTS event_promotions_open_uq ON event_promotions (event_id) WHERE status IN (\'pending_payment\',\'active\')',
         'CREATE INDEX IF NOT EXISTS event_promotions_status_idx ON event_promotions (status, created_at)',
@@ -269,8 +281,16 @@ const UPGRADES = [
         'CREATE INDEX IF NOT EXISTS promotion_payments_promo_idx ON promotion_payments (promotion_id)',
         'CREATE INDEX IF NOT EXISTS campaigns_promotion_idx ON campaigns (promotion_id)',
         'CREATE INDEX IF NOT EXISTS tracking_links_campaign_idx ON tracking_links (campaign_id)',
-    ],
-];
+    ] as $sql) db()->exec($sql);
+}
+// The verification tables, exactly as written at the end of schema.sql.
+function tr_verification_tables(): void
+{
+    $sql = (string) file_get_contents(TR_APP . '/schema.sql');
+    $at = strpos($sql, '-- Organiser verification (FICA / KYC).');
+    if ($at === false) throw new RuntimeException('schema.sql has no verification tables');
+    db()->exec(substr($sql, $at));
+}
 // The platform owner is the first administrator. Nobody else can change
 // their roles, suspend them or reset their password.
 function tr_mark_owner(): void
@@ -298,7 +318,7 @@ function tr_upgrade(): void
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         foreach (UPGRADES as $v => $steps) {
             if ($v <= $have) continue;
-            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), default => db()->exec($sql) };
+            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@promote' => tr_promote_tables(), default => db()->exec($sql) };
             q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
         }
     });
@@ -345,6 +365,8 @@ function jobs(): array
             q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND body <> '[redacted]'", [iso_in(-180 * 86400)]);
         }],
         // Organiser campaigns booked for later go out when their time comes.
+        // Verification documents past their keeping time are deleted (POPIA).
+        ['verification-retention', 21600, fn() => kyc_retention()],
         // Promote packages end with their event; unpaid ones lapse after a day.
         ['end-promotions', 300, fn() => promo_expire()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
@@ -415,7 +437,8 @@ function tr_handle(): void
     header('Cache-Control: no-store');
     try {
         $raw = '';
-        $isUpload = str_ends_with($path, '/uploads');
+        // Image and document uploads are read by their own routes, not here.
+        $isUpload = str_ends_with($path, '/uploads') || preg_match(KYC_UPLOAD_RE, $path);
         if (!$isUpload && in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
             $raw = (string) file_get_contents('php://input', false, null, 0, 102401);
             if (strlen($raw) > 102400) throw new AppError(413, 'too_large', 'That request is too large.');

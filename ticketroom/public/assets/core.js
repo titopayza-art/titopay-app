@@ -245,7 +245,9 @@ export const badge = (status) => {
   const map = { valid: "good", used: "info", paid: "good", confirmed: "good", completed: "good", approved: "good", published: "good", active: "good", sent: "good", matched: "good", admitted: "good",
     subscribed: "good", unsubscribed: "plain", pending: "warn", pending_payment: "warn", requested: "warn", pending_approval: "warn", processing: "warn", scheduled: "warn", draft: "plain", assigned: "info", unassigned: "plain", in_progress: "warn", open: "warn", queued: "warn",
     refunded: "info", partially_refunded: "info", reversed: "info", transferred: "info",
-    failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain" };
+    failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain",
+    // organiser verification
+    missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn" };
   return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
 };
 

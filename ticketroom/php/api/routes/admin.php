@@ -59,6 +59,7 @@ route('GET', '/api/admin/dashboard', function () {
         'stale_payments' => (int) val("SELECT count(*) FROM payments WHERE status = 'pending' AND created_at < ?", [iso_in(-3600)]),
         'payments_test' => pay_ready() && pay_test() ? 1 : 0,
         'test_orders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'"),
+        'verification_pending' => (int) val("SELECT count(*) FROM verification_documents WHERE status = 'submitted'"),
     ];
     $ints = fn(array $r) => array_map('intval', $r);
     return ['users' => $ints($users), 'organisers' => $ints($orgs), 'events' => $ints($events), 'sales' => $ints($sales), 'ops' => $ops, 'ledger' => adm_ledger()];
@@ -85,6 +86,12 @@ route('GET', '/api/admin/organisers', function () {
                          (SELECT u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = o.id AND m.role = 'owner' LIMIT 1) AS owner_name
                     FROM organisers o WHERE (? IS NULL OR o.status = ?) AND (? IS NULL OR o.ref = ? OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(o.contact_email) LIKE ? ESCAPE '\\')
                    ORDER BY o.created_at DESC LIMIT 200", array_merge([$status, $status], adm_find()));
+    // Verification at a glance: complete, waiting for review, or action needed.
+    foreach ($list as &$o) {
+        $o['verification'] = kyc_overall(kyc_state($o['id'])['items']);
+        $o['verification_pending'] = (int) val("SELECT count(*) FROM verification_documents WHERE organiser_id = ? AND status = 'submitted'", [$o['id']]);
+    }
+    unset($o);
     return ['organisers' => $list];
 });
 
@@ -99,6 +106,10 @@ route('POST', '/api/admin/organisers/:id/status', function ($a) {
         if ($b['status'] === 'suspended') {
             q("UPDATE events SET status = 'suspended', status_reason = 'organiser suspended' WHERE organiser_id = ? AND status = 'published'", [$id]);
         }
+        // A rejected application ends the relationship: the keeping period for
+        // its verification documents starts now. Approving again reopens it.
+        if ($b['status'] === 'rejected') kyc_profile_save($id, ['closed_at' => now_iso()]);
+        if ($approved && val('SELECT closed_at FROM organiser_verification WHERE organiser_id = ?', [$id])) kyc_profile_save($id, ['closed_at' => null]);
         if ($approved || $b['status'] === 'rejected') {
             $w = row("SELECT o.name, o.contact_email, u.id AS user_id, u.full_name, u.email FROM organisers o
                         LEFT JOIN organiser_members m ON m.organiser_id = o.id AND m.role = 'owner' LEFT JOIN users u ON u.id = m.user_id
@@ -153,6 +164,9 @@ route('POST', '/api/admin/events/:id/status', function ($a) {
     if ($t) {
         if (!in_array($ev['status'], $t[0], true)) throw conflict("Cannot {$b['action']} an event that is {$ev['status']}.", 'bad_transition');
         if ($b['action'] !== 'publish' && $b['action'] !== 'reinstate' && !$reason) throw bad('Give a reason.', ['reason' => 'Required.']);
+        // FICA: nothing goes on sale until the organiser's verification (and
+        // this event's required permits) have been approved.
+        if ($b['action'] === 'publish') kyc_require_for_event($ev, 'approved');
         tx(function () use ($ev, $t, $reason, $b) {
             $now = now_iso();
             q("UPDATE events SET status = ?, status_reason = ?, published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at = ? WHERE id = ?",

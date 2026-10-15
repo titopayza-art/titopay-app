@@ -11,6 +11,7 @@ const path = require("path");
 const assert = require("assert/strict");
 const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
+const { verifyOrganiser } = require("./kyc-helper");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8400";
 const TEMP = process.argv[3] || "Temp-pass-#2026";
@@ -167,6 +168,10 @@ async function signIn(p, email, password) {
     await made.getByRole("button", { name: "Next: add ticket types" }).click();
     await o.getByText(/Free admission/).first().waitFor();
     await shot(o, "organiser-free-event-tickets");
+    // FICA: the organiser sends their ID and signs the terms; TicketRoom approves
+    // them (tests-ui/php-verification.js covers this in the portals).
+    const orgId = (await (await o.request.get(`${BASE}/api/auth/me`)).json()).user.organisers[0].id;
+    await verifyOrganiser(o.request, a.request, BASE, orgId);
     // Preview shows the page as buyers will see it, before it is live.
     const [pv] = await Promise.all([o.context().waitForEvent("page"), o.getByRole("button", { name: "Preview" }).first().click()]);
     await pv.getByText(/Only people with this link can see this page/).waitFor();

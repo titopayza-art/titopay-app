@@ -2,7 +2,7 @@
 
 The PHP edition re-implements the Node API (`src/routes/*.js`) for shared hosting (Afrihost). The browser code in `public/assets/*.js` is shared and must keep working unchanged, so **JSON shapes, field names, status codes and error codes must match the Node routes exactly**.
 
-Scope: everything for free events (accounts, organisers, events, free tickets, transfers, scanning, marketing email, admin, site settings, assistant). **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): payments, refunds of paid orders, payouts, settlements, ledger, reconciliation, webhooks, cashless wallets/top-ups, tags/wristbands, vendors, POS, terminals, SMS.
+Scope: accounts, organisers, events, free and paid tickets (Yoco, PayFast, the TicketRoom sandbox), refunds, payouts, the ledger and reconciliation, payment webhooks, transfers, scanning, gate passes, email and SMS, marketing email, organiser verification (FICA), admin, site settings, assistant. **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): cashless wallets/top-ups, tags/wristbands, vendors, POS, terminals.
 
 ## Layout
 The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
@@ -32,6 +32,17 @@ The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
 - Settings: `settings_all()['support']['email']`, `setting_set($u, $key, $value)`.
 - Uploads: `store_upload($ownerId, $orgId, raw_body())` returns an id; images are served at `/media/{id}`.
 - Signed links: `sign_link(['u'=>$userId,'o'=>$orgId,'c'=>'email'], $ttl)`; `base_url()`.
+
+## Organiser verification (FICA / KYC)
+`lib/verification.php` (rules, storage, identity check, retention), `routes/verification.php` (API). Tables: `organiser_verification`, `verification_documents`, `event_risk` (schema.sql tail; upgrade 12 runs that tail, so it never touches other tables).
+- **Rules** (`kyc_org_items`, `kyc_event_items`): computed from the kind of organiser (individual / company / npo), whether they sell paid tickets (`plans_paid` or any paid ticket type) and event risk (`kyc_event_risk`). Each item has a `reason` and `needFor` (`free_events`, `paid_events`, `payouts`). Individuals: ID (passport if foreign), terms, email; paid adds proof of address + bank letter (payouts only). Companies: CIPC certificate + registration number, representative's ID, authorisation letter if not a director; paid adds business address + bank letter. NPOs: certificate, constitution, representative's ID, resolution; paid adds bank letter. Phone is shown as "not verified" and blocks nothing (there is no phone verification yet).
+- **Event items**: liquor licence (alcohol), permit (2 000+ people or a public space), insurance and safety plan (2 000+), artist authorisation (someone else's show), venue agreement (required if high risk, recommended for paid). High risk = 5 000+ people, festival, R1m+ of tickets, or a new organiser with R100k+ on sale; staff override per organiser or event. High risk adds five more documents.
+- **Enforcement**: `kyc_require_for_event($ev, 'submitted')` on organiser submit, `'approved'` on admin publish; `kyc_require_for_payout()` on payout request, approve and mark-paid (409 `verification_required` / `bank_not_verified`, with `details.missing`). Changing bank details retires the bank letter.
+- **Storage**: `data/private/<40 hex>`, AES-256-GCM with the data key (`kyc_seal`), magic bytes checked (PDF/JPG/PNG), max 10 MB or `post_max_size`. Upload: `POST /api/organiser/:orgId/verification/documents?requirement=…[&eventId=…]` with the raw file (core.php `csrf_check` and bootstrap's `$isUpload` know the path via `KYC_UPLOAD_RE`). Download only through `GET /api/verification/documents/:id/file` (owners, or staff with admin/support/finance), audited as `verification.document_viewed`.
+- **Identity check** (`kyc_provider`): integration group `kyc` (`cfg('kyc.provider')`): manual, sandbox (`KYC_SANDBOX_RULE`), http (like the SMS http provider; `kyc.allowPrivateHosts` in data/config.php for tests only). SA ID numbers are validated locally by `sa_id_check()` (Luhn, date, 18+, citizenship digit).
+- **Retention**: setting `verification` (`retentionYears` ≥ 5, `discardRejectedDays`), job `verification-retention`.
+- Tests: `tests-ui/php-verification.js`; other suites use `tests-ui/kyc-helper.js` (`verifyOrganiser`) to get past the rules through the API.
+- **How others do it** (from their public organiser help pages, worth rechecking): Quicket and Howler let anyone list free events and ask for ID, proof of address and a bank confirmation before paying out; Computicket and Ticketmaster onboard promoters through a sales contract with company papers. Ours: one checklist, only what the rules need for what you sell, a reason on every item, status as soon as you upload, free events never asked for bank details.
 
 ## Running locally
 ```

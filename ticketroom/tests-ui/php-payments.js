@@ -13,10 +13,13 @@ const crypto = require("crypto");
 const assert = require("assert/strict");
 const { spawn, execFileSync } = require("child_process");
 const { chromium } = require("playwright");
+const { verifyOrganiser } = require("./kyc-helper");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3] || "/srv/trtest/public_html";
-const MOCK = "http://127.0.0.1:8701";
+// TR_MOCK_PORT lets two test runs on one machine use different stand-ins.
+const MOCK_PORT = process.env.TR_MOCK_PORT || "8701";
+const MOCK = `http://127.0.0.1:${MOCK_PORT}`;
 const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 const ORG = { email: "naledi@example.co.za", password: "organiser-pass-1" };
 const problems = [];
@@ -56,7 +59,7 @@ const ledgerOk = async (a, label) => {
   const original = fs.readFileSync(cfgFile, "utf8");
   if (!original.includes("yocoApiBase")) fs.writeFileSync(cfgFile, original.replace("return [", `return [\n    'payments' => ['yocoApiBase' => '${MOCK}', 'payfastBase' => '${MOCK}'],`));
   const state = fs.mkdtempSync("/tmp/tr-mock-");
-  const mock = spawn("php", ["-S", "127.0.0.1:8701", path.join(__dirname, "mocks", "providers.php")], { env: { ...process.env, TARGET: BASE, STATE: state, PHP_CLI_SERVER_WORKERS: "4" }, stdio: "ignore" });
+  const mock = spawn("php", ["-S", `127.0.0.1:${MOCK_PORT}`, path.join(__dirname, "mocks", "providers.php")], { env: { ...process.env, TARGET: BASE, STATE: state, PHP_CLI_SERVER_WORKERS: "4" }, stdio: "ignore" });
   await new Promise((r) => setTimeout(r, 800));
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox"] });
   try {
@@ -121,7 +124,7 @@ const ledgerOk = async (a, label) => {
     await g.getByLabel("Email", { exact: true }).fill("thandi@example.co.za");
     await g.getByLabel("Confirm email").fill("thandi@example.co.za");
     await g.getByRole("button", { name: "Pay R320.00" }).click();
-    await g.waitForURL(/127\.0\.0\.1:8701\/pay\//);
+    await g.waitForURL(new RegExp(`127\\.0\\.0\\.1:${MOCK_PORT}/pay/`));
     await g.getByRole("button", { name: "Pay now" }).click();
     await g.getByRole("heading", { name: /You're going/ }).waitFor({ timeout: 30000 });
     assert.equal(await g.locator(".ticket").count(), 2);
@@ -136,7 +139,7 @@ const ledgerOk = async (a, label) => {
 
     // 5. The provider's notification never arrives: the order page asks Yoco and still confirms.
     const r2 = await (await g.request.post(`${BASE}/api/public/orders`, { data: { eventSlug: ev.slug, items: [{ ticketTypeId: tt.id, quantity: 1 }], idempotencyKey: `lost-${Date.now()}`, guest: { fullName: "Lost Notice", email: "lost@example.co.za" } } })).json();
-    assert.match(r2.payment.redirectUrl, /8701\/pay\//);
+    assert.match(r2.payment.redirectUrl, new RegExp(`${MOCK_PORT}/pay/`));
     await g.goto(r2.payment.redirectUrl);
     await g.getByRole("button", { name: "Pay (notification lost)" }).click();
     await g.getByRole("heading", { name: /You're going/ }).waitFor({ timeout: 40000 });
@@ -194,7 +197,10 @@ const ledgerOk = async (a, label) => {
     // 8. Organiser payout once the event is over.
     php(`q('UPDATE events SET starts_at = ?, ends_at = ? WHERE id = ?', [iso_in(-10 * 86400), iso_in(-9 * 86400), '${ev.id}']);`);
     await o.put(`/api/organiser/${orgId}/bank`, { bankName: "FNB", accountHolder: "Soweto Community Arts", accountNumber: "62812345678", branchCode: "250655" });
-    const fin = (await o.get(`/api/organiser/${orgId}/finance`)).body;
+    // FICA: no payout until the bank account is verified.
+    assert.equal((await o.post(`/api/organiser/${orgId}/payouts`, { amountCents: 10000 })).body.error.code, "bank_not_verified", "payouts wait for a verified bank account");
+    await verifyOrganiser(org.request, adm.request, BASE, orgId, { paid: true });
+    const fin =(await o.get(`/api/organiser/${orgId}/finance`)).body;
     assert.equal(fin.availableCents, 14250, "R150 ticket less 5%");
     await org.goto(`${BASE}/organisers#/finance`);
     await org.getByRole("button", { name: "Request payout" }).click();

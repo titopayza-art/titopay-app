@@ -159,7 +159,7 @@ const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { con
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
   render($("#sidenav"), html`<a href="#/">Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
+    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
     <div class="sect" data-feature="finance" data-role-need="admin finance">Finance</div><a href="#/refunds" data-feature="finance" data-role-need="admin finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance" data-role-need="admin finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance" data-role-need="admin finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance" data-role-need="admin finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance" data-role-need="admin finance">Ledger</a>
     <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
@@ -170,7 +170,7 @@ function nav(counts = {}) {
 
 async function overview() {
   const d = await get("/api/admin/dashboard");
-  nav({ orgs: d.organisers.pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open });
+  nav({ orgs: d.organisers.pending, verif: d.ops.verification_pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open });
   // text is [one, many]: "1 refund awaiting…", "3 refunds awaiting…".
   const alert = (n, text, href, kind = "warn") => n ? html`<a class="callout ${kind} row between" href="${href}"><span><strong>${n}</strong> ${n === 1 ? text[0] : text[1]}</span><span>→</span></a>` : "";
   // Which build is running, so an upload can be checked at a glance.
@@ -183,6 +183,7 @@ async function overview() {
     <section class="card mt"><h2>Needs attention</h2><div class="stack">
       ${d.ops.payments_test ? html`<a class="callout warn row between" href="#/integrations"><span><strong>Payments are in test mode.</strong> Buyers pay with practice payments and get TEST tickets the gate refuses${d.ops.test_orders ? ` (${d.ops.test_orders} so far)` : ""}. Switch to Live in Integrations before tickets go on sale.</span><span aria-hidden="true">→</span></a>` : ""}
       ${alert(d.organisers.pending, ["organiser awaiting approval", "organisers awaiting approval"], "#/organisers")}
+      ${alert(d.ops.verification_pending, ["verification document waiting for a check", "verification documents waiting for a check"], "#/verification")}
       ${alert(d.events.pending, ["event awaiting approval", "events awaiting approval"], "#/events")}
       ${alert(d.events.cancel_requests, ["event cancellation request", "event cancellation requests"], "#/events")}
       ${alert(d.ops.refunds_pending, ["refund awaiting finance approval", "refunds awaiting finance approval"], "#/refunds")}
@@ -213,8 +214,9 @@ async function organisers() {
   const { organisers: list } = await get(`/api/admin/organisers${q ? `?q=${encodeURIComponent(q)}` : ""}`);
   render(main, html`${head("Organiser accounts", "Organisations that sell tickets on TicketRoom. Approve applications here; organisers run their own events in the organiser portal.")}
     ${searchBox("oq", q, "Search by organiser ID (ORG-…), name or email")}
-    ${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted"><span class="mono">${o.ref || ""}</span> · ${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
-    <td>${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`), q ? "No organiser matches that search." : "No organisers yet. When someone applies to sell tickets, their application appears here for approval.")}`);
+    ${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Verification", "Status", ""], list.map((o) => html`<tr><td><a href="#/organisers/${o.id}"><strong>${o.name}</strong></a><div class="tiny muted"><span class="mono">${o.ref || ""}</span> · ${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td>
+    <td>${badge(o.verification)}${o.verification_pending ? html`<div class="tiny muted">${o.verification_pending} to check</div>` : ""}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
+    <td>${isA() ? html`<div class="row"><a class="btn btn-ghost btn-sm" href="#/organisers/${o.id}">Details</a><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`), q ? "No organiser matches that search." : "No organisers yet. When someone applies to sell tickets, their application appears here for approval.")}`);
   wireSearch("oq", organisers);
   $$("[data-s]").forEach((b) => b.addEventListener("click", async () => {
     const why = b.dataset.s === "approved" ? "" : await reason(`${b.dataset.s === "rejected" ? "Reject" : "Suspend"} organiser`, b.dataset.s === "suspended" ? "Their published events will be suspended too." : "They will be told.");
@@ -705,6 +707,98 @@ async function emailsPage() {
   }));
 }
 
+// ---------------- verification (FICA) ----------------
+// Organiser documents waiting for a person to check them. Opening a document
+// is logged and shown to the organiser.
+const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const fileLink = (id, text = "Open") => html`<a class="btn btn-ghost btn-sm" href="/api/verification/documents/${id}/file" target="_blank" rel="noopener">${text}</a>`;
+const providerNote = (p, label, simulated) => (p && p.status !== "manual" && p.outcome !== "manual"
+  ? html`<div class="tiny ${simulated ? "callout warn" : "muted"}">${simulated ? html`<strong>Sandbox (simulated)</strong>` : label}: ${badge(p.outcome || p.status)} ${p.message || ""}</div>` : "");
+async function kycDecide(id, approve, redraw) {
+  let why;
+  if (!approve) { why = await reason("Not accepted", "Tell the organiser what is wrong, so they can upload a better copy. They get this by email.", "What needs fixing"); if (!why) return; }
+  if (await act(() => post(`/api/admin/verification/documents/${id}/decide`, approve ? { approve: true } : { approve: false, reason: why }), approve ? "Approved." : "Sent back to the organiser.")) redraw();
+}
+function kycDecideWire(root, redraw) {
+  $$("[data-kyc-ok]", root).forEach((b) => b.addEventListener("click", () => kycDecide(b.dataset.kycOk, true, redraw)));
+  $$("[data-kyc-no]", root).forEach((b) => b.addEventListener("click", () => kycDecide(b.dataset.kycNo, false, redraw)));
+}
+async function verificationQueue() {
+  const status = sessionStorage.getItem("adm_kyc") || "submitted";
+  const r = await get(`/api/admin/verification?status=${status}`);
+  const s = r.settings;
+  render(main, html`${head("Verification", "Organiser documents (FICA). Open each one, compare it with the organiser's details, then approve it or say what is wrong.")}
+    ${r.provider.simulated ? html`<p class="callout warn small"><strong>Identity checks are in sandbox mode (simulated).</strong> ${r.provider.rule} Switch to staff review or your own provider under <a href="#/integrations">Integrations</a> before going live.</p>` : html`<p class="small muted">Identity checks: ${r.provider.label}.</p>`}
+    <div class="row mb"><label for="kq-s">Show</label><select id="kq-s">${[["submitted", "Waiting for a check"], ["approved", "Approved recently"], ["rejected", "Not accepted recently"]].map(([k, l]) => html`<option value="${k}" ${raw(k === status ? "selected" : "")}>${l}</option>`)}</select></div>
+    ${tbl(["Organiser", "Document", "Uploaded", "Identity check", "Status", ""], r.documents.map((d) => html`<tr><td><a href="#/organisers/${d.organiser_id}"><strong>${d.organiser_name}</strong></a><div class="tiny muted mono">${d.organiser_ref || ""}</div></td>
+      <td>${d.label}${d.event_title ? html`<div class="tiny muted">Event: ${d.event_title}</div>` : ""}<div class="tiny muted">${(d.mime_type || "").split("/")[1]?.toUpperCase()} · ${kb(d.size_bytes)}</div></td>
+      <td class="small">${fmtDateTime(d.created_at)}<div class="tiny muted">${d.uploaded_by_name || ""}</div></td>
+      <td>${d.provider && d.provider !== "manual" ? providerNote({ outcome: d.provider_status, message: d.provider_message }, d.provider_label, d.provider === "sandbox") : html`<span class="tiny muted">staff review</span>`}</td>
+      <td>${badge(d.status)}${d.reject_reason ? html`<div class="tiny muted">${d.reject_reason}</div>` : ""}${d.reviewed_by_name ? html`<div class="tiny muted">by ${d.reviewed_by_name}</div>` : ""}</td>
+      <td><div class="row">${fileLink(d.id)}${d.status === "submitted" && d.canDecide ? html`<button class="btn btn-good btn-sm" data-kyc-ok="${d.id}">Approve</button><button class="btn btn-ghost btn-sm" data-kyc-no="${d.id}">Reject</button>` : ""}</div></td></tr>`),
+      status === "submitted" ? "Nothing waiting. New uploads from organisers appear here." : "Nothing here yet.")}
+    <section class="card mt"><h2>Keeping documents (POPIA)</h2>
+      <p class="small">FICA records are kept for at least 5 years after an organiser's account closes, then deleted automatically. Copies that were replaced or not accepted are not records and are deleted sooner. Closing an organiser is done from its page.</p>
+      <form class="stack" id="kset"><div class="grid-2"><div class="field"><label for="ks-y">Keep records for (years after closing)</label><input id="ks-y" name="retentionYears" type="number" min="5" max="10" required value="${s.retentionYears}" ${raw(isA() ? "" : "disabled")}><span class="hint">At least 5, as FICA requires.</span></div>
+        <div class="field"><label for="ks-d">Delete replaced or rejected copies after (days)</label><input id="ks-d" name="discardRejectedDays" type="number" min="30" max="365" required value="${s.discardRejectedDays}" ${raw(isA() ? "" : "disabled")}></div></div>
+        ${isA() ? html`<div><button class="btn btn-dark">Save keeping rules</button></div>` : html`<p class="small muted mb-0">Only admins can change these.</p>`}</form></section>`);
+  $("#kq-s").addEventListener("change", (e) => { sessionStorage.setItem("adm_kyc", e.target.value); verificationQueue(); });
+  if (isA()) onSubmit($("#kset"), async (v) => { await put("/api/admin/settings/verification", { retentionYears: Number(v.retentionYears), discardRejectedDays: Number(v.discardRejectedDays) }); toast("Keeping rules saved.", "good"); });
+  kycDecideWire(main, verificationQueue);
+}
+const RISK_OPTS = [["auto", "Automatic (by the rules)"], ["high", "Always high risk"], ["normal", "Waive extra checks"]];
+async function organiserDetail({ id }) {
+  const { organiser: o, owners, verification: v } = await get(`/api/admin/organisers/${id}/verification`);
+  const p = v.profile;
+  const redraw = () => organiserDetail({ id });
+  const item = (it, eventId = "") => {
+    const d = it.document;
+    return html`<li class="kyc-item"><div class="grow kyc-body"><div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${it.required ? "" : html`<span class="badge plain">not required</span>`}</div>
+      <div class="tiny muted">${it.reason}</div>${it.signed ? html`<div class="tiny">Signed by ${it.signed.name}, ${fmtDateTime(it.signed.at)} (${it.signed.version})</div>` : ""}
+      ${it.rejectReason ? html`<div class="tiny">Not accepted: ${it.rejectReason}</div>` : ""}
+      ${d && !d.deleted ? html`<div class="tiny muted">Uploaded ${fmtDateTime(d.uploadedAt)} · ${kb(d.sizeBytes)}${d.reviewedBy ? ` · checked by ${d.reviewedBy}` : ""}</div>${providerNote(d.provider, d.provider?.label, d.provider?.simulated)}` : ""}</div>
+      ${d && !d.deleted ? html`<div class="row">${fileLink(d.id)}${d.status === "submitted" ? html`<button class="btn btn-good btn-sm" data-kyc-ok="${d.id}">Approve</button><button class="btn btn-ghost btn-sm" data-kyc-no="${d.id}">Reject</button>` : ""}</div>` : ""}</li>`;
+  };
+  const gateLi = (g, label) => html`<li>${g.ok ? badge("approved") : html`<span class="badge bad">blocked</span>`} ${label}${g.missing.length ? html`<span class="tiny muted"> · needs ${g.missing.join(", ")}</span>` : ""}</li>`;
+  render(main, html`<div class="crumbs"><a href="#/organisers">Organiser accounts</a></div>${head(o.name, html`<span class="mono">${o.ref || ""}</span> · ${badge(o.status)} · verification ${badge(v.overall)}`)}
+    ${v.provider.simulated ? html`<p class="callout warn small"><strong>Sandbox (simulated) identity checks are on.</strong> ${v.provider.rule}</p>` : ""}
+    <div class="grid-2"><section class="card"><h2>Organisation</h2><dl class="dl"><dt>Contact</dt><dd>${o.contact_email}${o.contact_phone ? html`<br>${o.contact_phone}` : ""}</dd>
+        <dt>Owners</dt><dd>${owners.map((w) => html`<div>${w.full_name} · ${w.email} ${w.email_verified ? html`<span class="badge good">email verified</span>` : html`<span class="badge warn">email not verified</span>`}${w.phone ? html`<div class="tiny muted">${w.phone} (not verified: phone checks are not available yet)</div>` : ""}</div>`)}</dd>
+        <dt>Bank</dt><dd>${o.bank_account_last4 ? html`${o.bank_name} · ${o.bank_account_holder} · ••••${o.bank_account_last4} · branch ${o.bank_branch_code} ${isA() || isF() ? html`<button class="btn btn-link btn-sm" data-reveal-bank>Show account number</button>` : ""}` : "Not given"}</dd>
+        <dt>Sells paid tickets</dt><dd>${v.sellsPaid ? "Yes" : "No (free events only)"}</dd></dl></section>
+      <section class="card"><h2>Who they are</h2><dl class="dl"><dt>Kind</dt><dd>${v.entityNames[p.entityType]}</dd><dt>${p.entityType === "individual" ? "Name" : "Representative"}</dt><dd>${p.legalName || "Not given"}</dd>
+        <dt>${p.nationality === "foreign" ? "Passport" : "SA ID"}</dt><dd>${p.hasIdNumber ? html`${p.idNumberMasked}${p.dateOfBirth ? `, born ${p.dateOfBirth}` : ""} ${isA() || isS() ? html`<button class="btn btn-link btn-sm" data-reveal-id>Show number</button>` : ""}` : "Not given"}</dd>
+        ${p.entityType !== "individual" ? html`<dt>Registration no.</dt><dd class="mono">${p.registrationNumber || "Not given"}</dd>` : ""}
+        ${p.entityType === "company" ? html`<dt>Is a director</dt><dd>${p.repIsDirector ? "Yes" : "No (needs a letter of authorisation)"}</dd>` : ""}
+        <dt>Account closed</dt><dd>${p.closedAt ? html`${fmtDate(p.closedAt)}: documents are deleted ${v.retention.years} years later` : "No"}</dd></dl>
+        <p class="tiny muted mb-0">Each "Show" is recorded in the audit log and shown to the organiser.</p></section></div>
+    <section class="card mt"><h2>What is unlocked</h2><ul class="small">${gateLi(v.gates.freePublish, "Free events can go live")}${gateLi(v.gates.paidPublish, "Paid events can go on sale")}${gateLi(v.gates.payouts, "Payouts")}</ul></section>
+    <section class="card mt"><h2>Checklist</h2><ul class="kyc-list">${v.requirements.map((it) => item(it))}</ul></section>
+    <section class="card mt"><div class="card-title"><h2>Risk and event documents</h2></div>
+      <form class="row" id="orisk"><label for="or-sel">Organiser risk</label><select id="or-sel" name="riskOverride" ${raw(isA() ? "" : "disabled")}>${RISK_OPTS.map(([k, l]) => html`<option value="${k}" ${raw((p.riskOverride || "auto") === k ? "selected" : "")}>${l}</option>`)}</select>
+        <input name="note" class="grow" maxlength="300" placeholder="Why (kept in the audit log)" value="${p.riskNote || ""}" aria-label="Why" ${raw(isA() ? "" : "disabled")}>${isA() ? html`<button class="btn btn-ghost btn-sm">Save</button>` : ""}</form>
+      ${v.events.length ? v.events.map((e) => html`<div class="kyc-event"><div class="row between"><span><strong>${e.title}</strong> <span class="tiny muted mono">${e.ref || ""}</span> ${badge(e.status)} <span class="small muted">${fmtDate(e.startsAt)} · ${e.capacity} people${e.paid ? " · paid" : " · free"}</span></span>
+          <span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : html`<span class="badge good">standard</span>`}
+          ${isA() ? html`<select data-ev-risk="${e.id}" aria-label="Risk for ${e.title}">${RISK_OPTS.map(([k, l]) => html`<option value="${k}" ${raw((e.risk.override || "auto") === k ? "selected" : "")}>${l}</option>`)}</select>` : ""}</span></div>
+          ${e.risk.reasons.length ? html`<p class="tiny muted mb-0">${e.risk.reasons.join("; ")}</p>` : ""}
+          ${e.requirements.length ? html`<ul class="kyc-list">${e.requirements.map((it) => item(it, e.id))}</ul>` : html`<p class="tiny muted mb-0">No event documents needed.</p>`}</div>`) : html`<p class="muted mb-0">No current events.</p>`}</section>
+    <section class="card mt"><h2>Documents held</h2>${tbl(["Document", "Status", "Uploaded", "#Size"], v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`), "No documents.")}
+      <h3 class="mt">Who opened them</h3>${v.accessLog.length ? html`<ul class="small">${v.accessLog.map((x) => html`<li>${fmtDateTime(x.at)}: ${x.who}, ${x.action.toLowerCase()}</li>`)}</ul>` : html`<p class="small muted">Nobody yet.</p>`}
+      ${isA() ? html`<div class="row mt">${p.closedAt ? html`<button class="btn btn-ghost btn-sm" data-close-org="reopen">Reopen (stop the deletion countdown)</button>` : html`<button class="btn btn-ghost btn-sm" data-close-org="close">Mark the account closed</button>`}<span class="tiny muted">Closing starts the ${v.retention.years}-year keeping period; documents are then deleted automatically.</span></div>` : ""}</section>`);
+  kycDecideWire(main, redraw);
+  if (isA()) {
+    onSubmit($("#orisk"), async (x) => { await post(`/api/admin/organisers/${id}/verification/risk`, { riskOverride: x.riskOverride, note: x.note || undefined }); toast("Risk saved.", "good"); redraw(); });
+    $$("[data-ev-risk]").forEach((s) => s.addEventListener("change", async () => { if (await act(() => post(`/api/admin/events/${s.dataset.evRisk}/risk`, { riskOverride: s.value }), "Event risk saved.")) redraw(); }));
+    $("[data-close-org]")?.addEventListener("click", async (e) => {
+      const reopen = e.target.dataset.closeOrg === "reopen";
+      if (!reopen && !(await confirmDialog("Mark the account closed?", `Their verification documents will be deleted automatically ${v.retention.years} years from today. This does not suspend events; do that separately if needed.`, { confirm: "Mark closed" }))) return;
+      if (await act(() => post(`/api/admin/organisers/${id}/verification/close`, { reopen }), reopen ? "Reopened." : "Marked closed.")) redraw();
+    });
+  }
+  $("[data-reveal-id]")?.addEventListener("click", async () => { try { const r = await post(`/api/admin/organisers/${id}/verification/reveal-id`); dialog("ID number", html`<p class="mono">${r.idNumber}</p><p class="tiny muted">This view was recorded in the audit log and is shown to the organiser.</p>`); } catch (err) { toast(err.message, "bad"); } });
+  $("[data-reveal-bank]")?.addEventListener("click", async () => { try { const r = await post(`/api/admin/organisers/${id}/verification/reveal-bank`); dialog("Account number", html`<p class="mono">${r.accountNumber}</p><p class="tiny muted">This view was recorded in the audit log and is shown to the organiser.</p>`); } catch (err) { toast(err.message, "bad"); } });
+}
+
 // ---------------- integrations ----------------
 // Integrations: TicketRoom sets up its own email, card payments and SMS here.
 // Keys and passwords go to the server, encrypted, and never come back: the
@@ -713,6 +807,8 @@ const INTEG_HELP = {
   payments: "Choose your payment provider and paste its keys. Start in Test mode, buy a ticket with a test card, then switch to Live.",
   email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
   sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets. Use BulkSMS or Clickatell, or connect your own provider through its web API.",
+  identity: "How organisers' ID documents are checked (FICA). Staff review works now. The sandbox simulates a provider for testing. Your own provider is called with the ID number when an ID document is uploaded; anything it does not confirm goes to staff.",
+  google: "Optional. Lets customers and organisers sign in or sign up with their Google account, no password needed. Staff always use the admin password sign-in.",
 };
 // Write-only boxes: never pre-filled, and kept out of the browser's password
 // filling (they open for typing only when tapped).
@@ -730,10 +826,13 @@ function integrationCard(i) {
     ${i.key === "payments" && isA() && i.environment !== "live" ? html`<div class="callout small stack"><span><strong>Want to try payments now?</strong> The TicketRoom sandbox needs no provider account: buyers see a practice payment page and choose whether it goes through. PayFast's shared test account sends you through PayFast's own sandbox instead. Either way no real money moves and every ticket is marked TEST. Switch to your own keys and Live when you're ready.</span>
       <div class="row"><button type="button" class="btn btn-primary btn-sm" data-sandbox="ticketroom">Use the TicketRoom sandbox</button><button type="button" class="btn btn-ghost btn-sm" data-sandbox="payfast">Use PayFast's test account</button></div></div>` : ""}
     ${i.key === "payments" && i.testOrders ? html`<div class="callout warn small row between"><span><strong>${i.testOrders} test order${i.testOrders === 1 ? "" : "s"}</strong> on record. They never count as sales or payouts. Clear them before you go live to free their seats.</span>${isA() ? html`<button type="button" class="btn btn-ghost btn-sm" data-clear-test>Clear test orders</button>` : ""}</div>` : ""}
+    ${i.key === "identity" && i.sandboxRule ? html`<p class="callout warn small mb-0"><strong>Sandbox (simulated):</strong> ${i.sandboxRule}</p>` : ""}
+    ${i.key === "identity" && i.pending ? html`<p class="small mb-0"><a href="#/verification">${i.pending} document${i.pending === 1 ? "" : "s"} waiting for a check</a></p>` : ""}
+    ${i.redirectUrl ? html`<p class="small mb-0">In Google Cloud, create an OAuth client ID (Web application) and add this under Authorised redirect URIs: <span class="mono">${i.redirectUrl}</span></p>` : ""}
     ${i.notifyUrl ? html`<p class="small mb-0">Payment notifications arrive at <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : ". PayFast is told this address with every payment."}</p>` : ""}
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
       ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
-          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : ""}</div>
+          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : i.key === "identity" ? html`<button type="button" class="btn btn-ghost" data-test="identity">Try a check</button>` : ""}</div>
         <p class="tiny muted mb-0">Saving asks for your password. Saved keys and passwords are encrypted and never shown again, not even to admins.</p>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
     </form></section>`;
 }
@@ -742,7 +841,7 @@ const askPassword = (what) => confirmDialog(`Save ${what}?`, "Type your TicketRo
 async function integrations() {
   const d = await get("/api/admin/integrations");
   const editable = d.integrations.every((i) => i.fields);
-  render(main, html`${head("Integrations", editable ? "Set up email, card payments and SMS yourself. Keys, passwords and usernames are stored encrypted and are never shown again: you only see whether each one is saved." : "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
+  render(main, html`${head("Integrations", editable ? "Set up email, card payments, SMS and identity checks yourself. Keys, passwords and usernames are stored encrypted and are never shown again: you only see whether each one is saved." : "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
     <p class="callout small">Fees: buyers pay ${moneyExact(d.defaults.bookingFeeCents)} per paid ticket${d.defaults.bookingFeeBps ? ` + ${d.defaults.bookingFeeBps / 100}%` : ""}; organisers pay ${d.defaults.organiserCommissionBps / 100}% commission (override per organiser under Organisers). Free events pay nothing.</p>
     <div class="stack">${d.integrations.map((i) => i.fields ? integrationCard(i) : html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "—"}</span></span></div>
       <dl class="dl"><dt>Provider</dt><dd>${i.provider}</dd><dt>Endpoint</dt><dd class="mono small">${i.endpoint || "—"}</dd>${i.webhookUrl ? html`<dt>Webhook URL</dt><dd class="mono small">${i.webhookUrl}</dd>` : ""}
@@ -785,7 +884,8 @@ async function integrations() {
   }));
   $$("[data-test]").forEach((b) => b.addEventListener("click", async () => {
     let body = {};
-    if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567", type: "tel" } }); if (!phone) return; body = { phone }; }
+    if (b.dataset.test === "identity") { const number = await confirmDialog("Try an identity check", "Type a test SA ID or passport number. It is checked on this server first, then sent to the provider you saved. Nothing is stored.", { confirm: "Check", input: { label: "ID or passport number", required: true } }); if (!number) return; body = { number }; }
+    else if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567", type: "tel" } }); if (!phone) return; body = { phone }; }
     else { const to = await confirmDialog("Send a test email", "We'll send one short email to this address straight away and tell you what happened.", { confirm: "Send", input: { label: "Email address", type: "email", required: true, value: (await me()).email } }); if (!to) return; body = { to }; }
     b.disabled = true;
     try { const r = await post(`/api/admin/integrations/${b.dataset.test}/test`, body); toast(r.detail, r.ok ? "good" : "bad"); } catch (err) { toast(err.message, "bad"); } finally { b.disabled = false; }
@@ -811,6 +911,6 @@ async function integrations() {
   await header($("#header"), { portal: "admin" });
   document.title = "Admin portal | TicketRoom";
   nav();
-  router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
+  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
     ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();

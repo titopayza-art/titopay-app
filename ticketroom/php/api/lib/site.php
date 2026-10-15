@@ -28,6 +28,10 @@ function setting_defaults(): array
         'legal' => ['entityName' => 'TicketRoom (Pty) Ltd', 'registrationNumber' => '2026811077', 'vatNumber' => '', 'physicalAddress' => '', 'postalAddress' => '', 'informationOfficer' => '', 'website' => 'ticketroom.co.za'],
         'emails' => ['reminderDayBefore' => true, 'reminderSoon' => true, 'abandonedCheckout' => true, 'abandonedDelayHours' => 1],
         'chatbot' => ['enabled' => true, 'aiEnabled' => true, 'greeting' => "Hi, I'm the TicketRoom assistant. Ask me about tickets, events, refunds or listing your own event."],
+        // Organiser verification documents (POPIA). FICA records are kept 5
+        // years after the relationship ends; replaced or rejected copies are
+        // not records and go sooner.
+        'verification' => ['retentionYears' => 5, 'discardRejectedDays' => 90],
     ];
 }
 function settings_all(bool $fresh = false): array
@@ -68,6 +72,7 @@ function setting_clean(string $key, $v): array
                 'physicalAddress' => R::str(['optional' => true, 'max' => 300]), 'postalAddress' => R::str(['optional' => true, 'max' => 300]), 'informationOfficer' => R::str(['optional' => true, 'max' => 120]), 'website' => R::str(['max' => 120])]);
         case 'emails': return check($v, ['reminderDayBefore' => R::bool(), 'reminderSoon' => R::bool(), 'abandonedCheckout' => R::bool(), 'abandonedDelayHours' => R::int(['min' => 1, 'max' => 24])]);
         case 'chatbot': return check($v, ['enabled' => R::bool(), 'aiEnabled' => R::bool(), 'greeting' => R::str(['max' => 300])]);
+        case 'verification': return check($v, ['retentionYears' => R::int(['min' => 5, 'max' => 10]), 'discardRejectedDays' => R::int(['min' => 30, 'max' => 365])]);
     }
     throw bad('Unknown setting.');
 }

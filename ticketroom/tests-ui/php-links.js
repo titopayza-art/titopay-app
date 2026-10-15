@@ -16,8 +16,8 @@ const PEOPLE = {
 const START = {
   visitor: ["/", "/sell", "/advertise", "/help", "/contact", "/unsubscribe", "/legal/terms-of-use", "/legal/terms", "/legal/privacy", "/legal/cookies", "/legal/paia", "/privacy", "/cookies", "/terms", "/signin"],
   fan: ["/account#/tickets", "/account#/orders", "/account#/transfers", "/account#/refunds", "/account#/settings", "/account#/wallet", "/account#/tags", "/account#/payment-methods"],
-  organiser: ["/organisers#/", "/organisers#/events", "/organisers#/events/new", "/organisers#/marketing", "/organisers#/team", "/organisers#/settings", "/organisers#/finance", "/organisers#/refunds", "/scan", "/pos"],
-  admin: ["/admin#/", "/admin#/organisers", "/admin#/events", "/admin#/users", "/admin#/lookup", "/admin#/support", "/admin#/site", "/admin#/posters", "/admin#/assistant", "/admin#/emails", "/admin#/integrations", "/admin#/audit", "/admin#/outbox", "/admin#/refunds", "/admin#/payouts", "/admin#/tags"],
+  organiser: ["/organisers#/", "/organisers#/events", "/organisers#/events/new", "/organisers#/marketing", "/organisers#/team", "/organisers#/settings", "/organisers#/finance", "/organisers#/refunds", "/organisers#/verification", "/scan", "/pos"],
+  admin: ["/admin#/", "/admin#/organisers", "/admin#/events", "/admin#/users", "/admin#/lookup", "/admin#/support", "/admin#/site", "/admin#/posters", "/admin#/assistant", "/admin#/emails", "/admin#/integrations", "/admin#/audit", "/admin#/outbox", "/admin#/refunds", "/admin#/payouts", "/admin#/tags", "/admin#/verification"],
 };
 const problems = [];
 const checked = new Set();

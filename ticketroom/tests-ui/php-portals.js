@@ -14,7 +14,9 @@ const ROOT = process.argv[3] || "/srv/trtest/public_html";
 const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 const ORG = { email: "naledi@example.co.za", password: "organiser-pass-1", portal: "organiser" };
 const FAN = { email: "sipho@example.co.za", password: "fan-password-123", portal: "customer" };
-const MOCK = "http://127.0.0.1:8702";
+// TR_MOCK_PORT2 lets two test runs on one machine use different stand-ins.
+const MOCK_PORT = process.env.TR_MOCK_PORT2 || "8702";
+const MOCK = `http://127.0.0.1:${MOCK_PORT}`;
 const problems = [];
 const step = (m) => console.log(`  ok  ${m}`);
 const dataDir = [path.join(path.dirname(ROOT), "ticketroom-data"), path.join(ROOT, "data")].find((d) => fs.existsSync(path.join(d, "ticketroom.sqlite")));
@@ -49,7 +51,7 @@ const login = (creds) => anon("/api/auth/login", creds);
   const cfgFile = path.join(dataDir, "config.php");
   const original = fs.readFileSync(cfgFile, "utf8");
   const state = fs.mkdtempSync("/tmp/tr-sms-");
-  const mock = spawn("php", ["-S", "127.0.0.1:8702", path.join(__dirname, "mocks", "providers.php")], { env: { ...process.env, TARGET: BASE, STATE: state }, stdio: "ignore" });
+  const mock = spawn("php", ["-S", `127.0.0.1:${MOCK_PORT}`, path.join(__dirname, "mocks", "providers.php")], { env: { ...process.env, TARGET: BASE, STATE: state }, stdio: "ignore" });
   // Lets "your own SMS provider" point at the local stand-in (PHP rereads config every ~2 s).
   if (!original.includes("allowPrivateHosts")) fs.writeFileSync(cfgFile, original.replace("return [", "return [\n    'sms' => ['allowPrivateHosts' => true],"));
   try {
@@ -59,6 +61,8 @@ const login = (creds) => anon("/api/auth/login", creds);
     const orgOnAdmin = await login({ ...ORG, portal: "admin" });
     assert.equal(orgOnAdmin.status, 401, "organiser refused on the admin portal");
     assert.equal(orgOnAdmin.body.error.code, "bad_credentials", "and the admin sign-in says nothing about the account");
+    assert.match(orgOnAdmin.body.error.message, /^Access denied\./, "the staff sign-in says access denied");
+    assert.equal((await login({ email: "nobody@example.co.za", password: "whatever-123", portal: "admin" })).body.error.message, orgOnAdmin.body.error.message, "same words for an unknown email");
     assert.equal((await login({ ...FAN, portal: "admin" })).body.error.code, "bad_credentials");
     assert.equal((await login({ ...ADMIN, portal: "site" })).body.error.code, "bad_credentials", "staff sign in on the admin portal only");
     const fanP = await page(browser, FAN);

@@ -64,7 +64,7 @@ function cfg(?string $key = null, $default = null)
     $c = $GLOBALS['TR_CONFIG'] ?? [];
     if ($key === null) return $c;
     // Email, payment and SMS settings saved in the admin portal win over config.php.
-    if (preg_match('/^(mail|payments|sms|google)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
+    if (preg_match('/^(mail|payments|sms|kyc|google)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
         $v = integration_value($m[1], $m[2]);
         if ($v !== null) return $v;
     }
@@ -528,6 +528,9 @@ function csrf_check(string $method, string $path): void
     $len = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
     if (str_ends_with($path, '/uploads')) {
         if (!preg_match('#^image/(png|jpeg|webp)$#', $type)) throw new AppError(415, 'unsupported_media_type', 'Upload a PNG, JPEG or WebP image.');
+    } elseif (defined('KYC_UPLOAD_RE') && preg_match(KYC_UPLOAD_RE, $path)) {
+        // Verification documents: a PDF or a photo (checked again by its first bytes).
+        if (!preg_match('#^(application/pdf|image/png|image/jpeg)$#', $type)) throw new AppError(415, 'unsupported_media_type', 'Upload a PDF, JPG or PNG file.');
     } elseif (!($type === '' && $len === 0) && !str_starts_with($type, 'application/json')) {
         throw new AppError(415, 'unsupported_media_type', 'Requests must be JSON.');
     }

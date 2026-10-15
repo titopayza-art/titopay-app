@@ -75,7 +75,11 @@ route('POST', '/api/auth/login', function () {
     $ok = verify_secret($b['password'], $u['password_hash'] ?? '$2y$10$WPT59Gnb/QYXeEjTyv1sp.pD4KgnvD5SRlQY9iG6ybrv4y.LW5AXy') && $u;
     // The same answer for an unknown email, a wrong password and a locked
     // account, so the sign-in box never reveals who has an account.
-    $generic = new AppError(401, 'bad_credentials', 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
+    // The staff sign-in says "access denied" and nothing more, for an unknown
+    // email, a wrong password and a customer or organiser account alike.
+    $generic = $portal === 'admin'
+        ? new AppError(401, 'bad_credentials', 'Access denied. This sign-in is for TicketRoom staff only. Check your email and password, or ask the platform owner for a new password link.')
+        : new AppError(401, 'bad_credentials', 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
     if (!$u || $u['status'] === 'deleted') throw $generic;
     // 5 wrong passwords per email from one connection every 15 minutes, and a
     // pause for the whole account only after 30 failures from anywhere, which
