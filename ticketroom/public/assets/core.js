@@ -38,7 +38,8 @@ export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[
 // ---------- edition features ----------
 // The PHP edition (shared hosting) has no payments, cashless, POS or SMS yet;
 // /api/config says so and feature-specific UI marked data-feature="…" hides.
-const ALL_FEATURES = { payments: true, cashless: true, pos: true, finance: true, sms: true, tags: true };
+// Promote (the paid event promotion package) is in the PHP edition only.
+const ALL_FEATURES = { payments: true, cashless: true, pos: true, finance: true, sms: true, tags: true, promote: false };
 let featurePromise;
 let configPromise;
 export const appConfig = () => (configPromise ||= fetch("/api/config", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
@@ -246,7 +247,9 @@ export const badge = (status) => {
     refunded: "info", partially_refunded: "info", reversed: "info", transferred: "info",
     failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain",
     // organiser verification
-    missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn" };
+    missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn",
+    // Promote
+    posted: "good", ended: "plain" };
   return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
 };
 

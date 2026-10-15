@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog, dialog, consent } from "/assets/core.js";
+import { appConfig, html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog, dialog, consent } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -496,6 +496,7 @@ function sellPage() {
         ${tile(ic('<rect x="2" y="8" width="20" height="8" rx="4"/><path d="M7 12h.01M17 12a5 5 0 0 0-1.5-3.5M19.5 12a7.5 7.5 0 0 0-2.2-5.3"/>'), "Cashless wristbands", "No cash, no card machines at the bar. Guests tap their wristband to pay and top up on their phones.")}
         ${tile(ic('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>'), "Vendor POS", "Bars and food stalls sell from any phone. Each vendor sees their own sales; you see them all.")}
         ${tile(ic('<path d="M3 20h18M6 16v-3M10 16V9M14 16v-5M18 16V6M4 11l5-5 4 3 7-6"/>'), "Get paid", "Live sales and analytics, then your money paid to your verified bank account after the event.")}
+        <div class="card flat center" data-feature="promote"><div aria-hidden="true">${raw(ic('<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'))}</div><h3 class="mt">Promote</h3><p class="muted mb-0">Email and SMS campaigns to the people who want to hear from you, plus a post on our socials. <span data-promote-price>R1 500</span> once off per event.</p></div>
       </div>
       <section class="card cashless-band" aria-labelledby="cl-h"><div class="grid-2">
         <div class="stack"><span class="cat-label">Cashless events</span><h2 id="cl-h" class="mb-0">Faster bars, bigger spend, no cash to count</h2>
@@ -508,6 +509,10 @@ function sellPage() {
             <li><strong>Vendors</strong> sell by tapping or scanning the wristband on any phone, no card machine needed.</li>
             <li><strong>After the event</strong> vendors are settled and leftover balances go back to guests.</li></ol>
           <button class="btn btn-primary" data-apply>Plan a cashless event</button></div></div></section>
+      <section class="promote-offer" aria-labelledby="pr-h" data-feature="promote"><div class="promote-pitch stack"><span class="tk-label">Promote</span><h2 id="pr-h" class="mb-0">Let your crowd know, loud and clear</h2>
+          <p class="mb-0">Our email and SMS campaign tools bring the right people to your event in the right numbers. One payment promotes one event until it ends. No contracts, no per-email charges, no surprises.</p>
+          <ul class="promote-ticks"><li><strong>Unlimited email campaigns</strong> to everyone who booked with you and opted in, until your event ends</li><li><strong>SMS campaigns</strong> to the same opted-in crowd</li><li><strong>A post on TicketRoom's socials:</strong> send us your caption and dates, we tell you when it is live</li><li><strong>Clear results:</strong> messages sent, clicks, tickets and revenue for every campaign</li><li><strong>Seamless cashout:</strong> pay by card or straight from your ticket balance</li></ul></div>
+        <div class="promote-price"><div class="promote-amount" data-promote-price>R1 500</div><div class="small">once off, per event</div><p class="tiny mb-0">Buy it from your event's Promote tab in the organiser portal, once the event is published or waiting to be published.</p><button class="btn btn-primary btn-block" data-apply>Promote my event</button></div></section>
       <div class="card"><h2>What you get</h2><div class="grid-2">
         <ul><li>A live dashboard of bookings and sales, day by day</li><li>Tracking links, so you know whether Instagram or WhatsApp brought people in</li><li>Email campaigns to people who opted in, with unsubscribe built in (POPIA)</li><li>Ticket transfers that cancel the old QR code, so one ticket can never get two people in</li></ul>
         <ul><li>RFID/NFC wristbands and QR tags for cashless events</li><li>Vendor POS on any phone, with per-vendor reporting</li><li>Refunds with dual approval and a full audit trail</li><li>Payouts to your verified bank account once your event has run</li></ul></div>
@@ -516,11 +521,14 @@ function sellPage() {
         <div><div class="kpi"><div class="k">You pay</div><div class="v">5%</div><div class="s">of ticket sales, deducted from your payout</div></div></div>
         <div><div class="kpi"><div class="k">Your buyers pay</div><div class="v">R10</div><div class="s">booking fee per paid ticket</div></div></div>
         <div><div class="kpi"><div class="k">Free events</div><div class="v">R0</div><div class="s">no fees at all on free events</div></div></div></div>
+        <p class="callout mt" data-feature="promote">Promote, optional: <span data-promote-price>R1 500</span> once off per event, everything included until the event ends.</p>
         <p class="callout mt">Cashless: no setup fee. A small commission on vendor sales, agreed per vendor and shown on every settlement. Talk to us about wristbands for your event.</p>
         <p class="muted small mt mb-0">Example: 100 tickets at R150 = R15 000 in sales. You receive R14 250; each buyer pays R160. Payouts are released after your event, less approved refunds.</p></div>
     </div></section>`);
   // New here: account and organisation in one step. Signed in: straight to the organiser portal.
   $$("[data-apply]").forEach((b) => b.addEventListener("click", async () => { if (await me()) location.href = "/organisers"; else organiserSignupDialog(); }));
+  // The Promote price comes from the site's settings.
+  appConfig().then((c) => { const p = c.promote?.priceCents; if (p) $$("[data-promote-price]").forEach((x) => { x.textContent = moneyExact(p).replace(/\.00$/, ""); }); });
 }
 
 // ---------------- legal ----------------
@@ -749,13 +757,14 @@ async function sandboxPayPage(q) {
   let d;
   try { d = await get(`/api/public/payments/${id}/sandbox?k=${encodeURIComponent(k)}`); } catch (err) { return fail(err.message); }
   if (d.payment.status !== "pending") { location.replace(d.returnUrl); return; }
+  const promo = d.purpose === "promotion";
   render(main, html`<div class="wrap section"><section class="sandbox-pay card">
     <p class="sandbox-flag" role="note"><strong>Sandbox</strong> Practice payment. No real money moves and no card is charged.</p>
     <span class="tk-label">Pay TicketRoom</span>
     <h1 class="mb-0">${moneyExact(d.payment.amountCents)}</h1>
-    <p class="muted">${d.order.title} · Order ${d.order.reference}</p>
+    <p class="muted">${promo ? `Promote package for ${d.order.title} · ${d.order.reference}` : `${d.order.title} · Order ${d.order.reference}`}</p>
     <div class="sandbox-card" aria-hidden="true"><span>TEST CARD</span><b>4242 4242 4242 4242</b><span>${d.order.buyer_name || "Practice buyer"} · 12/30</span></div>
-    <p class="small">Choose what the bank says. Tickets from an approved practice payment are marked <strong>TEST</strong> and will not open the gate.</p>
+    <p class="small">${promo ? html`Choose what the bank says. A Promote package from an approved practice payment is marked <strong>TEST</strong> and never counts as revenue.` : html`Choose what the bank says. Tickets from an approved practice payment are marked <strong>TEST</strong> and will not open the gate.`}</p>
     <div class="stack">
       <button class="btn btn-primary btn-block" data-outcome="paid">Approve payment</button>
       <button class="btn btn-ghost btn-block" data-outcome="failed">Decline (card refused)</button>

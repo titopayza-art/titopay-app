@@ -17,7 +17,7 @@ function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
     ${ORG?.ref ? html`<div class="org-id">Organiser ID <span class="mono">${ORG.ref}</span></div>` : ""}
-    <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/verification">Verification${verifTodo() ? html`<span class="count">${verifTodo()}</span>` : ""}</a>${can("owner", "manager") ? html`<a href="#/queries">Customer queries${QUERIES ? html`<span class="count">${QUERIES}</span>` : ""}</a>` : ""}<a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
+    <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/verification">Verification${verifTodo() ? html`<span class="count">${verifTodo()}</span>` : ""}</a>${can("owner", "manager") ? html`<a href="#/queries">Customer queries${QUERIES ? html`<span class="count">${QUERIES}</span>` : ""}</a>` : ""}<a href="#/marketing">Marketing</a><a href="#/promote" data-feature="promote">Promote</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
     <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
 }
@@ -185,7 +185,7 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);
@@ -199,7 +199,7 @@ async function eventWorkspace({ id, tab = "" }) {
     ${e.status === "pending_approval" ? html`<p class="callout">Waiting to be published. TicketRoom checks new events, usually within one business day, and emails you when it is live. <button class="btn-link" data-preview>Preview it</button></p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
-    <div class="tabs" role="tablist">${TABS.filter(([k]) => k !== "vendors" || FEATURES.cashless).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
+    <div class="tabs" role="tablist">${TABS.filter(([k]) => (k !== "vendors" || FEATURES.cashless) && (k !== "promote" || FEATURES.promote)).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
     <div id="tab"></div>`);
   // Preview opens the event page as buyers will see it, through a private link.
   $$("[data-preview]").forEach((b) => b.addEventListener("click", async () => {
@@ -219,7 +219,7 @@ async function eventWorkspace({ id, tab = "" }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
   render(el, spinner());
   await fns[tab](el, d, () => eventWorkspace({ id, tab }));
 }
@@ -569,7 +569,7 @@ async function marketing() {
     <div class="kpis"><div class="kpi"><div class="k">Ticket holders</div><div class="v">${aud.ticketHolders}</div><div class="s">all your events</div></div>
       <div class="kpi"><div class="k">Email audience</div><div class="v">${aud.emailOptIns}</div><div class="s">opted in to your email</div></div>
       <div class="kpi" data-feature="sms"><div class="k">SMS audience</div><div class="v">${aud.smsOptIns}</div><div class="s">opted in, with a mobile number</div></div>
-      <div class="kpi"><div class="k">Campaigns sent</div><div class="v">${campaigns.filter((c) => c.status === "sent").length}</div><div class="s">limit 10 per day</div></div></div>
+      <div class="kpi"><div class="k">Campaigns sent</div><div class="v">${campaigns.filter((c) => c.status === "sent").length}</div><div class="s">limit 10 per day${FEATURES.promote ? ", none for promoted events" : ""}</div></div></div>
     ${cfg.messaging.email === "log" || cfg.messaging.sms === "log" ? html`<p class="callout warn mt"><strong>Delivery is simulated in this environment.</strong> Messages are queued and recorded but not sent until an email/SMS gateway is connected.</p>` : ""}
     <section class="card mt"><h2>Campaigns</h2>${campaigns.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Channel</th><th>Status</th><th class="num">Recipients</th><th class="num">Delivered</th><th>Date</th><th></th></tr></thead><tbody>
       ${campaigns.map((c) => html`<tr><td><strong>${c.name}</strong>${c.subject ? html`<div class="small muted">${c.subject}</div>` : ""}</td><td>${c.channel.toUpperCase()}</td><td>${badge(c.status)}</td><td class="num">${c.recipients_count}</td><td class="num">${c.delivered_count}</td>
@@ -579,24 +579,34 @@ async function marketing() {
   $$("[data-open]").forEach((b) => b.addEventListener("click", () => open(campaigns.find((c) => c.id === b.dataset.open))));
 }
 
-function campaignDialog(c, evs, done) {
-  const dlg = dialog(c ? c.name : "New campaign", html`<form class="stack" id="cf">
+// opts.eventId: a campaign for one event (the Promote tab), its audience fixed.
+// opts.channel picks email or SMS; opts.promoted adds the event link to the message.
+function campaignDialog(c, evs, done, opts = {}) {
+  const fixed = opts.eventId ? evs.find((e) => e.id === opts.eventId) : null;
+  const channel = c?.channel || opts.channel || "email";
+  const starter = opts.promoted && !c ? (channel === "sms" ? `Hi {{first_name}}, ${fixed?.title || "our event"} is coming up. Get your tickets: {{event_link}}` : `Hi {{first_name}},\n\n${fixed?.title || "Our event"} is coming up and we'd love to see you there.\n\nGet your tickets: {{event_link}}`) : "";
+  const hintEmail = `Use {{first_name}} to personalise${opts.promoted ? " and {{event_link}} for your tracked ticket link (added at the end if you leave it out)" : ""}. An unsubscribe link and your organisation name are added automatically.`;
+  const dlg = dialog(c ? c.name : opts.promoted ? `New ${channel === "sms" ? "SMS" : "email"} campaign` : "New campaign", html`<form class="stack" id="cf">
     <div class="grid-2"><div class="field"><label for="cn">Campaign name (internal)</label><input id="cn" name="name" required value="${c?.name || ""}"></div>
-      <div class="field"><label for="cc">Channel</label><select id="cc" name="channel" ${raw(c ? "disabled" : "")}><option value="email" ${raw(c?.channel === "email" ? "selected" : "")}>Email</option>${FEATURES.sms ? html`<option value="sms" ${raw(c?.channel === "sms" ? "selected" : "")}>SMS</option>` : ""}</select></div></div>
+      <div class="field"><label for="cc">Channel</label><select id="cc" name="channel" ${raw(c || opts.channel ? "disabled" : "")}><option value="email" ${raw(channel === "email" ? "selected" : "")}>Email</option>${FEATURES.sms ? html`<option value="sms" ${raw(channel === "sms" ? "selected" : "")}>SMS</option>` : ""}</select></div></div>
     <div class="field" id="subj"><label for="cs">Email subject</label><input id="cs" name="subject" maxlength="150" value="${c?.subject || ""}"></div>
-    <div class="field"><label for="cb">Message</label><textarea id="cb" name="body" required maxlength="5000">${c?.body || ""}</textarea><span class="hint" id="cbh">Use {{first_name}} to personalise. An unsubscribe link and your organisation name are added automatically.</span></div>
-    <fieldset class="field"><legend class="label">Audience: people who bought tickets to…</legend>
-      <div class="stack">${evs.map((e) => html`<label class="check"><input type="checkbox" name="ev_${e.id}" ${raw(c?.audience?.eventIds?.includes(e.id) ? "checked" : "")}><span>${e.title} <span class="muted small">${fmtDate(e.starts_at)}</span></span></label>`)}</div><span class="hint">Leave all unticked to include every event.</span></fieldset>
+    <div class="field"><label for="cb">Message</label><textarea id="cb" name="body" required maxlength="5000" rows="6">${c?.body || starter}</textarea><span class="hint" id="cbh"></span></div>
+    ${fixed ? html`<p class="small muted mb-0">Audience: people who booked for <strong>${fixed.title}</strong> and opted in to hear from you.</p>`
+      : html`<fieldset class="field"><legend class="label">Audience: people who bought tickets to…</legend>
+      <div class="stack">${evs.map((e) => html`<label class="check"><input type="checkbox" name="ev_${e.id}" ${raw(c?.audience?.eventIds?.includes(e.id) ? "checked" : "")}><span>${e.title} <span class="muted small">${fmtDate(e.starts_at)}</span></span></label>`)}</div><span class="hint">Leave all unticked to include every event.${FEATURES.promote ? " Pick only a promoted event for no daily limit and SMS." : ""}</span></fieldset>`}
     <div class="row"><button class="btn btn-dark" type="submit">Save draft</button></div></form>
     <div id="pv" class="mt"></div>`, { wide: true, onClose: done });
   const form = $("#cf", dlg);
-  const sync = () => { const sms = form.elements.channel.value === "sms"; $("#subj", dlg).classList.toggle("hidden", sms); $("#cbh", dlg).textContent = sms ? `${form.elements.body.value.length}/300 characters. Your name and an opt-out link are added automatically.` : "Use {{first_name}} to personalise. An unsubscribe link and your organisation name are added automatically."; };
+  const chan = () => (form.elements.channel.disabled ? channel : form.elements.channel.value);
+  const sync = () => { const sms = chan() === "sms"; $("#subj", dlg).classList.toggle("hidden", sms); $("#cbh", dlg).textContent = sms ? `${form.elements.body.value.length}/300 characters. Your name and an opt-out link are added automatically.` : hintEmail; };
   form.elements.channel.addEventListener("change", sync); form.elements.body.addEventListener("input", sync); sync();
   let current = c;
-  const payload = (v) => ({ name: v.name, channel: current?.channel || v.channel, subject: v.subject, body: v.body, eventIds: evs.filter((e) => v[`ev_${e.id}`]).map((e) => e.id) });
+  const payload = (v) => ({ name: v.name, channel: current?.channel || chan(), subject: v.subject, body: v.body, eventIds: fixed ? [fixed.id] : evs.filter((e) => v[`ev_${e.id}`]).map((e) => e.id) });
   const preview = async () => {
     const p = await get(`${base()}/campaigns/${current.id}/preview`);
-    render($("#pv", dlg), html`<div class="card flat"><div class="card-title"><h3>Preview</h3><span class="small muted">${p.recipients} recipient${p.recipients === 1 ? "" : "s"}${p.segments ? ` · ${p.segments} SMS segment${p.segments === 1 ? "" : "s"} each · est. ${moneyExact(p.estimatedCostCents)}` : ""}</span></div>
+    const smsCost = p.segments ? (p.estimatedCostCents != null ? ` · est. ${moneyExact(p.estimatedCostCents)}` : " · SMS cost not set on this site") : "";
+    render($("#pv", dlg), html`<div class="card flat"><div class="card-title"><h3>Preview</h3><span class="small muted">${p.recipients} recipient${p.recipients === 1 ? "" : "s"}${p.segments ? ` · ${p.segments} SMS segment${p.segments === 1 ? "" : "s"} each` : ""}${smsCost}</span></div>
+      ${p.promotion ? html`<p class="small callout good">Promoted event${p.promotion.test ? " (TEST)" : ""}: no daily limit, and a tracking link is made when it goes out so you can see what it sells.</p>` : ""}
       ${p.preview.subject ? html`<p><strong>${p.preview.subject}</strong></p>` : ""}<div class="prose small">${p.preview.body}</div>
       <div class="row mt"><button class="btn btn-ghost btn-sm" data-test>Send test to me</button><label class="sr-only" for="sat">Schedule for</label><input type="datetime-local" id="sat" class="grow"><button class="btn btn-ghost btn-sm" data-sched>Schedule</button><button class="btn btn-primary btn-sm" data-send>Send now</button></div></div>`);
     $("[data-test]", dlg).addEventListener("click", async () => { try { const r = await post(`${base()}/campaigns/${current.id}/test`); toast(`Test queued to ${r.sentTo}.`, "good"); } catch (err) { toast(err.message, "bad"); } });
@@ -617,6 +627,162 @@ function campaignDialog(c, evs, done) {
   if (c) preview();
 }
 
+// ---------------- Promote ----------------
+// One payment promotes one event until it ends: unlimited email campaigns,
+// SMS when it is switched on, a post on TicketRoom's socials, and results for
+// every campaign. Bought by card (or from the available balance) right here.
+const PROMOTE_INCLUDES = (sms) => [
+  ["Unlimited email campaigns", "Email everyone who booked with you and asked to hear from you, as often as you like, until the event ends. No daily limit."],
+  ["SMS campaigns", sms ? "Text the same opted-in crowd. Each SMS holds up to 160 characters and carries an opt-out link." : "Text your opted-in crowd as soon as TicketRoom switches SMS on. Email works from day one."],
+  ["Your event on our socials", "Send us a caption, the dates you want and your links. We post it on TicketRoom's social media and tell you when it is live."],
+  ["Results you can trust", "Messages sent, clicks, tickets and revenue for every campaign, day by day. We only show what we can measure."],
+  ["Seamless cashout", "Pay by card, or straight from your available ticket balance. No invoice, no waiting."],
+];
+const PROMOTE_FAQ = (r) => [
+  ["Who gets my messages?", "Only people who bought tickets from you and ticked the box to hear from you. Every message has an unsubscribe or opt-out link, as POPIA requires."],
+  ["Is there really no limit?", `No limit on how many campaigns you send while Promote runs. To protect your crowd from floods, at most ${r.hourlyLimit || 6} campaigns go out per hour.`],
+  ["When does it end?", "When your event ends. It is a once-off payment: nothing renews and nothing is charged again."],
+  ["What if my event is cancelled?", "TicketRoom refunds the package to the card or balance you paid from."],
+];
+
+async function promoteTab(el, d, reload) {
+  const r = await get(`${base()}/events/${d.event.id}/promotion`);
+  const p = r.promotion;
+  const paid = p && p.paid_at;
+  if (!paid) return promoteOffer(el, d, r, reload);
+  render(el, html`${promoteStatus(r)}<div id="pm-tools"></div><div id="pm-social"></div><div id="pm-stats"></div>`);
+  if (p.status === "active") promoteTools($("#pm-tools", el), d, r, reload);
+  promoteSocial($("#pm-social", el), d, r, reload);
+  promoteStats($("#pm-stats", el), d, r);
+}
+
+function promoteOffer(el, d, r, reload) {
+  const p = r.promotion, price = moneyExact(r.priceCents).replace(/\.00$/, "");
+  const bal = r.methods.balance;
+  const balOk = bal && bal.availableCents >= r.priceCents;
+  const waiting = p?.status === "pending_payment" && r.payment?.status === "pending";
+  const declined = p?.status === "pending_payment" && ["failed", "cancelled"].includes(r.payment?.status);
+  render(el, html`<section class="promote-offer" aria-labelledby="pm-h">
+      <div class="promote-pitch"><span class="tk-label">Promote</span><h2 id="pm-h">Let your crowd know, loud and clear</h2>
+        <p class="lead mb-0">Reach the right people in the right numbers for <strong>${d.event.title}</strong>. One payment, everything included, until the event ends.</p>
+        <p class="small mb-0">${r.audience.emailOptIns} ${r.audience.emailOptIns === 1 ? "person has" : "people have"} opted in to your email${r.sms.ready ? html` and ${r.audience.smsOptIns} to SMS` : ""} for this event so far. Everyone who books from now on can opt in too.</p></div>
+      <div class="promote-price"><div class="promote-amount">${price}</div><div class="small">once off, until ${fmtDate(d.event.ends_at)}</div>
+        ${r.methods.cardTest ? html`<p class="promote-test small mb-0"><strong>Test mode.</strong> A practice payment: no real money moves and the package is marked TEST.</p>` : ""}
+        <div class="stack" data-buy>
+          ${r.canBuy && r.methods.card ? html`<button class="btn btn-primary btn-block" data-pay="card">Pay ${price} by card</button>` : ""}
+          ${r.canBuy && bal ? html`<button class="btn ${r.methods.card ? "btn-outline-light" : "btn-primary"} btn-block" data-pay="balance" ${raw(balOk ? "" : "disabled")}>Pay from my balance</button>
+            <span class="tiny">${balOk ? `${moneyExact(bal.availableCents)} available to pay out. ${price} comes off it straight away.` : `Your available balance is ${moneyExact(bal.availableCents)}. Money from an event becomes available after it ends.`}</span>` : ""}
+        </div></div>
+    </section>
+    ${waiting ? html`<p class="callout mt" role="status">We're waiting for the payment provider to confirm your payment. This page updates by itself.</p>` : ""}
+    ${declined ? html`<p class="callout warn mt" role="status">Your last payment didn't go through, so nothing was charged. You can try again.</p>` : ""}
+    ${r.blocked ? html`<p class="callout warn mt">${r.blocked.message}</p>` : !r.canBuy ? html`<p class="callout mt">Ask your organisation's owner, a manager or a marketing team member to buy Promote.</p>`
+      : !r.methods.card && !bal ? html`<p class="callout warn mt">Card payments aren't switched on yet. Ask TicketRoom, or the owner can pay from the balance.</p>` : ""}
+    <section class="card mt"><h3>What's included</h3><ul class="promote-includes">${PROMOTE_INCLUDES(r.sms.ready).map(([t, s]) => html`<li><strong>${t}</strong><span>${s}</span></li>`)}</ul></section>
+    <section class="card mt"><h3>Good to know</h3><dl class="promote-faq">${PROMOTE_FAQ(r).map(([q, a]) => html`<dt>${q}</dt><dd>${a}</dd>`)}</dl>
+      <p class="small muted mb-0">Without Promote you can still send up to 10 email campaigns a day from Marketing, free.</p></section>`);
+  $$("[data-pay]", el).forEach((b) => b.addEventListener("click", async () => {
+    const method = b.dataset.pay;
+    if (method === "balance" && !(await confirmDialog("Pay from your balance?", `${price} comes off your available balance now and Promote starts straight away.`, { confirm: `Pay ${price}` }))) return;
+    $$("[data-pay]", el).forEach((x) => { x.disabled = true; });
+    b.setAttribute("aria-busy", "true");
+    try {
+      const res = await post(`${base()}/events/${d.event.id}/promotion/checkout`, { method });
+      if (res.payment?.redirectUrl) { location.href = res.payment.redirectUrl; return; }
+      toast("Promote is on. Your receipt is on its way by email.", "good"); reload();
+    } catch (err) { toast(err.message, "bad"); $$("[data-pay]", el).forEach((x) => { x.disabled = false; }); b.removeAttribute("aria-busy"); }
+  }));
+  // Back from the payment page before the provider's confirmation: look again shortly.
+  if (waiting) setTimeout(() => { if (location.hash.endsWith(`/events/${d.event.id}/promote`)) reload(); }, 3000);
+}
+
+function promoteStatus(r) {
+  const p = r.promotion;
+  const how = p.paid_with === "balance" ? "from your balance" : "by card";
+  const state = p.status === "active" ? html`Promoted until <strong>${fmtDateTime(p.ends_at)}</strong>` : p.status === "refunded" ? html`Refunded${p.refunded_at ? ` on ${fmtDate(p.refunded_at)}` : ""}` : html`Ended ${fmtDate(p.ends_at)}`;
+  return html`<section class="card promote-status" aria-label="Promote status"><div class="row between"><div class="row">${badge(p.status)}${p.test ? html`<span class="badge amber" title="Paid in test mode: no real money moved">TEST</span>` : ""}<span>${state}</span></div>
+      <span class="small muted">Ref <span class="mono">${p.reference}</span> · ${moneyExact(p.price_cents)} paid ${how} on ${fmtDate(p.paid_at)}</span></div>
+    ${p.test ? html`<p class="small muted mb-0 mt">This package was bought with a practice payment. Everything works, but no real money moved and it is not counted as revenue.</p>` : ""}
+    ${p.refund_status && p.refund_status !== "completed" ? html`<p class="callout mt mb-0">A refund of this package is in progress.</p>` : ""}</section>`;
+}
+
+function promoteTools(el, d, r, reload) {
+  const editable = can("owner", "manager", "marketing");
+  const smsOk = r.sms.ready;
+  render(el, html`<section class="card mt"><div class="card-title"><h3>Campaigns for this event</h3><a href="#/marketing" class="small">All campaigns</a></div>
+    <p class="small muted">Goes to the ${r.audience.emailOptIns} ${r.audience.emailOptIns === 1 ? "person" : "people"} who opted in to your email${smsOk ? ` and ${r.audience.smsOptIns} to SMS` : ""} for ${d.event.title}. No daily limit while Promote runs. Each campaign gets its own tracking link, so you can see what it sold.</p>
+    ${editable ? html`<div class="row"><button class="btn btn-primary" data-new="email">New email campaign</button>${smsOk ? html`<button class="btn btn-dark" data-new="sms">New SMS campaign</button>` : ""}</div>` : html`<p class="muted mb-0">Your role can view results but not send campaigns.</p>`}
+    ${smsOk ? html`<p class="tiny muted mt mb-0">${r.sms.costPerSegmentCents ? `Each SMS segment (160 characters) costs about ${moneyExact(r.sms.costPerSegmentCents)}. You see the estimate before you send.` : "SMS sending is on. The cost per SMS isn't set on this site yet, so no cost estimate is shown. Check with TicketRoom before a big send."}</p>`
+      : html`<p class="tiny muted mt mb-0">SMS campaigns open up here as soon as TicketRoom switches SMS on.</p>`}</section>`);
+  $$("[data-new]", el).forEach((b) => b.addEventListener("click", () => campaignDialog(null, [d.event], reload, { eventId: d.event.id, channel: b.dataset.new, promoted: true })));
+}
+
+function promoteSocial(el, d, r, reload) {
+  const p = r.promotion, req = p.social_request;
+  const steps = [["requested", "Request sent"], ["scheduled", "Scheduled"], ["posted", "Live"]];
+  const at = steps.findIndex(([k]) => k === p.social_status);
+  const canAsk = p.status === "active" && p.social_status !== "posted" && can("owner", "manager", "marketing");
+  render(el, html`<section class="card mt" aria-labelledby="soc-h"><div class="card-title"><h3 id="soc-h">TicketRoom socials</h3>${p.social_status ? badge(p.social_status) : ""}</div>
+    ${p.social_status ? html`<ol class="promote-steps">${steps.map(([k, l], i) => html`<li class="${i <= at ? "done" : ""}">${l}</li>`)}</ol>` : html`<p class="small muted">Tell us what to post and when. We use your event poster unless you add other pictures.</p>`}
+    ${p.social_notes ? html`<p class="small"><strong>From TicketRoom:</strong> ${p.social_notes}</p>` : ""}
+    ${p.social_links?.length ? html`<p class="small mb-0">Your post: ${p.social_links.map((u) => html`<a href="${u}" target="_blank" rel="noopener">${u}</a> `)}</p>` : ""}
+    ${canAsk ? html`<form class="stack mt" id="socf">
+      <div class="field"><label for="sc">Caption</label><textarea id="sc" name="caption" required maxlength="2200" rows="4" placeholder="What should the post say? Keep it short and lively.">${req?.caption || ""}</textarea></div>
+      <div class="grid-2"><div class="field"><label for="sd">Preferred dates <span class="muted">(optional)</span></label><input id="sd" name="preferredDates" maxlength="200" value="${req?.preferredDates || ""}" placeholder="e.g. Friday 7 Nov, and again the day before"></div>
+        <div class="field"><label for="sl">Links <span class="muted">(optional, one per line)</span></label><textarea id="sl" name="links" rows="2" placeholder="https://instagram.com/yourpage">${(req?.links || []).join("\n")}</textarea></div></div>
+      <div class="row">${r.poster ? html`<img class="promote-thumb" src="${r.poster}" alt="Your event poster">` : ""}
+        <label class="check"><input type="checkbox" name="usePoster" ${raw(r.poster ? "checked" : "disabled")}><span>${r.poster ? "Use my event poster" : "No poster on this event yet. Add one under Details, or add pictures here."}</span></label></div>
+      <div class="field"><label for="si">More pictures <span class="muted">(optional, up to 3)</span></label><input id="si" type="file" accept="image/png,image/jpeg,image/webp" multiple><span class="hint">PNG, JPEG or WebP, up to 2 MB each.</span></div>
+      <button class="btn btn-dark">${p.social_status ? "Update my request" : "Send my request"}</button></form>` : ""}</section>`);
+  const f = $("#socf", el);
+  if (!f) return;
+  onSubmit(f, async (v) => {
+    const ids = [];
+    for (const file of [...$("#si", f).files].slice(0, 3)) {
+      if (file.size > 2 * 1024 * 1024) throw Object.assign(new Error(`${file.name} is larger than 2 MB.`), { details: {} });
+      ids.push((await api("POST", `${base()}/uploads`, undefined, { raw: file, headers: { "content-type": file.type } })).uploadId);
+    }
+    const links = String(v.links || "").split(/\s+/).map((x) => x.trim()).filter(Boolean);
+    await post(`${base()}/events/${d.event.id}/promotion/social`, { caption: v.caption, preferredDates: v.preferredDates || undefined, links, usePoster: !!v.usePoster, imageUploadIds: ids });
+    toast("Request sent. We'll let you know when it is scheduled.", "good"); reload();
+  });
+}
+
+function promoteStats(el, d, r) {
+  const a = r.analytics, t = a.totals;
+  render(el, html`<section class="card mt" aria-labelledby="pst-h"><div class="card-title"><h3 id="pst-h">Results</h3><span class="small muted">From the campaigns sent with Promote</span></div>
+    <div class="kpis"><div class="kpi"><div class="k">Messages sent</div><div class="v">${(t.emailsSent + t.smsSent).toLocaleString("en-ZA")}</div><div class="s">${t.campaignsSent} campaign${t.campaignsSent === 1 ? "" : "s"} · ${t.emailsSent} email${r.sms.ready ? `, ${t.smsSent} SMS` : ""}</div></div>
+      <div class="kpi"><div class="k">Clicks</div><div class="v">${t.clicks.toLocaleString("en-ZA")}</div><div class="s">on campaign links</div></div>
+      <div class="kpi"><div class="k">Tickets</div><div class="v">${t.tickets.toLocaleString("en-ZA")}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"} through campaign links</div></div>
+      <div class="kpi"><div class="k">Revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">ticket sales through campaign links</div></div></div>
+    <p class="tiny muted mt mb-0">Opens are not tracked: TicketRoom doesn't hide tracking pixels in emails. Clicks count each time someone opens a campaign link.${t.testOrders ? ` ${t.testOrders} test order${t.testOrders === 1 ? "" : "s"} came through campaign links and ${t.testOrders === 1 ? "is" : "are"} left out of these figures.` : ""}${t.notDelivered ? ` ${t.notDelivered} message${t.notDelivered === 1 ? " was" : "s were"} not delivered (unsubscribed or bounced).` : ""}</p>
+    <div class="grid-2 mt"><div><h4 class="small">Messages sent per day</h4><div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.messages, title: "Messages sent per day, last 30 days", tickEvery: 5, height: 150 })}</div></div>
+      <div><h4 class="small">Tickets per day</h4><div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.allTickets, title: "Tickets sold per day for this event, last 30 days", tickEvery: 5, height: 150 })}</div><p class="tiny muted mb-0">All sales for the event. ${a.daily.reduce((s, x) => s + x.campaignTickets, 0)} of them in this period came through campaign links.</p></div></div>
+    <h4 class="mt">Campaigns</h4>
+    ${a.campaigns.length ? html`<div class="table-wrap"><table><thead><tr><th>Campaign</th><th>Status</th><th class="num">Sent to</th><th class="num">Delivered</th><th class="num">Clicks</th><th class="num">Tickets</th><th class="num">Revenue</th></tr></thead><tbody>
+      ${a.campaigns.map((c) => html`<tr><td><strong>${c.name}</strong><div class="tiny muted">${c.channel.toUpperCase()}${c.sent_at ? ` · ${fmtDateTime(c.sent_at)}` : c.scheduled_at ? ` · scheduled ${fmtDateTime(c.scheduled_at)}` : ""}${c.code ? html` · <span class="mono">${c.code}</span>` : ""}</div></td>
+        <td>${badge(c.status)}</td><td class="num">${c.recipients_count}</td><td class="num">${c.delivered}</td><td class="num">${c.clicks}</td><td class="num">${c.tickets}</td><td class="num">${moneyExact(c.revenue_cents)}</td></tr>`)}</tbody></table></div>`
+      : html`<p class="muted mb-0">No campaigns yet. Send your first one above: results show up here as people click and book.</p>`}</section>`);
+}
+
+// Every event that can be promoted, with its status: the "Promote" page in the menu.
+async function promoteHome() {
+  const [list, { promotions, priceCents }] = await Promise.all([get(`${base()}/events`), get(`${base()}/promotions`)]);
+  const now = Date.now();
+  const byEvent = Object.fromEntries(promotions.filter((p) => p.status === "active").map((p) => [p.event_id, p]));
+  const open = list.filter((e) => ["published", "pending_approval"].includes(e.status) && new Date(e.ends_at || e.starts_at).getTime() > now);
+  render(main, html`${head("Promote", "Let your target audience know, loud and clear. Email and SMS campaigns that bring the right people in the right numbers, a post on TicketRoom's socials, and results for every message.")}
+    ${pendingBanner()}
+    <section class="promote-offer mb"><div class="promote-pitch"><span class="tk-label">One event, one price</span><h2>Everything included until your event ends</h2>
+      <ul class="promote-ticks">${PROMOTE_INCLUDES(FEATURES.sms).map(([t]) => html`<li>${t}</li>`)}</ul></div>
+      <div class="promote-price"><div class="promote-amount">${moneyExact(priceCents).replace(/\.00$/, "")}</div><div class="small">once off per event</div><p class="tiny mb-0">Pick an event below to see what's included and buy.</p></div></section>
+    <section class="card"><h2>Your events</h2>${open.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Promote</th><th></th></tr></thead><tbody>
+      ${open.map((e) => { const p = byEvent[e.id]; return html`<tr><td><a href="#/events/${e.id}/promote"><strong>${e.title}</strong></a></td><td>${fmtDate(e.starts_at)}</td>
+        <td>${p ? html`${badge("active")}${p.test ? html` <span class="badge amber">TEST</span>` : ""}<div class="tiny muted">until ${fmtDate(p.ends_at)}</div>` : html`<span class="badge plain">not promoted</span>`}</td>
+        <td><a class="btn ${p ? "btn-ghost" : "btn-primary"} btn-sm" href="#/events/${e.id}/promote">${p ? "Campaigns & results" : "Promote this event"}</a></td></tr>`; })}</tbody></table></div>`
+      : empty("No events to promote yet. An event can be promoted once it is published or waiting to be published.", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}</section>`);
+}
+
 // ---------------- refunds ----------------
 async function refunds() {
   const { refunds: list } = await get(`${base()}/refunds`);
@@ -632,7 +798,7 @@ async function finance() {
   if (!can("owner", "finance", "manager")) return render(main, html`${head("Finance")}<p class="muted">Your role can't view finance.</p>`);
   const f = await get(`${base()}/finance`);
   render(main, html`${head("Finance & payouts", `Revenue becomes available ${ORG.payoutHoldDays} day${ORG.payoutHoldDays === 1 ? "" : "s"} after each event ends, less refunds in progress.`)}
-    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${money(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts</div></div>
+    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${money(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts${f.promoteFromBalanceCents ? ` and ${money(f.promoteFromBalanceCents)} for Promote` : ""}</div></div>
       <div class="kpi"><div class="k">Available now</div><div class="v">${money(f.availableCents)}</div><div class="s">can be paid out</div></div>
       <div class="kpi"><div class="k">Payouts in progress</div><div class="v">${money(f.inFlightCents)}</div><div class="s">awaiting approval / transfer</div></div>
       <div class="kpi"><div class="k">Refunds pending</div><div class="v">${money(f.pendingRefundsCents)}</div><div class="s">held back from payouts</div></div></div>
@@ -906,6 +1072,6 @@ async function loadVerif() {
   if (!ORG) { render($("#sidenav"), ""); return apply(); }
   router([
     ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)],
-    ["/verification", verification], ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
+    ["/verification", verification], ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/promote", promoteHome], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
   ], () => { location.hash = "#/"; });
 })();

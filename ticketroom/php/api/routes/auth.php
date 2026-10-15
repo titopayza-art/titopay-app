@@ -12,11 +12,11 @@ route('GET', '/api/config', fn() => [
     // with card payments, because top-ups are card payments. Each event then
     // opts in with its own "cashless event" setting. tagRegistry: organisers
     // register their own wristbands (this edition's organiser portal).
-    'features' => ['payments' => false, 'cashless' => cashless_ready(), 'pos' => cashless_ready(), 'finance' => true, 'sms' => sms_ready(), 'tags' => cashless_ready(), 'tagRegistry' => cashless_ready(),
+    'features' => ['payments' => false, 'cashless' => cashless_ready(), 'pos' => cashless_ready(), 'finance' => true, 'sms' => sms_ready(), 'tags' => cashless_ready(), 'tagRegistry' => cashless_ready(), 'promote' => true,
         'walletApple' => wallet_apple_ready(), 'walletGoogle' => wallet_google_ready()],
     'messaging' => ['email' => mail_mode(), 'sms' => sms_provider()],
     'cashless' => cashless_limits(),
-    'fees' => cfg('fees'), 'holdMinutes' => HOLD_MINUTES,
+    'fees' => cfg('fees'), 'holdMinutes' => HOLD_MINUTES, 'promote' => ['priceCents' => promo_price()],
 ]);
 
 // Someone signs up with an email that has only bought as a guest. The

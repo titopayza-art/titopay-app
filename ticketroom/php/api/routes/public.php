@@ -269,6 +269,16 @@ route('GET', '/api/public/payments/:id/payfast', function ($a) {
     $d = verify_link(qs('k'));
     if (!$d || ($d['p'] ?? '') !== $a['id']) throw not_found('This payment link has expired. Go back to your order and try again.');
     $p = row("SELECT * FROM payments WHERE id = ? AND provider = 'payfast' AND status = 'pending'", [$a['id']]);
+    if (!$p) {
+        // A Promote purchase: back to the organiser portal afterwards.
+        $pp = row("SELECT * FROM promotion_payments WHERE id = ? AND provider = 'payfast' AND status = 'pending'", [$a['id']]);
+        if (!$pp) throw conflict('This payment is no longer open.', 'payment_closed');
+        $promo = row('SELECT * FROM event_promotions WHERE id = ?', [$pp['promotion_id']]);
+        if ($promo['status'] !== 'pending_payment') throw conflict('This promotion is not waiting for payment.', 'order_not_pending');
+        $buyer = row('SELECT full_name, email FROM users WHERE id = ?', [$pp['created_by']]);
+        return payfast_form($pp, ['buyer_name' => $buyer['full_name'] ?? 'TicketRoom organiser', 'buyer_email' => $buyer['email'] ?? null, 'reference' => $promo['reference'],
+            'item_name' => "TicketRoom Promote {$promo['reference']}"], promo_return_url($promo));
+    }
     if (!$p) throw conflict('This payment is no longer open.', 'payment_closed');
     if ($p['purpose'] === 'topup') { $t = topup_pay_details($p); return payfast_form($p, $t, topup_return_url($t['event_id'])); }
     $o = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
@@ -280,6 +290,12 @@ route('GET', '/api/public/payments/:id/payfast', function ($a) {
 route('GET', '/api/public/payments/:id/sandbox', function ($a) {
     limit('payform', 30, 600);
     $p = sandbox_payment($a['id'], qs('k'));
+    if (isset($p['promotion_id'])) {
+        $o = row('SELECT p.reference, u.full_name AS buyer_name, u.email AS buyer_email, p.price_cents AS total_cents, e.title, p.event_id FROM event_promotions p
+                   JOIN events e ON e.id = p.event_id JOIN users u ON u.id = p.created_by WHERE p.id = ?', [$p['promotion_id']]);
+        return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']], 'purpose' => 'promotion', 'order' => $o,
+            'returnUrl' => promo_return_url($o)];
+    }
     if ($p['purpose'] === 'topup') {
         $t = topup_pay_details($p);
         return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']],
@@ -295,6 +311,7 @@ route('POST', '/api/public/payments/:id/sandbox', function ($a) {
     $b = check(body(), ['k' => R::str(['max' => 600]), 'outcome' => R::oneOf(['paid', 'failed', 'cancelled'])]);
     $p = sandbox_payment($a['id'], $b['k']);
     $r = sandbox_answer($p, $b['outcome']);
+    if (isset($p['promotion_id'])) return $r + ['returnUrl' => promo_return_url(row('SELECT event_id FROM event_promotions WHERE id = ?', [$p['promotion_id']]))];
     if ($p['purpose'] === 'topup') return $r + ['returnUrl' => topup_return_url((string) val('SELECT event_id FROM wallet_topups WHERE id = ?', [$p['topup_id']]))];
     $ref = val('SELECT reference FROM orders WHERE id = ?', [$p['order_id']]);
     return $r + ['returnUrl' => '/orders/' . $ref . '?k=' . rawurlencode(order_key($p['order_id'])) . ($b['outcome'] === 'cancelled' ? '&cancelled=1' : '')];
