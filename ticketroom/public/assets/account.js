@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile , phoneVerifyDialog } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -243,7 +243,8 @@ async function settings() {
       <section class="card"><h2>Profile</h2><form class="stack" id="prof">
         <div class="field"><label for="fn">Full name</label><input id="fn" name="fullName" value="${u.full_name}" required></div>
         <div class="field"><label>Email</label><input value="${u.email}" disabled></div>
-        <div class="field"><label for="ph">Mobile</label><input id="ph" name="phone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>
+        <div class="field"><label for="ph">Mobile ${u.phone_verified_at ? html`<span class="badge good">confirmed</span>` : ""}</label><input id="ph" name="phone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567">
+          <span class="hint" data-feature="sms">${u.phone_verified_at ? "Confirmed by SMS. Changing it means confirming the new number." : html`Not confirmed yet. <button type="button" class="btn-link" data-phone>Confirm by SMS</button>`}</span></div>
         <button class="btn btn-dark">Save profile</button></form></section>
       <section class="card" data-feature="cashless"><h2>Spending PIN</h2><p class="muted small">Needed for cashless purchases of R200 or more, so a lost wristband can't be used for big spends. ${u.has_pin ? "A PIN is set." : "No PIN set yet."}</p>
         <form class="stack" id="pin"><div class="field"><label for="pn">New PIN (4–6 digits)</label><input id="pn" name="pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" required autocomplete="off"></div>
@@ -263,6 +264,7 @@ async function settings() {
     <section class="card mt"><h2>Your data (POPIA)</h2><p class="muted">Download everything we hold about you, or delete your account. Financial records are kept for the period the law requires, with your personal details removed.</p>
       <div class="row"><a class="btn btn-ghost" href="/api/auth/me/export" download>Download my data</a><button class="btn btn-danger" id="del">Delete my account</button></div></section>`);
   onSubmit($("#prof"), async (v) => { await patch("/api/auth/me", v); toast("Profile saved.", "good"); });
+  $("[data-phone]")?.addEventListener("click", () => phoneVerifyDialog($("#ph").value.trim() || u.phone, () => settings()));
   onSubmit($("#pin"), async (v, f) => { await post("/api/auth/me/pin", v); f.reset(); toast("Spending PIN saved.", "good"); await me(true); });
   onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", matchPasswords(v, "newPassword", "newPasswordConfirm")); f.reset(); document.querySelector(".pw-nag")?.remove(); toast("Password changed.", "good"); });
   $$("[data-consent]").forEach((c) => c.addEventListener("change", async () => {

@@ -719,6 +719,26 @@ export function authDialog(mode = "signin", { onDone, reason, portal = "site" } 
 }
 
 // Becoming an organiser in one go: your account and your organisation.
+// ---------- confirm a mobile number ----------
+// Two steps in one box: the number, then the 6-digit code we SMS to it.
+export function phoneVerifyDialog(current, onDone) {
+  const d = dialog("Confirm your mobile number", html`<form class="stack" data-step="send" novalidate>
+    <p class="small muted mb-0">We'll SMS you a 6-digit code. It expires in 10 minutes.</p>
+    <div class="field"><label for="pv-phone">Mobile number</label><input id="pv-phone" name="phone" type="tel" autocomplete="tel" required value="${current || ""}" placeholder="082 123 4567"></div>
+    <button class="btn btn-primary btn-block">Send the code</button></form>`);
+  onSubmit($("form", d), async (v) => {
+    const r = await post("/api/auth/phone/send", { phone: v.phone });
+    render($(".dialog-body", d), html`<form class="stack" novalidate>
+      <p class="mb-0">We sent a code to <strong>${r.sentTo}</strong>.</p>
+      <div class="field"><label for="pv-code">Code</label><input id="pv-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required pattern="[0-9]{6}"></div>
+      <div class="row between"><button type="button" class="btn-link" data-again>Use another number</button><button class="btn btn-primary">Confirm</button></div></form>`);
+    $("#pv-code", d).focus();
+    $("[data-again]", d).addEventListener("click", () => { d.close(); phoneVerifyDialog(v.phone, onDone); });
+    onSubmit($("form", d), async (x) => { const out = await post("/api/auth/phone/verify", { code: x.code }); d.close(); toast("Your mobile number is confirmed.", "good"); await onDone?.(out.user); });
+  });
+  return d;
+}
+
 // ---------- sign in with Google ----------
 // Shown only when an admin has switched it on under Integrations, and only on
 // the customer and organiser sign-in boxes: staff never sign in this way.

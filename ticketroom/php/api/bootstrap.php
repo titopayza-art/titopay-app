@@ -144,6 +144,7 @@ function tr_install_db(string $hash): void
 {
     db()->exec((string) file_get_contents(TR_APP . '/schema.sql'));
     q('INSERT INTO meta (key, value) VALUES (?, ?)', ['schema_version', (string) SCHEMA_VERSION]);
+    q('INSERT INTO meta (key, value) VALUES (?, ?)', ['upgrades_done', implode(',', array_keys(UPGRADES))]);
     $email = strtolower((string) cfg('admin.email', 'hello@ticketroom.co.za'));
     $uid = uuid();
     $now = now_iso();
@@ -157,7 +158,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 16;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -269,6 +270,11 @@ const UPGRADES = [
     14 => [
         '@cashless',
     ],
+    // Phone numbers confirmed with a code sent by SMS.
+    16 => [
+        'ALTER TABLE users ADD COLUMN phone_verified_at TEXT',
+        'CREATE TABLE IF NOT EXISTS phone_codes (user_id TEXT PRIMARY KEY REFERENCES users(id), phone TEXT NOT NULL, code_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)',
+    ],
 ];
 // The verification tables, exactly as written at the end of schema.sql.
 function tr_verification_tables(): void
@@ -297,17 +303,36 @@ function tr_backfill_refs(): void
     foreach (rows('SELECT id FROM organisers WHERE ref IS NULL') as $r) q('UPDATE organisers SET ref = ? WHERE id = ?', [new_ref('organisers'), $r['id']]);
     foreach (rows('SELECT id FROM events WHERE ref IS NULL') as $r) q('UPDATE events SET ref = ? WHERE id = ?', [new_ref('events'), $r['id']]);
 }
+// Upgrades are tracked one by one (meta "upgrades_done"), not just by the
+// highest number, so an upgrade that arrives later with a lower number (work
+// merged out of order) still runs exactly once. Adding a column that is
+// already there is skipped, so every step is safe to repeat.
 function tr_upgrade(): void
 {
-    $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
-    if ($have >= SCHEMA_VERSION) return;
-    tx(function () {
+    $want = implode(',', array_keys(UPGRADES));
+    $m = [];
+    foreach (rows("SELECT key, value FROM meta WHERE key IN ('schema_version', 'upgrades_done')") as $r) $m[$r['key']] = (string) $r['value'];
+    if (($m['upgrades_done'] ?? null) === $want) return;
+    tx(function () use ($want) {
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
+        $doneRaw = val("SELECT value FROM meta WHERE key = 'upgrades_done'");
+        // First run with this tracking: everything up to the stored version is done.
+        $done = $doneRaw === null ? array_values(array_filter(array_keys(UPGRADES), fn($v) => $v <= $have)) : array_map('intval', array_filter(explode(',', (string) $doneRaw), 'strlen'));
         foreach (UPGRADES as $v => $steps) {
-            if ($v <= $have) continue;
-            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), default => db()->exec($sql) };
-            q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
+            if (in_array($v, $done, true)) continue;
+            foreach ($steps as $sql) {
+                try {
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), default => db()->exec($sql) };
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
+                }
+            }
+            $done[] = $v;
+            $have = max($have, $v);
         }
+        sort($done);
+        q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) max($have, SCHEMA_VERSION)]);
+        q("INSERT INTO meta (key, value) VALUES ('upgrades_done', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [$want]);
     });
 }
 

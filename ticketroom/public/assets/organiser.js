@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
@@ -671,7 +671,8 @@ function kycItem(it, own, eventId = "") {
   const d = it.document;
   const act = own && it.kind === "document"
     ? html`<label class="btn btn-ghost btn-sm kyc-up">${d && !d.deleted ? "Replace" : "Upload"}<input type="file" class="sr-only" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" data-up="${it.key}" data-ev="${eventId}" aria-label="${d ? "Replace" : "Upload"} ${it.label}"></label>`
-    : own && it.kind === "terms" && it.status !== "approved" ? html`<button class="btn btn-primary btn-sm" data-terms>Read and sign</button>` : "";
+    : own && it.kind === "terms" && it.status !== "approved" ? html`<button class="btn btn-primary btn-sm" data-terms>Read and sign</button>`
+    : own && it.key === "phone" && it.status === "missing" ? html`<button class="btn btn-primary btn-sm" data-phone>Confirm by SMS</button>` : "";
   return html`<li class="kyc-item" data-req="${it.key}"><div class="grow kyc-body">
       <div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${!it.required && !it.recommended && it.key !== "phone" ? html`<span class="badge plain">optional</span>` : ""}</div>
       <div class="small muted">${it.reason}</div>
@@ -710,6 +711,7 @@ function kycTermsDialog(done) {
 function kycWire(root, done) {
   $$("[data-up]", root).forEach((i) => i.addEventListener("change", () => kycUpload(i, done)));
   $("[data-terms]", root)?.addEventListener("click", () => kycTermsDialog(done));
+  $("[data-phone]", root)?.addEventListener("click", async () => phoneVerifyDialog((await me())?.phone, done));
 }
 function gateRow(ok, title, text) {
   return html`<li class="${ok ? "ok" : "no"}"><span class="tick" aria-hidden="true">${ok ? "✓" : "✕"}</span><span><strong>${title}</strong><br><span class="small muted">${text}</span></span><span class="sr-only">${ok ? " (allowed)" : " (blocked)"}</span></li>`;
@@ -731,7 +733,9 @@ async function verification() {
       ${gateRow(g.freeSubmit.ok && g.paidSubmit.ok, "Submit events for review", g.freeSubmit.ok ? "Your ID and signed terms are in." : `Upload your ID and sign the terms first. ${need(g.freeSubmit.missing)}`)}
       ${gateRow(g.freePublish.ok && g.paidPublish.ok, "Events go live and on sale", g.paidPublish.ok ? "Approved. Free and paid events can go live once we approve each event." : `Free events go live, and paid events go on sale, only after your ID and signed terms are approved. ${need(g.paidPublish.missing)}`)}
       ${gateRow(g.payouts.ok, "Payouts", g.payouts.ok ? "Your bank account is verified." : v.sellsPaid ? `Blocked until your bank account is verified. ${need(g.payouts.missing)}` : "Only for paid events. Tick \"We will sell paid tickets\" below to see what payouts need.")}
-      ${gateRow(false, "Mobile number", "Phone checks are not available yet, so your number shows as not verified. It does not hold anything up.")}
+      ${(() => { const ph = v.requirements.find((r) => r.key === "phone"); return ph?.status === "approved" ? gateRow(true, "Mobile number", "Confirmed by SMS.")
+        : ph?.status === "missing" ? gateRow(false, "Mobile number", "Confirm your mobile number with a code we SMS you. Events go live once it is confirmed.")
+        : gateRow(true, "Mobile number", "Phone confirmation switches on when TicketRoom's SMS is set up. It does not hold anything up."); })()}
     </ol></section>
     ${own ? html`<section class="card mt"><h2>About you</h2><form class="stack" id="kp">
       <fieldset class="field"><legend class="label">Who is selling tickets?</legend><div class="row">${Object.entries(v.entityNames).map(([k, l]) => html`<label class="check"><input type="radio" name="entityType" value="${k}" ${raw(p.entityType === k ? "checked" : "")}><span>${l}</span></label>`)}</div></fieldset>

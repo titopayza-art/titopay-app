@@ -76,7 +76,7 @@ function user_by_email(string $email): ?array
 
 function profile(string $userId): array
 {
-    $u = row('SELECT id, email, full_name, phone, email_verified_at, created_at, account_type, spending_pin_hash IS NOT NULL AS has_pin FROM users WHERE id = ?', [$userId]);
+    $u = row('SELECT id, email, full_name, phone, phone_verified_at, email_verified_at, created_at, account_type, spending_pin_hash IS NOT NULL AS has_pin FROM users WHERE id = ?', [$userId]);
     $u['platform_roles'] = $u['account_type'] === 'staff' ? array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$userId]), 'role') : [];
     $u['organisers'] = array_map(fn($r) => ['id' => $r['id'], 'name' => $r['name'], 'status' => $r['status'], 'role' => $r['role']],
         rows('SELECT o.id, o.name, o.status, m.role FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = ? ORDER BY m.created_at', [$userId]));

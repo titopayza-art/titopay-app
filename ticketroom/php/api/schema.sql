@@ -12,6 +12,7 @@ CREATE TABLE users (
   id                TEXT PRIMARY KEY,
   email             TEXT NOT NULL,
   phone             TEXT,
+  phone_verified_at TEXT,
   full_name         TEXT NOT NULL,
   password_hash     TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','deleted')),
@@ -900,4 +901,14 @@ CREATE TABLE IF NOT EXISTS event_risk (
   risk_override TEXT CHECK (risk_override IS NULL OR risk_override IN ('high','normal')),
   updated_by    TEXT REFERENCES users(id),
   updated_at    TEXT NOT NULL
+);
+
+-- Phone numbers confirmed with a code sent by SMS (upgrade 16).
+CREATE TABLE IF NOT EXISTS phone_codes (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id),
+  phone      TEXT NOT NULL,
+  code_hash  TEXT NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
