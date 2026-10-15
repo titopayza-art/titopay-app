@@ -8,7 +8,7 @@ route('GET', '/api/health', function () {
 });
 route('GET', '/api/config', fn() => [
     'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'googleSignIn' => google_ready(), 'titopayWallet' => false,
-    'features' => ['payments' => false, 'cashless' => false, 'pos' => false, 'finance' => true, 'sms' => sms_ready(), 'tags' => false,
+    'features' => ['payments' => false, 'cashless' => false, 'pos' => false, 'finance' => true, 'sms' => sms_ready(), 'tags' => false, 'promote' => true,
         'walletApple' => wallet_apple_ready(), 'walletGoogle' => wallet_google_ready()],
     'messaging' => ['email' => mail_mode(), 'sms' => sms_provider()],
     'cashless' => ['pinThresholdCents' => 20000, 'minTopupCents' => 5000, 'maxTopupCents' => 300000, 'maxBalanceCents' => 500000],

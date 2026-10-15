@@ -24,7 +24,12 @@ route('GET', '/api/admin/payments', function () {
     $q = trim((string) qs('q', ''));
     $list = rows("SELECT p.*, o.reference AS order_reference, u.email, 'order' AS purpose FROM payments p JOIN orders o ON o.id = p.order_id JOIN users u ON u.id = o.user_id
                    WHERE ? = '' OR o.reference = upper(?) OR p.provider_reference = ? ORDER BY p.created_at DESC LIMIT 200", [$q, $q, $q]);
-    return ['payments' => $list];
+    // Promote purchases by card (paid-from-balance ones move no provider money).
+    $promo = rows("SELECT p.*, e.reference AS order_reference, u.email, 'promotion' AS purpose FROM promotion_payments p JOIN event_promotions e ON e.id = p.promotion_id
+                    LEFT JOIN users u ON u.id = p.created_by WHERE p.provider <> 'balance' AND (? = '' OR e.reference = upper(?) OR p.provider_reference = ?) ORDER BY p.created_at DESC LIMIT 200", [$q, $q, $q]);
+    $list = array_merge($list, $promo);
+    usort($list, fn($x, $y) => strcmp($y['created_at'], $x['created_at']));
+    return ['payments' => array_slice($list, 0, 200)];
 });
 route('POST', '/api/admin/payments/:id/recheck', function ($a) {
     $u = adm_finance();
@@ -200,7 +205,9 @@ route('POST', '/api/admin/reconciliation', function () {
         $theirs[trim($c[0])] = ['amount' => (int) round((float) $c[1]), 'status' => strtolower(trim($c[2] ?? ''))];
     }
     $ours = [];
-    foreach (rows('SELECT provider_reference, amount_cents, status FROM payments WHERE provider = ? AND created_at >= ? AND created_at < ? AND provider_reference IS NOT NULL', [$b['provider'], $b['from'], $b['to']]) as $p) $ours[$p['provider_reference']] = $p;
+    foreach (rows('SELECT provider_reference, amount_cents, status FROM payments WHERE provider = ? AND created_at >= ? AND created_at < ? AND provider_reference IS NOT NULL
+                   UNION ALL SELECT provider_reference, amount_cents, status FROM promotion_payments WHERE provider = ? AND created_at >= ? AND created_at < ? AND provider_reference IS NOT NULL',
+        [$b['provider'], $b['from'], $b['to'], $b['provider'], $b['from'], $b['to']]) as $p) $ours[$p['provider_reference']] = $p;
     $paidish = ['confirmed', 'partially_refunded', 'refunded'];
     return tx(function () use ($u, $b, $theirs, $ours, $paidish) {
         $id = uuid();

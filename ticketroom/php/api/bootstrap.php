@@ -14,6 +14,7 @@ require TR_APP . '/lib/qr.php';
 require TR_APP . '/lib/wallet.php';
 require TR_APP . '/lib/integrations.php';
 require TR_APP . '/lib/payments.php';
+require TR_APP . '/lib/promote.php';
 
 // The data folder holds everything the site creates for itself: the
 // database, uploaded posters, the signing keys and your own settings. It goes
@@ -155,7 +156,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 13;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -254,6 +255,21 @@ const UPGRADES = [
     10 => [
         'ALTER TABLE events ADD COLUMN lineup TEXT',
     ],
+    // Promote: the R1500 once-off event promotion package, its payments,
+    // and campaign tracking links.
+    13 => [
+        'ALTER TABLE tracking_links ADD COLUMN campaign_id TEXT',
+        'ALTER TABLE campaigns ADD COLUMN promotion_id TEXT',
+        'CREATE TABLE IF NOT EXISTS event_promotions (id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL REFERENCES events(id), organiser_id TEXT NOT NULL REFERENCES organisers(id), status TEXT NOT NULL CHECK (status IN (\'pending_payment\',\'active\',\'ended\',\'refunded\',\'cancelled\')), price_cents INTEGER NOT NULL CHECK (price_cents > 0), paid_with TEXT CHECK (paid_with IN (\'card\',\'balance\')), test INTEGER NOT NULL DEFAULT 0, social_status TEXT CHECK (social_status IN (\'requested\',\'scheduled\',\'posted\')), social_request TEXT, social_notes TEXT, social_links TEXT, social_updated_at TEXT, refund_status TEXT CHECK (refund_status IN (\'processing\',\'manual_pending\',\'completed\',\'failed\')), refund_reference TEXT, refund_reason TEXT, refund_provider_reference TEXT, refund_failure TEXT, refunded_by TEXT REFERENCES users(id), refunded_at TEXT, created_by TEXT NOT NULL REFERENCES users(id), paid_at TEXT, ends_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS event_promotions_open_uq ON event_promotions (event_id) WHERE status IN (\'pending_payment\',\'active\')',
+        'CREATE INDEX IF NOT EXISTS event_promotions_status_idx ON event_promotions (status, created_at)',
+        'CREATE INDEX IF NOT EXISTS event_promotions_org_idx ON event_promotions (organiser_id, created_at)',
+        'CREATE TABLE IF NOT EXISTS promotion_payments (id TEXT PRIMARY KEY, promotion_id TEXT NOT NULL REFERENCES event_promotions(id), provider TEXT NOT NULL, environment TEXT NOT NULL, provider_reference TEXT, amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), status TEXT NOT NULL CHECK (status IN (\'initiated\',\'pending\',\'confirmed\',\'failed\',\'cancelled\',\'refunded\')), refunded_cents INTEGER NOT NULL DEFAULT 0, failure_reason TEXT, created_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confirmed_at TEXT)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS promotion_payments_ref_uq ON promotion_payments (provider, provider_reference)',
+        'CREATE INDEX IF NOT EXISTS promotion_payments_promo_idx ON promotion_payments (promotion_id)',
+        'CREATE INDEX IF NOT EXISTS campaigns_promotion_idx ON campaigns (promotion_id)',
+        'CREATE INDEX IF NOT EXISTS tracking_links_campaign_idx ON tracking_links (campaign_id)',
+    ],
 ];
 // The platform owner is the first administrator. Nobody else can change
 // their roles, suspend them or reset their password.
@@ -329,6 +345,8 @@ function jobs(): array
             q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND body <> '[redacted]'", [iso_in(-180 * 86400)]);
         }],
         // Organiser campaigns booked for later go out when their time comes.
+        // Promote packages end with their event; unpaid ones lapse after a day.
+        ['end-promotions', 300, fn() => promo_expire()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];

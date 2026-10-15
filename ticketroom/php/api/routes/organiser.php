@@ -4,7 +4,8 @@
 // live check-ins, and email marketing. Mirrors src/routes/organiser.js.
 // Payments, refunds of paid orders, payouts, vendors and terminals are not part
 // of this edition: those routes answer not_available() (or an empty list where
-// the page only lists them). SMS campaigns are not available either.
+// the page only lists them). SMS campaigns come with Promote (lib/promote.php):
+// an event with an active promotion can be sent SMS campaigns once SMS is set up.
 declare(strict_types=1);
 
 const ORG_ALL = ['owner', 'manager', 'marketing', 'finance', 'viewer'];
@@ -252,11 +253,20 @@ function org_unsubscribe_url(string $userId, string $orgId, string $channel): st
     return base_url() . '/unsubscribe?t=' . sign_link(['u' => $userId, 'o' => $orgId, 'c' => $channel], ORG_UNSUB_TTL);
 }
 
-function org_render(array $camp, array $org, array $recipient): array
+// $link: the campaign's own tracking link (promoted events). It goes where
+// the message says {{event_link}}, or at the end. Without one, {{event_link}}
+// becomes the event's plain address (or is left out for several events).
+function org_render(array $camp, array $org, array $recipient, ?string $link = null): array
 {
     $first = explode(' ', (string) ($recipient['full_name'] ?? ''))[0];
     if ($first === '') $first = 'there';
     $body = preg_replace_callback('/\{\{\s*first_name\s*\}\}/', fn() => $first, (string) $camp['body']);
+    $has = (bool) preg_match('/\{\{\s*event_link\s*\}\}/', $body);
+    if ($has || $link !== null) {
+        $url = $link ?? org_plain_event_link($camp);
+        if ($has) $body = preg_replace_callback('/\{\{\s*event_link\s*\}\}/', fn() => $url, $body);
+        elseif ($link !== null) $body .= ($camp['channel'] === 'sms' ? ' ' : "\n\nGet your tickets: ") . $link;
+    }
     $unsub = org_unsubscribe_url((string) $recipient['user_id'], $camp['organiser_id'], $camp['channel']);
     if ($camp['channel'] === 'sms') return ['body' => "{$org['name']}: $body Opt out: $unsub"];
     return [
@@ -267,7 +277,29 @@ function org_render(array $camp, array $org, array $recipient): array
 
 function org_sms_unavailable(): AppError
 {
-    return conflict('SMS campaigns are not available yet. Send an email campaign instead.', 'sms_not_available', ['channel' => 'Only email is available for now.']);
+    if (!sms_ready()) return conflict('SMS is not set up on TicketRoom yet. Send an email campaign instead.', 'sms_not_available', ['channel' => 'Only email is available for now.']);
+    return conflict('SMS campaigns come with Promote. Promote the event, then choose only that event as the audience.', 'sms_not_available', ['channel' => 'SMS needs an active Promote package for the one event in the audience.']);
+}
+// SMS goes out only for a promoted event, and only once SMS is set up.
+function org_sms_allowed(array $camp): bool { return sms_ready() && promo_for_campaign($camp) !== null; }
+function org_plain_event_link(array $camp): string
+{
+    $aud = is_array($camp['audience'] ?? null) ? $camp['audience'] : (json_decode((string) ($camp['audience'] ?? ''), true) ?: []);
+    $ids = (array) ($aud['eventIds'] ?? []);
+    $slug = count($ids) === 1 ? val('SELECT slug FROM events WHERE id = ?', [$ids[0]]) : null;
+    return base_url() . ($slug ? "/events/$slug" : '/');
+}
+// Campaigns sent today that count towards the daily cap: those for promoted
+// events have their own hourly cap instead (PROMO_HOURLY_LIMIT).
+function org_campaign_caps(string $orgId, ?array $promo): void
+{
+    if ($promo) {
+        $hour = (int) val("SELECT count(*) FROM campaigns WHERE organiser_id = ? AND status IN ('sending','sent') AND sent_at > ?", [$orgId, iso_in(-3600)]);
+        if ($hour >= PROMO_HOURLY_LIMIT) throw conflict('You can send up to ' . PROMO_HOURLY_LIMIT . ' campaigns an hour. Please wait a little before the next one.', 'campaign_limit');
+        return;
+    }
+    $today = (int) val("SELECT count(*) FROM campaigns WHERE organiser_id = ? AND status IN ('sending','sent') AND sent_at > ? AND promotion_id IS NULL", [$orgId, iso_in(-86400)]);
+    if ($today >= ORG_DAILY_CAMPAIGN_LIMIT) throw conflict('You can send at most ' . ORG_DAILY_CAMPAIGN_LIMIT . ' campaigns a day.', 'campaign_limit');
 }
 
 function org_campaign_shape(array $o = []): array
@@ -280,7 +312,7 @@ function org_campaign_shape(array $o = []): array
 
 function org_validate_campaign(string $orgId, array $b): void
 {
-    if (($b['channel'] ?? null) === 'sms') throw org_sms_unavailable();
+    if (($b['channel'] ?? null) === 'sms' && !org_sms_allowed(['organiser_id' => $orgId, 'audience' => ['eventIds' => $b['eventIds'] ?? []]])) throw org_sms_unavailable();
     if (($b['channel'] ?? null) === 'email' && empty($b['subject'])) throw bad('Email campaigns need a subject.', ['subject' => 'Required for email.']);
     $ids = $b['eventIds'] ?? [];
     if ($ids) {
@@ -304,20 +336,34 @@ function org_send_campaign(array $actor, string $orgId, string $campaignId): arr
     return tx(function () use ($actor, $orgId, $campaignId) {
         $camp = org_get_campaign($orgId, $campaignId);
         if (!in_array($camp['status'], ['draft', 'scheduled'], true)) throw conflict("This campaign is already {$camp['status']}.", 'bad_transition');
-        if ($camp['channel'] !== 'email') throw org_sms_unavailable();
+        // A campaign for one promoted event: no daily cap (an hourly one
+        // instead), SMS allowed, and its own tracking link for the analytics.
+        $promo = promo_for_campaign($camp);
+        if ($camp['channel'] !== 'email' && !org_sms_allowed($camp)) throw org_sms_unavailable();
         $org = row('SELECT * FROM organisers WHERE id = ?', [$orgId]);
         if ($org['status'] !== 'approved') throw conflict('Your organiser account must be approved before sending marketing.', 'organiser_not_approved');
-        $today = (int) val("SELECT count(*) FROM campaigns WHERE organiser_id = ? AND status IN ('sending','sent') AND sent_at > ?", [$orgId, iso_in(-86400)]);
-        if ($today >= ORG_DAILY_CAMPAIGN_LIMIT) throw conflict('You can send at most ' . ORG_DAILY_CAMPAIGN_LIMIT . ' campaigns a day.', 'campaign_limit');
+        org_campaign_caps($orgId, $promo);
+        $link = null;
+        if ($promo) {
+            $event = row('SELECT * FROM events WHERE id = ?', [$promo['event_id']]);
+            $code = 'C' . random_code(7);
+            insert('tracking_links', ['id' => uuid(), 'event_id' => $event['id'], 'code' => $code, 'label' => ($camp['channel'] === 'sms' ? 'SMS: ' : 'Email: ') . mb_substr($camp['name'], 0, 70),
+                'clicks' => 0, 'created_at' => now_iso(), 'campaign_id' => $camp['id']]);
+            $link = org_link_url($event, $code);
+        }
         $recipients = org_audience($orgId, $camp['channel'], $camp['audience']['eventIds'] ?? []);
+        $segments = 0;
         foreach ($recipients as $r) {
-            $msg = org_render($camp, $org, $r);
+            $msg = org_render($camp, $org, $r, $link);
+            if ($camp['channel'] === 'sms') $segments += promo_sms_segments($msg['body']);
             outbox_enqueue(['channel' => $camp['channel'], 'kind' => 'marketing', 'to' => $r['address'], 'subject' => $msg['subject'] ?? null, 'body' => $msg['body'],
                 'userId' => $r['user_id'], 'campaignId' => $camp['id']]);
         }
         $now = now_iso();
-        q("UPDATE campaigns SET status = 'sent', sent_at = ?, recipients_count = ?, estimated_cost_cents = 0, updated_at = ? WHERE id = ?", [$now, count($recipients), $now, $camp['id']]);
-        audit('campaign.sent', ['actor' => $actor, 'entityType' => 'campaign', 'entityId' => $camp['id'], 'organiserId' => $orgId, 'details' => ['channel' => $camp['channel'], 'recipients' => count($recipients)]]);
+        q("UPDATE campaigns SET status = 'sent', sent_at = ?, recipients_count = ?, estimated_cost_cents = ?, promotion_id = ?, updated_at = ? WHERE id = ?",
+            [$now, count($recipients), $segments * promo_sms_cost(), $promo['id'] ?? null, $now, $camp['id']]);
+        audit('campaign.sent', ['actor' => $actor, 'entityType' => 'campaign', 'entityId' => $camp['id'], 'organiserId' => $orgId,
+            'details' => ['channel' => $camp['channel'], 'recipients' => count($recipients)] + ($promo ? ['promotion' => $promo['reference']] : [])]);
         return row('SELECT * FROM campaigns WHERE id = ?', [$camp['id']]);
     });
 }
@@ -821,7 +867,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/payout', 
     throw not_available();
 });
 
-// ============================================================== marketing (email only)
+// ============================================================== marketing (email; SMS with Promote)
 route('GET', '/api/organiser/:orgId/marketing/audience', function ($a) {
     organiser_access(require_auth(), $a['orgId'], ORG_MKT);
     $ids = array_values(array_filter(explode(',', (string) qs('eventIds', '')), fn($x) => (bool) preg_match('/^[0-9a-f-]{36}$/', $x)));
@@ -851,7 +897,7 @@ route('PATCH', '/api/organiser/:orgId/campaigns/:id', function ($a) {
     if ($camp['status'] !== 'draft') throw conflict('Only drafts can be edited.', 'bad_transition');
     $b = ['channel' => $camp['channel']] + check(body(), org_campaign_shape(['optional' => true]));
     $b['channel'] = $camp['channel'];
-    org_validate_campaign($a['orgId'], ['subject' => $b['subject'] ?? $camp['subject']] + $b);
+    org_validate_campaign($a['orgId'], ['subject' => $b['subject'] ?? $camp['subject']] + $b + ['eventIds' => $camp['audience']['eventIds'] ?? []]);
     $nz = fn($v) => ($v === null || $v === '') ? null : $v;
     q('UPDATE campaigns SET name = COALESCE(?, name), subject = COALESCE(?, subject), body = COALESCE(?, body), audience = COALESCE(?, audience), updated_at = ? WHERE id = ?',
         [$nz($b['name'] ?? null), $nz($b['subject'] ?? null), $nz($b['body'] ?? null), isset($b['eventIds']) ? json_encode(['eventIds' => $b['eventIds']]) : null, now_iso(), $camp['id']]);
@@ -862,10 +908,16 @@ route('GET', '/api/organiser/:orgId/campaigns/:id/preview', function ($a) {
     $u = require_auth();
     ['organiser' => $org] = organiser_access($u, $a['orgId'], ORG_MKT);
     $camp = org_get_campaign($a['orgId'], $a['id']);
-    if ($camp['channel'] !== 'email') throw org_sms_unavailable();
+    if ($camp['channel'] !== 'email' && !org_sms_allowed($camp)) throw org_sms_unavailable();
     $recipients = count(org_audience($a['orgId'], $camp['channel'], $camp['audience']['eventIds'] ?? []));
-    $sample = org_render($camp, $org, ['user_id' => $u['id'], 'full_name' => $u['fullName']]);
-    return ['preview' => $sample, 'recipients' => $recipients, 'segments' => null, 'estimatedCostCents' => 0];
+    $promo = promo_for_campaign($camp);
+    // The real link is made when the campaign goes out; the preview shows its shape.
+    $link = $promo ? org_link_url(row('SELECT * FROM events WHERE id = ?', [$promo['event_id']]), 'CXXXXXXX') : null;
+    $sample = org_render($camp, $org, ['user_id' => $u['id'], 'full_name' => $u['fullName']], $link);
+    $sms = $camp['channel'] === 'sms';
+    $segments = $sms ? promo_sms_segments($sample['body']) : null;
+    return ['preview' => $sample, 'recipients' => $recipients, 'segments' => $segments, 'estimatedCostCents' => $sms ? (promo_sms_cost() ? $recipients * $segments * promo_sms_cost() : null) : 0,
+        'smsCostPerSegmentCents' => $sms ? (promo_sms_cost() ?: null) : null, 'promotion' => $promo ? ['reference' => $promo['reference'], 'endsAt' => $promo['ends_at'], 'test' => (int) $promo['test'] === 1] : null];
 });
 
 route('POST', '/api/organiser/:orgId/campaigns/:id/test', function ($a) {
@@ -873,10 +925,17 @@ route('POST', '/api/organiser/:orgId/campaigns/:id/test', function ($a) {
     limit('camptest', 10, 3600, $u['id']);
     organiser_access($u, $a['orgId'], ORG_MKT);
     $camp = org_get_campaign($a['orgId'], $a['id']);
-    if ($camp['channel'] !== 'email') throw org_sms_unavailable();
+    if ($camp['channel'] !== 'email' && !org_sms_allowed($camp)) throw org_sms_unavailable();
     $org = row('SELECT * FROM organisers WHERE id = ?', [$a['orgId']]);
-    $msg = org_render($camp, $org, ['user_id' => $u['id'], 'full_name' => $u['fullName']]);
-    tx(fn() => outbox_enqueue(['channel' => 'email', 'kind' => 'transactional', 'to' => $u['email'], 'subject' => $msg['subject'] ? "[TEST] {$msg['subject']}" : null, 'body' => $msg['body'], 'userId' => $u['id']]));
+    $promo = promo_for_campaign($camp);
+    $link = $promo ? org_plain_event_link($camp) : null;
+    $msg = org_render($camp, $org, ['user_id' => $u['id'], 'full_name' => $u['fullName']], $link);
+    // An SMS test goes to your own phone; without a number on your account it comes by email.
+    if ($camp['channel'] === 'sms' && !empty($u['phone'])) {
+        tx(fn() => outbox_enqueue(['channel' => 'sms', 'kind' => 'transactional', 'to' => $u['phone'], 'body' => "[TEST] {$msg['body']}", 'userId' => $u['id']]));
+        return ['sentTo' => org_mask($u['phone'])];
+    }
+    tx(fn() => outbox_enqueue(['channel' => 'email', 'kind' => 'transactional', 'to' => $u['email'], 'subject' => "[TEST] " . ($msg['subject'] ?? 'SMS: ' . $camp['name']), 'body' => $msg['body'], 'userId' => $u['id']]));
     return ['sentTo' => org_mask($u['email'])];
 });
 
@@ -887,7 +946,7 @@ route('POST', '/api/organiser/:orgId/campaigns/:id/send', function ($a) {
     if (!empty($b['scheduledAt']) && to_unix($b['scheduledAt']) > microtime(true) + 60) {
         $camp = org_get_campaign($a['orgId'], $a['id']);
         if ($camp['status'] !== 'draft') throw conflict('Only drafts can be scheduled.', 'bad_transition');
-        if ($camp['channel'] !== 'email') throw org_sms_unavailable();
+        if ($camp['channel'] !== 'email' && !org_sms_allowed($camp)) throw org_sms_unavailable();
         q("UPDATE campaigns SET status = 'scheduled', scheduled_at = ?, updated_at = ? WHERE id = ?", [$b['scheduledAt'], now_iso(), $camp['id']]);
         audit('campaign.scheduled', ['actor' => $u, 'entityType' => 'campaign', 'entityId' => $camp['id'], 'organiserId' => $a['orgId'], 'details' => ['at' => $b['scheduledAt']]]);
         return ['campaign' => row('SELECT * FROM campaigns WHERE id = ?', [$camp['id']])];

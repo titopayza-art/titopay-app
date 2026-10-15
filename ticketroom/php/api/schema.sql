@@ -232,7 +232,8 @@ CREATE TABLE tracking_links (
   code       TEXT NOT NULL,
   label      TEXT NOT NULL,
   clicks     INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  campaign_id TEXT
 );
 CREATE UNIQUE INDEX tracking_links_event_code_uq ON tracking_links (event_id, code);
 
@@ -404,7 +405,8 @@ CREATE TABLE campaigns (
   estimated_cost_cents INTEGER NOT NULL DEFAULT 0,
   created_by           TEXT NOT NULL REFERENCES users(id),
   created_at           TEXT NOT NULL,
-  updated_at           TEXT NOT NULL
+  updated_at           TEXT NOT NULL,
+  promotion_id         TEXT
 );
 
 CREATE TABLE message_outbox (
@@ -665,3 +667,58 @@ CREATE TABLE IF NOT EXISTS recon_items (
   resolved_at           TEXT
 );
 CREATE INDEX IF NOT EXISTS recon_items_run_idx ON recon_items (run_id);
+
+-- Promote: an organiser pays once (R1500) to promote one event until it
+-- ends: unlimited email campaigns to opted-in buyers, SMS campaigns when SMS
+-- is set up, posts on TicketRoom's socials and campaign analytics. Paid by
+-- card (its own payment records, same providers and test mode as tickets) or
+-- from the organiser's available balance.
+CREATE TABLE IF NOT EXISTS event_promotions (
+  id                TEXT PRIMARY KEY,
+  reference         TEXT NOT NULL UNIQUE,
+  event_id          TEXT NOT NULL REFERENCES events(id),
+  organiser_id      TEXT NOT NULL REFERENCES organisers(id),
+  status            TEXT NOT NULL CHECK (status IN ('pending_payment','active','ended','refunded','cancelled')),
+  price_cents       INTEGER NOT NULL CHECK (price_cents > 0),
+  paid_with         TEXT CHECK (paid_with IN ('card','balance')),
+  test              INTEGER NOT NULL DEFAULT 0,
+  social_status     TEXT CHECK (social_status IN ('requested','scheduled','posted')),
+  social_request    TEXT,
+  social_notes      TEXT,
+  social_links      TEXT,
+  social_updated_at TEXT,
+  refund_status     TEXT CHECK (refund_status IN ('processing','manual_pending','completed','failed')),
+  refund_reference  TEXT,
+  refund_reason     TEXT,
+  refund_provider_reference TEXT,
+  refund_failure    TEXT,
+  refunded_by       TEXT REFERENCES users(id),
+  refunded_at       TEXT,
+  created_by        TEXT NOT NULL REFERENCES users(id),
+  paid_at           TEXT,
+  ends_at           TEXT NOT NULL,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS event_promotions_open_uq ON event_promotions (event_id) WHERE status IN ('pending_payment','active');
+CREATE INDEX IF NOT EXISTS event_promotions_status_idx ON event_promotions (status, created_at);
+CREATE INDEX IF NOT EXISTS event_promotions_org_idx ON event_promotions (organiser_id, created_at);
+CREATE TABLE IF NOT EXISTS promotion_payments (
+  id                 TEXT PRIMARY KEY,
+  promotion_id       TEXT NOT NULL REFERENCES event_promotions(id),
+  provider           TEXT NOT NULL,
+  environment        TEXT NOT NULL,
+  provider_reference TEXT,
+  amount_cents       INTEGER NOT NULL CHECK (amount_cents > 0),
+  status             TEXT NOT NULL CHECK (status IN ('initiated','pending','confirmed','failed','cancelled','refunded')),
+  refunded_cents     INTEGER NOT NULL DEFAULT 0,
+  failure_reason     TEXT,
+  created_by         TEXT REFERENCES users(id),
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  confirmed_at       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS promotion_payments_ref_uq ON promotion_payments (provider, provider_reference);
+CREATE INDEX IF NOT EXISTS promotion_payments_promo_idx ON promotion_payments (promotion_id);
+CREATE INDEX IF NOT EXISTS campaigns_promotion_idx ON campaigns (promotion_id);
+CREATE INDEX IF NOT EXISTS tracking_links_campaign_idx ON tracking_links (campaign_id);

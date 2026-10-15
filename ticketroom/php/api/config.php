@@ -44,6 +44,11 @@ return [
     // Free tickets carry no fees.
     'fees' => ['ticketFeeFixedCents' => 1000, 'ticketFeeBps' => 0, 'organiserCommissionBps' => 500],
 
+    // Promote: the once-off price of promoting one event until it ends, and
+    // what one SMS segment costs (shown to organisers before an SMS send; 0
+    // means not set, and the portal says so instead of showing a cost).
+    'promote' => ['priceCents' => 150000, 'smsCostPerSegmentCents' => 0],
+
     // Optional: an Anthropic API key lets the website assistant answer in its
     // own words. Without one it answers from the help articles.
     'anthropicApiKey' => '',

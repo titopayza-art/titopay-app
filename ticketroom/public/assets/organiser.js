@@ -608,7 +608,7 @@ async function finance() {
   if (!can("owner", "finance", "manager")) return render(main, html`${head("Finance")}<p class="muted">Your role can't view finance.</p>`);
   const f = await get(`${base()}/finance`);
   render(main, html`${head("Finance & payouts", `Revenue becomes available ${ORG.payoutHoldDays} day${ORG.payoutHoldDays === 1 ? "" : "s"} after each event ends, less refunds in progress.`)}
-    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${money(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts</div></div>
+    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${money(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts${f.promoteFromBalanceCents ? ` and ${money(f.promoteFromBalanceCents)} for Promote` : ""}</div></div>
       <div class="kpi"><div class="k">Available now</div><div class="v">${money(f.availableCents)}</div><div class="s">can be paid out</div></div>
       <div class="kpi"><div class="k">Payouts in progress</div><div class="v">${money(f.inFlightCents)}</div><div class="s">awaiting approval / transfer</div></div>
       <div class="kpi"><div class="k">Refunds pending</div><div class="v">${money(f.pendingRefundsCents)}</div><div class="s">held back from payouts</div></div></div>
