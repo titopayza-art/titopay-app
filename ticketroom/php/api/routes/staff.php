@@ -79,7 +79,7 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
     while ($t = $st->fetch(PDO::FETCH_NUM)) {
         $first = staff_short_name($t[3]);
         // Test tickets ride along as "not valid", so offline phones refuse them too.
-        $list[] = [$t[0], (int) $t[1], (int) $t[5] === 1 ? 0 : ($t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0)), $first, (int) $t[5] === 1 ? 'Test ticket' : ($t[6] === 'resold' ? 'Resold' : ($types[$t[4]] ?? ''))];
+        $list[] = [$t[0], (int) $t[1], (int) $t[5] === 1 ? 0 : ($t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0)), $first, $t[6] === 'resold' ? 'Resold' : ((int) $t[5] === 1 ? 'Test ticket' : ($types[$t[4]] ?? ''))];
     }
     $st->closeCursor();
     // Gate passes ride along; the sixth field marks a re-entry pass.

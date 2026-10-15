@@ -127,8 +127,8 @@ const confirmLive = (orderRef) => {
     const anon = await page(browser, null, { width: 390, height: 844 });
     await anon.goto(`${BASE}/events/${ev.slug}`);
     await anon.getByRole("button", { name: "Join the waitlist" }).click();
-    await anon.getByLabel("Your name").fill("Lindiwe Zulu");
-    await anon.getByLabel("Email").fill(LINDIWE);
+    await anon.locator("dialog").getByLabel("Your name").fill("Lindiwe Zulu");
+    await anon.locator("dialog").getByLabel("Email").fill(LINDIWE);
     await shot(anon, "2-waitlist-signed-out");
     await anon.locator("dialog").getByRole("button", { name: "Join the waitlist" }).click();
     await anon.getByText(/number 2 in line/).waitFor();
@@ -226,7 +226,7 @@ const confirmLive = (orderRef) => {
     await shot(scanner, "7-scanner-resold");
     const pack = (await o.get(`/api/staff/events/${ev.id}/offline-pack`)).body.tickets.find((x) => x[0] === oldT.code);
     assert.equal(pack[4], "Resold", "offline phones know it was resold too");
-    step("scanner: the old code shows a red RESOLD (QR and typed, online and in the offline list); the new code is a different, live ticket");
+    step("scanner: the old code shows a red RESOLD (QR and typed, online and in the offline list); the new code is recognised as a different ticket");
 
     // 7. A refund frees a place: Thandi (next in line) gets a held ticket nobody else can buy.
     php(`$o = row('SELECT * FROM orders WHERE id = ?', ['${soldTicket.order_id}']); $r = refund_create($o, null, ['${siphoTickets[1].id}'], false, 'customer', 'Cannot attend'); refund_process($r['id']);`);
