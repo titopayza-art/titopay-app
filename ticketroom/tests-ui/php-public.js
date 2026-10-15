@@ -75,7 +75,8 @@ const step = (m) => console.log(`  ok  ${m}`);
     await fsh.getByRole("button", { name: /^Show \d+ events?$/ }).waitFor();
     if (process.env.TR_SHOTS) await p.screenshot({ path: path.join(process.env.TR_SHOTS, "filters-sheet.png") });
     await fsh.getByRole("button", { name: /^Show \d+ events?$/ }).click();
-    await p.locator(".event-card", { hasText: "Free Jazz in the Park" }).first().waitFor();
+    // Wait for the filtered list (with distances), not the list it replaces.
+    await p.locator(".event-card", { hasText: "Free Jazz in the Park" }).filter({ hasText: /km away/ }).first().waitFor();
     assert.match(await p.locator(".event-card", { hasText: "Free Jazz in the Park" }).first().textContent(), /km away/, "distance shown");
     assert.match(p.url(), /near=Johannesburg/); assert.match(p.url(), /km=25/); assert.match(p.url(), /categories=music/);
     assert.equal(await p.locator(".filter-count").textContent(), "2");
