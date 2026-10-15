@@ -35,6 +35,16 @@ $notify = function (array $s, array $evt) use ($local) {
     }
 };
 
+// ---- "Your own identity provider" (FICA checks): numbers ending in 9 are
+// declined, everything else verified. Needs the right key.
+if ($path === '/kyc/check') {
+    file_put_contents("$state/kyc.log", json_encode(['auth' => $auth, 'body' => $raw]) . "\n", FILE_APPEND);
+    if ($auth !== 'Bearer kyc-test-key') $json(['error' => 'bad key'], 401);
+    $in = json_decode($raw, true) ?: [];
+    $no = (string) ($in['idNumber'] ?? '');
+    $json(str_ends_with($no, '9') ? ['status' => 'declined', 'message' => 'Mock provider: no match', 'reference' => 'MOCK-1'] : ['status' => 'verified', 'message' => 'Mock provider: match', 'reference' => 'MOCK-2']);
+}
+
 // ---- "Your own SMS provider": records what arrives, answers like most SMS APIs.
 if ($path === '/sms/send') {
     file_put_contents("$state/sms.log", json_encode(['auth' => $auth, 'type' => $_SERVER['CONTENT_TYPE'] ?? '', 'body' => $raw]) . "\n", FILE_APPEND);

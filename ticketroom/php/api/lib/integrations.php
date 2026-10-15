@@ -43,6 +43,12 @@ const INTEGRATION_FIELDS = [
         'httpNumberFormat' => ['label' => 'Number format', 'provider' => 'http', 'options' => ['plus' => '+27821234567', 'intl' => '27821234567', 'local' => '0821234567']],
         'senderId' => ['label' => 'Sender name', 'placeholder' => 'TicketRoom', 'hint' => 'Only if your provider has approved it.'],
     ],
+    // Organiser identity checks (FICA). See lib/verification.php.
+    'kyc' => [
+        'provider' => ['label' => 'Identity checks by', 'options' => ['manual' => 'TicketRoom staff (every document reviewed by a person)', 'sandbox' => 'Sandbox: simulated checks for testing, nothing real is checked', 'http' => 'My own provider (any web API)']],
+        'httpUrl' => ['label' => 'Check-identity web address', 'secret' => true, 'plain' => true, 'provider' => 'http', 'hint' => 'Starting with https://. TicketRoom posts JSON (reference, documentType, idNumber, fullName, dateOfBirth, country) and expects {"status": "verified" | "declined" | "refer"}.'],
+        'httpAuth' => ['label' => 'Authorization header', 'secret' => true, 'provider' => 'http', 'hint' => 'Optional. The whole value, for example: Bearer 1a2b3c…'],
+    ],
 ];
 
 // Saved values for a service, secrets decrypted. Cached for the request.

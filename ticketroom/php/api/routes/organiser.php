@@ -394,6 +394,10 @@ route('PUT', '/api/organiser/:orgId/bank', function ($a) {
         'branchCode' => R::str(['min' => 6, 'max' => 6, 'pattern' => '/^\d{6}$/', 'message' => '6 digits.']),
     ]);
     $last4 = substr($b['accountNumber'], -4);
+    // A different account needs a new bank confirmation letter before payouts.
+    $old = row('SELECT bank_account_enc, bank_branch_code FROM organisers WHERE id = ?', [$a['orgId']]);
+    $same = $old['bank_account_enc'] && $old['bank_branch_code'] === $b['branchCode'] && decrypt_str((string) $old['bank_account_enc']) === $b['accountNumber'];
+    if (!$same) q("UPDATE verification_documents SET status = 'replaced', replaced_at = ? WHERE organiser_id = ? AND event_id IS NULL AND requirement = 'bank_confirmation' AND status IN ('submitted','approved')", [now_iso(), $a['orgId']]);
     q('UPDATE organisers SET bank_name = ?, bank_account_holder = ?, bank_account_enc = ?, bank_account_last4 = ?, bank_branch_code = ? WHERE id = ?',
         [$b['bankName'], $b['accountHolder'], encrypt_str($b['accountNumber']), $last4, $b['branchCode'], $a['orgId']]);
     // Changing where money goes is high-risk, so it is audited.
@@ -566,6 +570,9 @@ route('POST', '/api/organiser/:orgId/events/:eventId/submit', function ($a) {
     if ($event['status'] !== 'draft') throw conflict('Only drafts can be submitted.', 'bad_transition');
     if ($org['status'] !== 'approved') throw conflict('Your organiser account is awaiting approval. You can submit events once it is approved.', 'organiser_not_approved');
     if (!(int) val('SELECT count(*) FROM ticket_types WHERE event_id = ?', [$event['id']])) throw conflict('Add at least one ticket type first.', 'no_ticket_types');
+    // FICA: the organiser's ID, signed terms (and the event's own permits when
+    // its risk calls for them) must be uploaded before it goes to review.
+    kyc_require_for_event($event, 'submitted');
     q("UPDATE events SET status = 'pending_approval', updated_at = ? WHERE id = ?", [now_iso(), $event['id']]);
     audit('event.submitted', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id']]);
     return ['status' => 'pending_approval'];
