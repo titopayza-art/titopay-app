@@ -156,11 +156,16 @@ async function home() {
       <div class="active-filters mt" data-active aria-live="polite"></div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
-    <section class="section pt-0 hidden" id="cashless"><div class="wrap"><div class="cashless-home">
+    <section class="section pt-0" id="cashless"><div class="wrap"><div class="cashless-home">
       <div class="cashless-intro"><span class="cat-label">Cashless events</span><h2>Tap to pay. No cash, no queues.</h2>
-        <p>At these events your wristband is your wallet. Top up on your phone, tap at the bar and food stalls, and get back what you don't spend.</p>
-        <a class="btn btn-dark btn-sm" href="/?cashless=1#grid" data-cl-all>See all cashless events</a></div>
-      <div class="cashless-rail" id="cashless-rail"></div></div></div></section>
+        <p>At cashless events your wristband is your wallet. Top up on your phone, tap at the bar and food stalls, and get back what you don't spend.</p>
+        <a class="btn btn-dark btn-sm hidden" href="/?cashless=1#grid" data-cl-all>See all cashless events</a><a class="btn btn-dark btn-sm" href="/sell#cl-h" data-cl-sell>Run a cashless event</a></div>
+      <div class="cashless-rail" id="cashless-rail"><ol class="cashless-steps">
+        <li><strong>Link your wristband</strong><span>Tap it to your ticket in your TicketRoom account, or at the tag desk on the day.</span></li>
+        <li><strong>Top up on your phone</strong><span>Add money by card before or during the event, or with cash at the top-up desk.</span></li>
+        <li><strong>Tap to pay</strong><span>At the bars and food stalls. Bigger buys ask for your PIN, and a lost band is blocked in one tap.</span></li>
+        <li><strong>Get back what you don't spend</strong><span>After the event, cash out to your card, your bank account or in cash at the venue.</span></li>
+      </ol></div></div></div></section>
     <section class="section pt-0 hidden" id="trending"><div class="wrap"><h2>Trending artists</h2><div class="artist-rail mt" id="artist-rail"></div></div></section>
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
@@ -221,7 +226,8 @@ async function home() {
   // Cashless events get their own band on the home page.
   get("/api/public/events?cashless=1").then(({ events }) => {
     if (!events.length) return;
-    $("#cashless").classList.remove("hidden");
+    $("[data-cl-all]").classList.remove("hidden");
+    $("[data-cl-sell]").classList.add("hidden");
     render($("#cashless-rail"), html`${events.slice(0, 8).map(card)}`);
     $("[data-cl-all]").addEventListener("click", (ev) => { ev.preventDefault(); for (const k of FILTER_KEYS) if (k !== "q") state[k] = ""; state.cashless = "1"; load(); $("#grid").scrollIntoView({ behavior: "smooth", block: "start" }); });
   }).catch(() => {});
