@@ -347,15 +347,43 @@ export async function header(el, { portal, active, box: signInBox } = {}) {
     sn.before(side);
     side.append(sn);
   }
-  const prof = $(".side .side-profile");
-  if (here && u && $(".side")) {
-    const who = accountType(u) === "staff" ? (u.platform_roles || []).map((r) => r[0].toUpperCase() + r.slice(1)).join(", ") || "Staff"
-      : accountType(u) === "organiser" ? (u.organisers?.[0]?.name || "Organiser") : "Customer";
-    const box = prof || document.createElement("div");
-    box.className = "side-profile";
-    render(box, html`<span class="avatar" aria-hidden="true">${initials(u.full_name)}</span><span class="who"><strong>${u.full_name}</strong><span>${who}</span></span>`);
-    if (!prof) $(".side").prepend(box);
-  } else prof?.remove();
+  // Inside the side panel, top to bottom: the logo and portal, who is signed in
+  // (with a menu), a quick search of the sections, the main action, then the
+  // sections, with help and sign-out at the foot. On a phone the header and a
+  // strip of sections are used instead.
+  const side = $(".side");
+  if (side) {
+    document.body.classList.toggle("has-side", !!(here && u));
+    for (const x of $$(".side > :not(#sidenav)", side)) x.remove();
+    if (here && u) {
+      const who = accountType(u) === "staff" ? (u.platform_roles || []).map((r) => r[0].toUpperCase() + r.slice(1)).join(", ") || "Staff"
+        : accountType(u) === "organiser" ? (u.organisers?.[0]?.name || "Organiser") : "Customer";
+      const ACTION = { organiser: ["#/events/new", "Create event"], customer: ["/", "Find events"], admin: ["#/lookup", "Find an order"] }[portal];
+      const top = document.createElement("div");
+      top.className = "side-top";
+      render(top, html`<a class="side-brand" href="${here.href}" aria-label="${here.name} home"><img src="/assets/logo-mark.svg" alt="" width="34" height="26"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="side-portal pb-${portal}">${here.name}</span></span></a>
+        <div class="side-me"><button type="button" class="side-profile" aria-haspopup="true" aria-expanded="false" data-me><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span><span class="who"><strong>${u.full_name}</strong><span>${who}</span></span><span class="caret" aria-hidden="true">▾</span></button>
+          <div class="side-menu" role="menu" hidden><a role="menuitem" href="/">TicketRoom website</a>${shown.map((k) => html`<a role="menuitem" href="${PORTALS[k].href}">${PORTALS[k].name}</a>`)}<button type="button" role="menuitem" data-signout-side>Sign out</button></div></div>
+        <label class="side-search"><span class="sr-only">Search the menu</span><input type="search" placeholder="Search" autocomplete="off" data-side-search></label>
+        ${ACTION ? html`<a class="btn side-action ${portal === "organiser" ? "plus" : ""}" href="${ACTION[0]}">${ACTION[1]}</a>` : ""}`);
+      const foot = document.createElement("div");
+      foot.className = "side-foot";
+      render(foot, html`<a href="/help" target="_blank" rel="noopener">Help centre</a><button type="button" data-signout-side>Sign out</button>`);
+      side.prepend(top);
+      side.append(foot);
+      const meBtn = $("[data-me]", side), menu = $(".side-menu", side);
+      meBtn.addEventListener("click", () => { const open = menu.hidden; menu.hidden = !open; meBtn.setAttribute("aria-expanded", String(open)); });
+      document.addEventListener("click", (e) => { if (!e.target.closest(".side-me")) { menu.hidden = true; meBtn.setAttribute("aria-expanded", "false"); } });
+      $$("[data-signout-side]", side).forEach((b) => b.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; }));
+      // Typing narrows the menu; Enter opens the first match.
+      const q = $("[data-side-search]", side);
+      q.addEventListener("input", () => {
+        const t = q.value.trim().toLowerCase();
+        $$("#sidenav a, #sidenav .sect", side).forEach((x) => { x.hidden = !!t && (x.classList.contains("sect") || !x.textContent.toLowerCase().includes(t)); });
+      });
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const first = $$("#sidenav a", side).find((x) => !x.hidden); if (first) { first.click(); q.value = ""; q.dispatchEvent(new Event("input")); } } });
+    }
+  }
   // A coloured bar under the header names the portal, so admin, organiser and
   // customer screens can never be mistaken for each other, on a phone too.
   // Portal pages ship with their bar already in place, so nothing is pushed

@@ -189,6 +189,12 @@ const ledgerOk = async (a, label) => { const r = await a.get("/api/admin/reconci
     // SMS: the admin sets up the SMS provider; then SMS goes out for the promoted event only.
     assert.equal((await a.put("/api/admin/integrations/sms", { currentPassword: ADMIN.password, values: { provider: "http", httpUrl: `${MOCK}/sms/send`, httpAuth: "Bearer sms-test-key", httpFormat: "json", httpToField: "to", httpMessageField: "message", httpNumberFormat: "plus" } })).status, 200);
     await until(async () => (await o.get(`${B}/events/${ev1.id}/promotion`)).body.sms.ready, "SMS ready");
+    // With SMS set up, organisers confirm their mobile number before new events go live.
+    const codes = () => (fs.existsSync(path.join(state, "sms.log")) ? fs.readFileSync(path.join(state, "sms.log"), "utf8").trim().split("\n") : []).map((l) => JSON.parse(JSON.parse(l).body).message || "").filter((m) => /TicketRoom code is/.test(m));
+    const before = codes().length;
+    assert.equal((await o.post("/api/auth/phone/send", { phone: "082 555 0199" })).status, 200);
+    const code = (await until(() => codes().length > before && codes().pop(), "phone code SMS")).match(/(\d{6})/)[1];
+    assert.equal((await o.post("/api/auth/phone/verify", { code })).status, 200);
     backdate();
     const sms = await o.post(`${B}/campaigns`, { channel: "sms", name: "SMS blast", body: "Hi {{first_name}}, last tickets for Promote Night: {{event_link}}", eventIds: [ev1.id] });
     assert.equal(sms.status, 201, JSON.stringify(sms.body));

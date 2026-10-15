@@ -90,7 +90,7 @@ async function signIn(p, email, password) {
     await d.getByRole("button", { name: "Sign in" }).click();
     // Staff land in the admin portal, clearly labelled as such.
     await a.waitForURL(/\/admin/);
-    await a.locator(".portal-bar.pb-admin").getByText("Admin portal").waitFor();
+    await a.locator(".portal-bar.pb-admin:visible, .side-portal.pb-admin:visible").getByText("Admin portal").waitFor();
     await a.getByText("You're signed in with the temporary password.").waitFor();
     await a.getByRole("link", { name: "Change it now" }).click();
     await a.getByLabel("Current password").fill(TEMP);
@@ -104,7 +104,7 @@ async function signIn(p, email, password) {
     await a.locator("#footer").waitFor();
     assert.equal(await a.locator('#header a[href^="/admin"], #footer a[href^="/admin"]').count(), 0, "no admin link on the website");
     await a.goto(`${BASE}/admin#/site`);
-    await a.locator(".portal-bar").getByText("Admin portal").waitFor();
+    await a.locator(".portal-bar:visible, .side-portal:visible").getByText("Admin portal").waitFor();
     await a.getByRole("heading", { name: "Site settings" }).waitFor();
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder stays gone");
     await shot(a, "admin-signed-in");
@@ -126,7 +126,7 @@ async function signIn(p, email, password) {
     // 2. Organiser signs up from the organiser portal (an organiser account), lists a free event.
     const o = await page(browser);
     await o.goto(`${BASE}/organisers`);
-    await o.locator(".portal-bar.pb-organiser").getByText("Organiser portal").waitFor();
+    await o.locator(".portal-bar.pb-organiser:visible, .side-portal.pb-organiser:visible").getByText("Organiser portal").waitFor();
     await o.getByRole("button", { name: "Start selling" }).first().click();
     const od = o.locator("dialog");
     await od.getByLabel("Organisation or trading name").fill("Soweto Community Arts");
@@ -238,7 +238,7 @@ async function signIn(p, email, password) {
     await f.getByLabel("Confirm new password").fill("fan-password-123");
     await f.getByRole("button", { name: "Save password" }).click();
     await f.waitForURL(/\/account#\/tickets/);
-    await f.locator(".portal-bar.pb-customer").getByText("Customer portal").waitFor();
+    await f.locator(".portal-bar.pb-customer:visible, .side-portal.pb-customer:visible").getByText("Customer portal").waitFor();
     await f.locator(".t-qr img").first().waitFor();
     const qrOk = await f.locator(".t-qr img").first().evaluate((img) => img.complete && img.naturalWidth > 0);
     assert.ok(qrOk, "QR image renders");

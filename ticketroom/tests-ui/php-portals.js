@@ -102,7 +102,7 @@ const login = (creds) => anon("/api/auth/login", creds);
     await box.getByLabel("Email").fill(ADMIN.email);
     await box.getByLabel("Password").fill(ADMIN.password);
     await box.getByRole("button", { name: "Sign in" }).click();
-    await a.locator(".portal-bar.pb-admin").waitFor();
+    await a.locator(".portal-bar.pb-admin:visible, .side-portal.pb-admin:visible").waitFor();
     // Forgot password never mails a staff member.
     const before = sql("SELECT count(*) AS n FROM message_outbox WHERE to_address = ?", ADMIN.email)[0].n;
     assert.equal((await anon("/api/auth/password/forgot", { email: ADMIN.email })).status, 200, "same answer as for anyone");
@@ -130,7 +130,7 @@ const login = (creds) => anon("/api/auth/login", creds);
     await st.getByLabel("New password", { exact: true }).fill("support-pass-123");
     await st.getByLabel("Confirm new password").fill("support-pass-123");
     await st.getByRole("button", { name: "Save password" }).click();
-    await st.locator(".portal-bar.pb-admin").waitFor();
+    await st.locator(".portal-bar.pb-admin:visible, .side-portal.pb-admin:visible").waitFor();
     const stId = sql("SELECT id FROM users WHERE email = 'ayanda@ticketroom.co.za'")[0].id;
     const ownerId = sql("SELECT value FROM meta WHERE key = 'owner_user_id'")[0].value;
     assert.equal((await ad.post(`/api/admin/staff/${stId}/reset`)).status, 200);

@@ -63,7 +63,7 @@ const step = (m) => console.log(`  ok  ${m}`);
     await c.getByRole("button", { name: "Sign in" }).first().click();
     await c.locator("dialog[open]").getByRole("link", { name: "Continue with Google" }).click();
     await c.waitForURL(/\/account/);
-    await c.locator(".portal-bar").waitFor();
+    await c.locator(".portal-bar:visible, .side-portal:visible").first().waitFor();
     const u1 = sql("SELECT account_type, email_verified_at, full_name FROM users WHERE email = 'lindiwe.google@gmail.com'")[0];
     assert.equal(u1.account_type, "customer"); assert.ok(u1.email_verified_at); assert.equal(u1.full_name, "Lindiwe Dube");
     assert.equal((await (await c.request.get(`${BASE}/api/auth/me`)).json()).user.email, "lindiwe.google@gmail.com");
