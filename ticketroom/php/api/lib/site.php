@@ -18,7 +18,7 @@ function setting_defaults(): array
     $nine = ['open' => '09:00', 'close' => '17:00'];
     return [
         'maintenance' => ['enabled' => false, 'message' => "We're making a few improvements to TicketRoom and will be back shortly. Thanks for bearing with us."],
-        'banner' => ['enabled' => true, 'text' => "We're currently open for listing FREE events. Paid tickets are coming soon.", 'linkText' => 'List your free event', 'linkUrl' => '/sell'],
+        'banner' => ['enabled' => true, 'text' => 'Sell tickets, go cashless with wristbands and get paid after your event. Free events cost nothing.', 'linkText' => 'Start selling', 'linkUrl' => '/sell'],
         'hours' => [
             'week' => ['mon' => $nine, 'tue' => $nine, 'wed' => $nine, 'thu' => $nine, 'fri' => $nine, 'sat' => null, 'sun' => null],
             'holidays' => array_map(fn($h) => ['date' => $h[0], 'name' => $h[1]], SA_HOLIDAYS),
@@ -42,6 +42,10 @@ function settings_all(bool $fresh = false): array
     foreach (rows('SELECT key, value FROM site_settings') as $r) $stored[$r['key']] = json_decode($r['value'], true);
     $out = [];
     foreach (setting_defaults() as $k => $def) $out[$k] = array_merge($def, is_array($stored[$k] ?? null) ? $stored[$k] : []);
+    // The launch banner said paid tickets were coming; if it was never edited, show the current one.
+    if (($out['banner']['text'] ?? '') === "We're currently open for listing FREE events. Paid tickets are coming soon.") {
+        $out['banner'] = array_merge($out['banner'], array_intersect_key(setting_defaults()['banner'], ['text' => 1, 'linkText' => 1, 'linkUrl' => 1]));
+    }
     return $cache = $out;
 }
 function setting(string $key): array { return settings_all()[$key]; }
