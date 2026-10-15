@@ -37,15 +37,6 @@ const EVENTS = [
     J(200, body);
   });
 
-  // TitoPay ticketing is TicketRoom: the Tickets tile reads TicketRoom's public list.
-  await ctx.route("https://ticketroom.co.za/api/public/events", async (route) => {
-    await sleep(200);
-    const events = EVENTS.map((e) => ({ slug: e.slug, title: e.eventName, starts_at: e.eventDate, venue_name: e.venueName, city: e.city,
-      from_price_cents: Math.min(...e.ticketTypes.map((t) => t.price)) * 100,
-      remaining: e.ticketTypes.reduce((n, t) => n + t.quantityAvailable - t.quantitySold, 0) }));
-    route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ events }) });
-  });
-
   const page = await ctx.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push("pageerror: " + String(e).slice(0, 160)));

@@ -622,7 +622,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=194", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=193", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -2418,11 +2418,6 @@ async function onClick(event) {
     selectGiftTiming(giftTiming);
     return;
   }
-  const ticketRoomLink = event.target.closest("[data-ticketroom]");
-  if (ticketRoomLink) {
-    openTicketRoom(ticketRoomLink.dataset.ticketroom);
-    return;
-  }
   const ticketRefresh = event.target.closest("[data-ticket-refresh]");
   if (ticketRefresh) {
     await refreshPublicTickets();
@@ -3642,8 +3637,7 @@ async function verifyOtp(data) {
 
 async function handleAction(action) {
   if (String(action || "").startsWith("ticketing-open-event:")) {
-    const slug = action.split(":").slice(1).join(":");
-    openTicketRoom(slug ? `/events/${encodeURIComponent(slug)}` : "/");
+    await openPublicTicketingEvent(action.split(":").slice(1).join(":"));
     return;
   }
   if (String(action || "").startsWith("ticketing-submit:")) {
@@ -4130,49 +4124,15 @@ function handleService(id) {
   openTransactionModal(service);
 }
 
-// TitoPay ticketing is run by TicketRoom. Events, checkout, tickets, waitlists
-// and resale all live on TicketRoom; the app lists what's on and opens it there.
-// In the installed app TicketRoom opens in the phone's in-app browser, so
-// closing it lands the customer back in TitoPay.
-const TICKETROOM_ORIGIN = "https://ticketroom.co.za";
-
-function ticketRoomUrl(path = "/") {
-  const url = new URL(path, TICKETROOM_ORIGIN);
-  url.searchParams.set("utm_source", "titopay");
-  return url.toString();
-}
-
-function openTicketRoom(path = "/") {
-  const url = ticketRoomUrl(path);
-  const opened = window.open(url, "_blank");
-  if (opened) opened.opener = null;
-  else window.location.assign(url);
-}
-
-// TicketRoom's public list, shaped like the rows this screen already draws.
-function ticketRoomEvent(event = {}) {
-  const from = event.from_price_cents;
-  return {
-    slug: event.slug,
-    eventName: event.title,
-    eventDate: event.starts_at,
-    venueName: event.venue_name,
-    city: event.city,
-    category: event.category,
-    isFree: from === 0,
-    ticketTypes: from === null || from === undefined ? [] : [{ price: Number(from) / 100, quantityAvailable: Number(event.remaining || 0), quantitySold: 0 }]
-  };
-}
-
 async function openPersonalTicketsDashboard() {
   // Open immediately with a loading state rather than leaving the customer on a
   // dead tap while the events request is in flight.
   openModal(`
     <div class="modal-head">
       <div>
-        <p class="eyebrow">Tickets by TicketRoom</p>
+        <p class="eyebrow">TitoPay Tickets</p>
         <h2>What's on</h2>
-        <p class="lead">Concerts, comedy, sport and festivals across South Africa. You pay and keep your tickets on TicketRoom.</p>
+        <p class="lead">Verified TitoPay events with secure digital tickets.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -4182,10 +4142,6 @@ async function openPersonalTicketsDashboard() {
         <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
       </div>`).join("")}
     </section>
-    <div class="tx-detail-actions">
-      <button class="btn secondary" type="button" data-ticketroom="/account#/tickets">${icon("ticket")} My tickets</button>
-      <button class="btn primary" type="button" data-ticketroom="/">${icon("search")} All events</button>
-    </div>
   `);
   await refreshPublicTickets();
 }
@@ -4194,10 +4150,8 @@ async function refreshPublicTickets() {
   const host = document.querySelector("[data-ticket-list]");
   if (!host) return;
   try {
-    const response = await fetch(`${TICKETROOM_ORIGIN}/api/public/events`, { credentials: "omit", headers: { Accept: "application/json" } });
-    if (!response.ok) throw Object.assign(new Error("TicketRoom is unavailable"), { status: response.status });
-    const result = await response.json();
-    state.ticketing.events = (Array.isArray(result.events) ? result.events : []).map(ticketRoomEvent);
+    const result = await api("/v1/ticketing/public/events", { auth: false });
+    state.ticketing.events = Array.isArray(result.items) ? result.items : [];
     state.ticketing.search = "";
     renderPublicTickets();
   } catch (error) {
@@ -4207,8 +4161,8 @@ async function refreshPublicTickets() {
     current.innerHTML = `
       <section class="empty-state compact-state">
         ${icon("ticket")}
-        <strong>${offline ? "Cannot reach TicketRoom" : "No events available right now"}</strong>
-        <p>${offline ? "Check your connection and try again." : "Events appear here as soon as ticket sales open on TicketRoom."}</p>
+        <strong>${offline ? "Cannot reach TitoPay" : "No events available right now"}</strong>
+        <p>${offline ? "Check your connection and try again." : "Approved TitoPay events appear here as soon as ticket sales open."}</p>
         <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Try again</button>
       </section>`;
   }
@@ -4227,7 +4181,7 @@ function renderPublicTickets() {
       <section class="empty-state compact-state">
         ${icon("ticket")}
         <strong>No events on sale yet</strong>
-        <p>Events appear here as soon as ticket sales open on TicketRoom. Check back soon.</p>
+        <p>Approved TitoPay events appear here as soon as ticket sales open. Check back soon.</p>
         <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Refresh</button>
       </section>`;
     return;
@@ -4259,15 +4213,15 @@ function ticketingPublicEventRow(event = {}) {
         <strong>${esc(validDate ? String(date.getDate()) : "--")}</strong>
       </div>
       <div class="ticket-body">
-        <strong>${esc(event.eventName || "Event")}</strong>
+        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
         <small>${esc(validDate ? date.toLocaleDateString("en-ZA", { weekday: "short", day: "2-digit", month: "long", year: "numeric" }) : "Date to be confirmed")}</small>
         <small>${icon("globe")} ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
         <div class="ticket-meta">
-          <span class="ticket-price">${event.isFree ? "Free" : prices.length ? `From ${esc(money(lowestPrice))}` : "Price to be confirmed"}</span>
+          <span class="ticket-price">${prices.length ? `From ${esc(money(lowestPrice))}` : "Price to be confirmed"}</span>
           ${soldOut ? `<em class="sv-chip failed">Sold out</em>` : available ? `<em class="sv-chip settled">${available} available</em>` : ""}
         </div>
       </div>
-      <button class="btn secondary ticket-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}">${soldOut ? "Waitlist" : "View"}</button>
+      <button class="btn secondary ticket-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"${soldOut ? " disabled" : ""}>${soldOut ? "Sold out" : "View"}</button>
     </article>
   `;
 }
@@ -4552,40 +4506,7 @@ function ticketingStatusLabel(status = "") {
   return String(status || "draft").replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-// Business ticketing (organisers and gate staff) is the TicketRoom organiser
-// portal and scanner. Staff tapping their badge tile see the scanner first.
-function openBusinessTicketingDashboard(options = {}) {
-  const rows = [
-    ["/organisers", "ticketing", "Organiser portal", "Create events, set ticket types, see sales and payouts."],
-    ["/sell", "store", "Start selling", "New to TicketRoom? Set up your organisation in a few minutes."],
-    ["/scan", "scan", "Gate scanner", "Scan tickets at the entrance on any phone, even offline."]
-  ];
-  if (options.staffFocus) rows.unshift(rows.pop());
-  openModal(`
-    <div class="modal-head">
-      <div>
-        <p class="eyebrow">Ticketing by TicketRoom</p>
-        <h2>${options.staffFocus ? "Gate scanner" : "Sell tickets"}</h2>
-        <p class="lead">TitoPay ticketing runs on TicketRoom. Sign in there with your business email.</p>
-      </div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <section class="settings-list">
-      ${rows.map(([path, glyph, title, note]) => `
-        <article class="settings-row">
-          <span class="icon-bubble">${icon(glyph)}</span>
-          <div><strong>${title}</strong><small>${note}</small></div>
-          <button class="btn secondary mini" type="button" data-ticketroom="${path}">Open</button>
-        </article>`).join("")}
-    </section>
-    <div class="tx-detail-actions">
-      <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse what's on</button>
-    </div>
-  `);
-}
-
-// Earlier in-app ticketing dashboard, kept for reference while TicketRoom runs ticketing.
-async function openLegacyTicketingDashboard(options = {}) {
+async function openBusinessTicketingDashboard(options = {}) {
   if (state.accountType !== "business") {
     openInfoModal("Business ticketing", "Switch to Business to create and manage TitoPay events.");
     return;

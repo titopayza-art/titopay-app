@@ -189,14 +189,7 @@ function send_security_headers(): void
     header('Cross-Origin-Opener-Policy: same-origin');
     header('Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=()');
     if (is_https()) header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-    // The TitoPay app lists what's on from this one public endpoint: read only, no cookies.
-    if (parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) === '/api/public/events' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
-        header('Vary: Origin');
-        $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-        if (in_array($origin, PARTNER_APP_ORIGINS, true)) header("Access-Control-Allow-Origin: $origin");
-    }
 }
-const PARTNER_APP_ORIGINS = ['https://app.titopay.co.za'];
 function is_https(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') || (($_SERVER['SERVER_PORT'] ?? '') === '443');
