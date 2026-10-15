@@ -231,7 +231,7 @@ const ledgerOk = async (a, label) => {
     assert.equal(form.fields.amount, "160.00");
     const itn = { m_payment_id: form.fields.m_payment_id, pf_payment_id: "1089250", payment_status: "COMPLETE", item_name: form.fields.item_name, amount_gross: "160.00", amount_fee: "-4.60", amount_net: "155.40", merchant_id: "10000100" };
     const post = (f) => fetch(`${BASE}/api/webhooks/payfast`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(f).toString() });
-    assert.equal((await post({ ...itn, amount_gross: "1.00", signature: sign({ ...itn, amount_gross: "1.00" }).replace(/^./, "0") })).status, 400, "forged ITN refused");
+    assert.equal((await post({ ...itn, amount_gross: "1.00", signature: sign({ ...itn, amount_gross: "1.00" }).replace(/^./, (c) => (c === "0" ? "1" : "0")) })).status, 400, "forged ITN refused");
     assert.equal((await post({ ...itn, signature: sign(itn) })).status, 200);
     assert.equal(sql("SELECT status FROM orders WHERE reference = ?", r4.order.reference)[0].status, "paid");
     const o4 = sql("SELECT reference FROM orders WHERE reference = ?", r4.order.reference)[0];

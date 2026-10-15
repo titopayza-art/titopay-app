@@ -706,7 +706,7 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
 .desk .desk-bal, .cashout-box .desk-bal { font-size: 1.8rem; font-weight: 800; letter-spacing: -.02em; color: var(--navy-900); }
 .desk-amounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .desk-amt { min-height: 64px; border-radius: 16px; border: 2px solid var(--line); background: #fff; font: inherit; font-size: 1.5rem; font-weight: 800; color: var(--navy-900); cursor: pointer; }
-.desk-amt[aria-pressed="true"] { background: var(--navy-900); border-color: var(--navy-900); color: #fff; }
+.desk-amt[aria-pressed="true"] { background: var(--amber-500); border-color: var(--amber-500); color: var(--navy-950); box-shadow: 0 0 0 3px rgba(242,169,59,.35); }
 .desk-amt:disabled { opacity: .4; cursor: not-allowed; }
 .desk-method { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .desk-method button { min-height: 64px; border-radius: 16px; border: 2px solid var(--line); background: #fff; font: inherit; font-size: 1.15rem; font-weight: 800; color: var(--navy-900); cursor: pointer; }
@@ -714,6 +714,11 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
 .desk-done { font-size: 1.25rem; font-weight: 750; margin: 8px 0 4px; }
 .cashout-code { font-size: 2rem; font-weight: 900; letter-spacing: .12em; text-align: center; }
 .cashout-qr svg { width: 220px; height: 220px; max-width: 100%; }
+.cashout-qr { display: flex; justify-content: center; }
+body.venue .desk .desk-bal { color: #fff; }
+body.venue .desk .field label, body.venue .desk .check span { color: #C8D4EA; }
+.desk-list td { vertical-align: top; }
+.desk-list .amt { font-weight: 750; white-space: nowrap; }
 .cashout-pick { display: grid; gap: 10px; }
 .cashout-pick button { text-align: left; min-height: 64px; border-radius: 16px; border: 2px solid var(--line); background: #fff; padding: 12px 16px; font: inherit; cursor: pointer; }
 .cashout-pick button[aria-pressed="true"] { border-color: var(--navy-900); box-shadow: 0 0 0 2px var(--navy-900) inset; }

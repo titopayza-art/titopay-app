@@ -102,7 +102,9 @@ export async function deskApp(el, eventId, { onBack, backLabel = "Back" } = {}) 
   }
 
   // ---- cash-out desk: the guest shows the code from their wallet
-  function cashout(message) {
+  async function cashout(message) {
+    // The organiser may have just opened (or closed) the cash-out desk.
+    if (!message) { try { ctx = await get(`/api/cashdesk/events/${eventId}`); } catch { /* keep what we have */ } }
     const open = ctx.settings.cashoutDeskOpen;
     render(el, frame(html`${!open ? html`<p class="callout warn">The cash-out desk is closed. The organiser opens it near the end of the event (Vendors & POS).</p>` : ""}
       <section class="card stack"><h2 class="mb-0">Pay out a balance in cash</h2><p class="small muted mb-0">The guest opens their wallet, chooses Cash at the venue and shows you a code.</p>
@@ -150,9 +152,10 @@ export async function deskApp(el, eventId, { onBack, backLabel = "Back" } = {}) 
       ${c.desks ? html`<h2 class="mt-lg">Every desk at this event</h2><div class="table-wrap"><table><thead><tr><th>Desk</th><th class="num">Cash</th><th class="num">Card</th><th class="num">Paid out</th><th class="num">In drawer</th></tr></thead><tbody>
         ${c.desks.map((d) => html`<tr><td>${d.name}<div class="tiny muted">${d.email}</div></td><td class="num">${moneyExact(d.cash_cents)}</td><td class="num">${moneyExact(d.card_cents)}</td><td class="num">${moneyExact(d.cash_paid_out_cents)}</td><td class="num">${moneyExact(d.drawer_cents)}</td></tr>`)}
         <tr><td><strong>All desks</strong></td><td class="num"><strong>${moneyExact(c.totals.cash_cents || 0)}</strong></td><td class="num"><strong>${moneyExact(c.totals.card_cents || 0)}</strong></td><td class="num"><strong>${moneyExact(c.totals.cash_paid_out_cents || 0)}</strong></td><td class="num"><strong>${moneyExact(c.totals.drawer_cents || 0)}</strong></td></tr></tbody></table></div>` : ""}
-      <h2 class="mt-lg">Your top-ups</h2>${c.items.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Guest</th><th>Paid</th><th class="num">Amount</th><th></th></tr></thead><tbody>
-        ${c.items.map((t) => html`<tr><td>${fmtTime(t.createdAt)}</td><td>${t.guest}<div class="tiny mono muted">${t.reference}</div></td><td>${t.method}${t.test ? " (test)" : ""}</td><td class="num">${moneyExact(t.amountCents)}</td>
-          <td>${t.status === "confirmed" ? (c.manager ? html`<button class="btn-link" data-rev="${t.reference}">Reverse</button>` : "") : badge(t.status)}</td></tr>`)}</tbody></table></div>` : empty("No top-ups at this desk yet.")}</div>
+      <h2 class="mt-lg">Your top-ups</h2>${c.items.length ? html`<div class="table-wrap"><table class="desk-list"><thead><tr><th>Time</th><th>Guest</th><th class="num">Amount</th></tr></thead><tbody>
+        ${c.items.map((t) => html`<tr><td>${fmtTime(t.createdAt)}</td><td>${t.guest}<div class="tiny mono muted">${t.reference}</div></td>
+          <td class="num"><div class="amt">${moneyExact(t.amountCents)}</div><div class="tiny muted">${t.method === "cash" ? "cash" : "card"}${t.test ? ", test" : ""}</div>
+          ${t.status === "confirmed" ? (c.manager ? html`<button class="btn-link tiny" data-rev="${t.reference}">Reverse</button>` : "") : badge(t.status)}</td></tr>`)}</tbody></table></div>` : empty("No top-ups at this desk yet.")}</div>
       <div class="row mt"><button class="btn btn-dark grow" data-print>Print cash-up slip</button><button class="btn btn-ghost grow" data-csv>Download CSV</button></div>`));
     wire();
     $("[data-print]", el).addEventListener("click", () => window.print());
