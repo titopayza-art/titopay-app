@@ -189,6 +189,15 @@ dialog::backdrop { background: rgba(7,19,48,.55); }
 .stepper button { width: 40px; height: 40px; border: 0; background: #fff; font-size: 1.2rem; cursor: pointer; color: var(--navy-900); font-weight: 700; }
 .stepper button:disabled { color: #B5BFCF; cursor: not-allowed; }
 .stepper output { min-width: 32px; text-align: center; font-weight: 800; }
+.wl-join { margin-top: 8px; }
+.wl-on { margin: 6px 0 0; font-size: .82rem; font-weight: 600; color: var(--good); }
+.resale-box { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--amber-500); border-radius: var(--radius-sm); background: var(--amber-50); }
+.resale-box h3 { margin: 0 0 4px; font-size: 1rem; }
+.resale-box .tt:last-child { border-bottom: 0; padding-bottom: 4px; }
+.resale-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 0; }
+.wl-item { flex-wrap: wrap; gap: 10px; }
+.wl-item > div { min-width: 0; }
+.wl-count { color: var(--warn); font-weight: 600; }
 .totals { border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 8px; }
 .totals .line { display: flex; justify-content: space-between; font-size: .94rem; padding: 3px 0; color: var(--ink-2); }
 .totals .line.total { font-size: 1.15rem; font-weight: 800; color: var(--ink); padding-top: 8px; }
@@ -794,6 +803,8 @@ dialog .filters { display: grid; gap: 4px; }
 .sidenav a[href="#/password"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%224%22%20y%3D%2210.5%22%20width%3D%2216%22%20height%3D%2210%22%20rx%3D%222%22/%3E%3Cpath%20d%3D%22M8%2010.5V7.5a4%204%200%200%201%208%200v3%22/%3E%3C/svg%3E"); }
 .sidenav a[href="#/payment-methods"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%222%22%20y%3D%225%22%20width%3D%2220%22%20height%3D%2214%22%20rx%3D%222%22/%3E%3Cpath%20d%3D%22M2%2010h20%22/%3E%3C/svg%3E"); }
 .sidenav a[href="#/saved"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20.8%204.6a5.5%205.5%200%200%200-7.8%200L12%205.7l-1-1.1a5.5%205.5%200%200%200-7.8%207.8L12%2021l8.8-8.6a5.5%205.5%200%200%200%200-7.8z%22/%3E%3C/svg%3E"); }
+.sidenav a[href="#/waitlists"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M6%203h12M6%2021h12M7%203c0%205%2010%207%2010%209s-10%204-10%209M17%203c0%205-10%207-10%209s10%204%2010%209%22/%3E%3C/svg%3E"); }
+.sidenav a[href="#/resale"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20.6%2013.4%2013.4%2020.6a2%202%200%200%201-2.8%200L3%2013V3h10l7.6%207.6a2%202%200%200%201%200%202.8z%22/%3E%3Cpath%20d%3D%22M7.5%207.5h.01%22/%3E%3C/svg%3E"); }
 .sidenav a[href="#/transfers"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M17%203l4%204-4%204M21%207H9M7%2021l-4-4%204-4M3%2017h12%22/%3E%3C/svg%3E"); }
 .sidenav a[href="#/wallet"], .sidenav a[href="#/wallets"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%207H5a2%202%200%200%201%200-4h13v4%22/%3E%3Cpath%20d%3D%22M3%205v14a2%202%200%200%200%202%202h16V7%22/%3E%3Cpath%20d%3D%22M17%2014h.01%22/%3E%3C/svg%3E"); }
 .sidenav a[href^="/scan"] { --ico: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M4%208V6a2%202%200%200%201%202-2h2M16%204h2a2%202%200%200%201%202%202v2M20%2016v2a2%202%200%200%201-2%202h-2M8%2020H6a2%202%200%200%201-2-2v-2M7%2012h10%22/%3E%3C/svg%3E"); }

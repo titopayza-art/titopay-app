@@ -182,6 +182,7 @@ CREATE TABLE events (
   ref                       TEXT,
   age_groups                TEXT,
   lineup                    TEXT,
+  resale_enabled            INTEGER NOT NULL DEFAULT 1,
   CHECK (ends_at > starts_at)
 );
 CREATE UNIQUE INDEX events_ref_uq ON events (ref);
@@ -266,6 +267,7 @@ CREATE TABLE orders (
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL,
   test                INTEGER NOT NULL DEFAULT 0,
+  resale_listing_id   TEXT,
   UNIQUE (user_id, idempotency_key)
 );
 CREATE INDEX orders_event_idx ON orders (event_id, status);
@@ -808,6 +810,7 @@ CREATE TABLE IF NOT EXISTS wallet_topups (
   test            INTEGER NOT NULL DEFAULT 0,
   created_at      TEXT NOT NULL,
   confirmed_at    TEXT,
+  paid_by         TEXT REFERENCES users(id),
   UNIQUE (user_id, idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS wallet_topups_wallet_idx ON wallet_topups (user_id, event_id, status);
@@ -963,6 +966,96 @@ CREATE TABLE IF NOT EXISTS wallet_cashouts (
 CREATE INDEX IF NOT EXISTS wallet_cashouts_status_idx ON wallet_cashouts (status, created_at);
 CREATE INDEX IF NOT EXISTS wallet_cashouts_user_idx ON wallet_cashouts (user_id, event_id);
 -- cashdesk:end
+
+-- exchange:begin
+-- Waitlists for sold-out tickets and TicketRoom Exchange, the fair resale of
+-- tickets at no more than the seller paid (upgrade 18 runs this same block,
+-- so every statement here must be safe to repeat). Policy values are the
+-- constants at the top of lib/exchange.php.
+-- One row per person waiting for a ticket type. When a ticket comes free the
+-- next person gets a private link (only its hash is kept) that holds it for them.
+CREATE TABLE IF NOT EXISTS waitlist_entries (
+  id               TEXT PRIMARY KEY,
+  event_id         TEXT NOT NULL REFERENCES events(id),
+  ticket_type_id   TEXT NOT NULL REFERENCES ticket_types(id),
+  user_id          TEXT NOT NULL REFERENCES users(id),
+  status           TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting','offered','claimed','expired','left','closed')),
+  offer_kind       TEXT CHECK (offer_kind IN ('primary','resale')),
+  listing_id       TEXT,
+  offer_token_hash TEXT UNIQUE,
+  offered_at       TEXT,
+  offer_expires_at TEXT,
+  order_id         TEXT REFERENCES orders(id),
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_one_open ON waitlist_entries (ticket_type_id, user_id) WHERE status IN ('waiting','offered');
+CREATE INDEX IF NOT EXISTS waitlist_queue_idx ON waitlist_entries (ticket_type_id, status, created_at);
+CREATE INDEX IF NOT EXISTS waitlist_user_idx ON waitlist_entries (user_id, status);
+CREATE INDEX IF NOT EXISTS waitlist_offer_idx ON waitlist_entries (status, offer_expires_at);
+-- A ticket put up for resale. When it sells, the seller's ticket is voided
+-- and the buyer gets a new ticket with a new code.
+CREATE TABLE IF NOT EXISTS resale_listings (
+  id                  TEXT PRIMARY KEY,
+  reference           TEXT NOT NULL UNIQUE,
+  ticket_id           TEXT NOT NULL REFERENCES tickets(id),
+  event_id            TEXT NOT NULL REFERENCES events(id),
+  ticket_type_id      TEXT NOT NULL REFERENCES ticket_types(id),
+  seller_id           TEXT NOT NULL REFERENCES users(id),
+  price_cents         INTEGER NOT NULL CHECK (price_cents > 0),
+  face_value_cents    INTEGER NOT NULL CHECK (face_value_cents > 0),
+  payout_method       TEXT NOT NULL CHECK (payout_method IN ('card','eft')),
+  status              TEXT NOT NULL CHECK (status IN ('active','offered','held','sold','cancelled','closed')),
+  test                INTEGER NOT NULL DEFAULT 0,
+  held_order_id       TEXT REFERENCES orders(id),
+  new_ticket_id       TEXT REFERENCES tickets(id),
+  bank_account_holder TEXT,
+  bank_name           TEXT,
+  bank_branch_code    TEXT,
+  bank_account_enc    TEXT,
+  bank_account_last4  TEXT,
+  close_reason        TEXT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  sold_at             TEXT,
+  CHECK (price_cents <= face_value_cents)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS resale_listings_one_open ON resale_listings (ticket_id) WHERE status IN ('active','offered','held');
+CREATE INDEX IF NOT EXISTS resale_listings_event_idx ON resale_listings (event_id, ticket_type_id, status, created_at);
+CREATE INDEX IF NOT EXISTS resale_listings_seller_idx ON resale_listings (seller_id, status);
+-- What a seller is paid for a ticket that sold: back to the card they paid
+-- with (a refund on their original payment) or by EFT, paid by finance.
+CREATE TABLE IF NOT EXISTS resale_payouts (
+  id                  TEXT PRIMARY KEY,
+  reference           TEXT NOT NULL UNIQUE,
+  listing_id          TEXT NOT NULL REFERENCES resale_listings(id),
+  user_id             TEXT NOT NULL REFERENCES users(id),
+  event_id            TEXT NOT NULL REFERENCES events(id),
+  method              TEXT NOT NULL CHECK (method IN ('card','eft')),
+  amount_cents        INTEGER NOT NULL CHECK (amount_cents > 0),
+  test                INTEGER NOT NULL DEFAULT 0,
+  status              TEXT NOT NULL CHECK (status IN ('processing','manual_pending','requested','approved','paid','failed')),
+  payment_id          TEXT REFERENCES payments(id),
+  provider            TEXT,
+  provider_reference  TEXT,
+  bank_account_holder TEXT,
+  bank_name           TEXT,
+  bank_branch_code    TEXT,
+  bank_account_enc    TEXT,
+  bank_account_last4  TEXT,
+  bank_reference      TEXT,
+  failure_reason      TEXT,
+  approved_by         TEXT REFERENCES users(id),
+  paid_by             TEXT REFERENCES users(id),
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  paid_at             TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS resale_payouts_listing_uq ON resale_payouts (listing_id);
+CREATE INDEX IF NOT EXISTS resale_payouts_status_idx ON resale_payouts (status, created_at);
+CREATE INDEX IF NOT EXISTS orders_resale_idx ON orders (resale_listing_id);
+CREATE INDEX IF NOT EXISTS wallet_topups_paid_by_idx ON wallet_topups (paid_by, event_id);
+-- exchange:end
 
 -- Organiser verification (FICA / KYC). Kept in its own tables: documents
 -- live encrypted in the data folder's private/ folder, never in public_html.

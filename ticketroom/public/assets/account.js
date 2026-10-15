@@ -6,7 +6,7 @@ const CACHE_KEY = "tr_wallet_v1";
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 const nav = () => render($("#sidenav"), html`
-  <div class="sect">Tickets</div><a href="#/tickets">My tickets</a><a href="#/orders">Orders</a><a href="#/transfers">Transfers</a><a href="#/saved">Saved events</a>
+  <div class="sect">Tickets</div><a href="#/tickets">My tickets</a><a href="#/orders">Orders</a><a href="#/transfers">Transfers</a><a href="#/waitlists">Waitlists</a><a href="#/resale">Resale</a><a href="#/saved">Saved events</a>
   <div class="sect" data-feature="cashless">Cashless</div><a href="#/wallet" data-feature="cashless">Wallets</a><a href="#/tags" data-feature="cashless">Tags & wristbands</a>
   <div class="sect">Account</div><a href="#/refunds">Refunds & support</a><a href="#/payment-methods" data-feature="payments">Payment methods</a><a href="#/settings">Settings & privacy</a>`);
 
@@ -43,8 +43,12 @@ function ticketCard(t, offline = false) {
     <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">${t.code}</span>
       <p class="tk-note">Present this ticket at the entrance. Do not share the code publicly.</p></div>
   </article>
+  ${t.resale?.listing ? html`<div class="callout small no-print resale-note"><span>Up for resale on TicketRoom Exchange at <strong>${moneyExact(t.resale.listing.priceCents)}</strong>.
+    ${t.resale.listing.status === "held" ? "Someone is paying for it right now." : t.resale.listing.status === "offered" ? "Offered to the next person on the waitlist." : "Still yours until it sells."}</span>
+    ${t.resale.listing.status !== "held" ? html`<button class="btn btn-ghost btn-sm" data-unlist="${t.resale.listing.id}">Take it off</button>` : ""}</div>` : ""}
   ${t.pending_transfer ? html`<p class="callout warn small no-print">Transfer to <strong>${t.pending_transfer.toEmail}</strong> is waiting to be accepted. <a href="#/transfers">Manage</a></p>` : ""}
   ${!offline && live ? html`<div class="tk-actions no-print"><div class="row">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
+      ${t.resale?.open && t.resale.faceValueCents > 0 && !t.resale.listing && !t.pending_transfer ? html`<button class="btn btn-ghost btn-sm" data-sell="${t.id}">Sell</button>` : ""}
       <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
     <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
       data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}"></div></div>` : ""}
@@ -100,10 +104,12 @@ async function tickets() {
     ${offline ? html`<p class="callout warn">You're offline. These are the tickets saved on this phone, and they still scan at the gate.</p>` : ""}
     ${upcoming.length ? html`<div class="stack-lg">${upcoming.map((t) => ticketCard(t, offline))}</div>` : empty("No upcoming tickets yet.", html`<a class="btn btn-primary" href="/">Browse events</a>`)}
     ${past.length ? html`<h2 class="mt-lg">Past & inactive</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Ticket</th><th>Status</th></tr></thead><tbody>
-      ${past.map((t) => html`<tr><td>${t.title}</td><td>${fmtDate(t.starts_at)}</td><td class="mono">${t.code}</td><td>${badge(t.status)}</td></tr>`)}</tbody></table></div>` : ""}`);
+      ${past.map((t) => html`<tr><td>${t.title}</td><td>${fmtDate(t.starts_at)}</td><td class="mono">${t.code}</td><td>${badge(t.revoked_reason === "resold" ? "resold" : t.status)}</td></tr>`)}</tbody></table></div>` : ""}`);
   $$("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
   walletButtons();
   $$("[data-transfer]").forEach((b) => b.addEventListener("click", () => transferDialog(b.dataset.transfer)));
+  $$("[data-sell]").forEach((b) => b.addEventListener("click", () => sellDialog(list.find((t) => t.id === b.dataset.sell))));
+  $$("[data-unlist]").forEach((b) => b.addEventListener("click", () => unlist(b.dataset.unlist, tickets)));
   $$("[data-rename]").forEach((b) => b.addEventListener("click", () => {
     const d = dialog("Ticket holder", html`<form class="stack"><div class="field"><label for="hn">Name on ticket</label><input id="hn" name="holderName" value="${b.dataset.name}" required maxlength="120"></div><button class="btn btn-dark">Save</button></form>`);
     onSubmit($("form", d), async (v) => { await patch(`/api/me/tickets/${b.dataset.rename}`, v); d.close(); toast("Holder name updated.", "good"); tickets(); });
@@ -122,6 +128,65 @@ function transferDialog(id) {
     if (r.transfer.devClaimToken) console.info("DEV claim link:", `${location.origin}/account#/claim/${r.transfer.devClaimToken}`);
     tickets();
   });
+}
+
+// ---------------- TicketRoom Exchange ----------------
+// Selling a ticket: never for more than you paid. The waitlist gets the
+// first offer, then fans see it on the event page while it is sold out.
+const bankFields = () => html`<fieldset class="stack card flat"><legend class="label">Pay me by EFT into</legend>
+  <div class="field"><label for="bh">Account holder</label><input id="bh" name="accountHolder" required autocomplete="name"></div>
+  <div class="field"><label for="bn">Bank</label><input id="bn" name="bankName" required placeholder="e.g. FNB"></div>
+  <div class="grid-2"><div class="field"><label for="bb">Branch code</label><input id="bb" name="branchCode" required inputmode="numeric"></div><div class="field"><label for="ba">Account number</label><input id="ba" name="accountNumber" required inputmode="numeric" autocomplete="off"></div></div>
+  <p class="tiny muted mb-0">Stored encrypted. Only TicketRoom finance sees the full number, to pay you.</p></fieldset>`;
+function sellDialog(t) {
+  const r = t.resale;
+  const d = dialog("Sell on TicketRoom Exchange", html`<form class="stack">
+    <p class="mb-0">Can't make it to <strong>${t.title}</strong>? Put your ticket up for resale. People on the waitlist get first offer, then it shows on the event page.</p>
+    <div class="field"><label for="rp">Your price (R)</label><input id="rp" name="price" inputmode="decimal" required value="${(r.maxPriceCents / 100).toFixed(2)}">
+      <span class="hint">At most ${moneyExact(r.maxPriceCents)}, what you paid. The buyer pays the booking fee on top.</span></div>
+    ${r.payoutMethod === "card" ? html`<p class="small mb-0">When it sells, the money goes back to the card you paid with. No fee for selling.</p>` : bankFields()}
+    <p class="small muted mb-0">The ticket stays yours until it sells, and you can take it off any time before then. When it sells, the buyer gets a new ticket and your QR code stops working. Resale closes when the doors open, ${fmtDateTime(r.closesAt)}.</p>
+    <button class="btn btn-primary">Put it up for resale</button></form>`);
+  onSubmit($("form", d), async (v) => {
+    const cents = parseRand(v.price);
+    if (!cents) throw Object.assign(new Error("Enter a price in rand."), { details: { price: "Enter a price like 150 or 150.50." } });
+    const bank = r.payoutMethod === "eft" ? { accountHolder: v.accountHolder, bankName: v.bankName, branchCode: v.branchCode, accountNumber: v.accountNumber } : undefined;
+    try { await post(`/api/me/tickets/${t.id}/resale`, { priceCents: cents, ...(bank ? { bank } : {}) }); }
+    catch (err) { if (err.details?.priceCents) err.details = { price: err.details.priceCents }; throw err; }
+    d.close();
+    toast("Your ticket is up for resale. We'll email you when it sells.", "good");
+    tickets();
+  });
+}
+async function unlist(id, then) {
+  if (!(await confirmDialog("Take it off resale?", "Your ticket stays yours and keeps working.", { confirm: "Take it off" }))) return;
+  try { await post(`/api/me/resale/${id}/cancel`); toast("Your ticket is off resale.", "good"); then(); } catch (err) { toast(err.message, "bad"); }
+}
+async function resale() {
+  const { listings } = await get("/api/me/resale");
+  const st = (l) => l.status === "sold" ? (l.payout?.status === "paid" ? "paid to you" : "sold") : l.status === "active" ? "up for resale" : l.status === "offered" ? "offered to waitlist" : l.status === "held" ? "being paid" : l.status;
+  render(main, html`${head("Resale", "Tickets you put up on TicketRoom Exchange. You never get more than you paid, and nobody pays more than face value.")}
+    ${listings.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Ticket</th><th class="num">Price</th><th>Status</th><th>Paid to you</th><th></th></tr></thead><tbody>
+      ${listings.map((l) => html`<tr><td>${l.event.title}<div class="tiny muted mono">${l.reference}</div></td><td>${l.ticketType}${l.test ? html` <span class="badge warn">test</span>` : ""}</td><td class="num">${moneyExact(l.priceCents)}</td><td>${badge(st(l))}</td>
+        <td class="small">${l.payout ? html`${l.payout.method === "card" ? "To your card" : "By EFT"}<div class="tiny muted">${l.payout.status === "paid" ? `Paid ${fmtDate(l.payout.paidAt)}` : "On its way"}</div>` : ""}</td>
+        <td>${["active", "offered"].includes(l.status) ? html`<button class="btn btn-ghost btn-sm" data-unlist="${l.id}">Take it off</button>` : ""}</td></tr>`)}</tbody></table></div>`
+      : empty("Nothing up for resale. Can't make an event? Open My tickets and tap Sell on the ticket.", html`<a class="btn btn-primary" href="#/tickets">My tickets</a>`)}`);
+  $$("[data-unlist]").forEach((b) => b.addEventListener("click", () => unlist(b.dataset.unlist, resale)));
+}
+
+// ---------------- waitlists ----------------
+async function waitlists() {
+  const { waitlists: list } = await get("/api/me/waitlists");
+  render(main, html`${head("Waitlists", "Sold-out tickets you're waiting for. When one comes up we email you a link that holds it for you for half an hour.", html`<a class="btn btn-ghost" href="/">Find events</a>`)}
+    ${list.length ? html`<div class="stack">${list.map((w) => html`<div class="card flat row between wl-item"><div><a class="saved-title" href="/events/${w.event.slug}">${w.event.title}</a>
+        <div class="small muted">${w.ticketType} · ${fmtDateTime(w.event.startsAt)}</div>
+        <div class="small">${w.status === "waiting" ? html`Number <strong>${w.position}</strong> in line` : w.status === "offered" ? html`<strong>A ticket is held for you until ${fmtTime(w.offerExpiresAt)}.</strong> Open the link in the email we sent you.` : badge(w.status === "claimed" ? "ticket offered" : w.status)}</div></div>
+      ${["waiting", "offered"].includes(w.status) ? html`<button class="btn btn-ghost btn-sm" data-leave="${w.id}">Leave</button>` : ""}</div>`)}</div>`
+      : empty("You're not waiting for anything. When an event is sold out, tap Join the waitlist on its page.", html`<a class="btn btn-primary" href="/">Browse events</a>`)}`);
+  $$("[data-leave]").forEach((b) => b.addEventListener("click", async () => {
+    if (!(await confirmDialog("Leave the waitlist?", "You lose your place in line.", { confirm: "Leave" }))) return;
+    try { await post(`/api/me/waitlists/${b.dataset.leave}/leave`); toast("You've left the waitlist.", "good"); waitlists(); } catch (err) { toast(err.message, "bad"); }
+  }));
 }
 
 // ---------------- orders & transfers ----------------
@@ -194,7 +259,11 @@ async function wallet({ eventId }) {
   render(main, html`<div class="crumbs"><a href="#/wallet">Wallets</a></div>${head(w.event.title, `${fmtDate(w.event.startsAt)}`)}
     <div class="grid-2"><div class="balance-card"><div class="small">Available balance</div><div class="amt">${moneyExact(w.balanceCents)}</div><div class="small">Spend by tapping your linked tag at any vendor.</div></div>
       <section class="card">${ended ? html`<h2>Event finished</h2><p class="muted">${w.cashout ? "Cash out what is left below: to your card, your bank account or in cash." : "Request a refund of any unused balance to the card you topped up with."}</p>`
-        : html`<h2>Top up</h2><form class="stack" id="tu"><div class="row">${[10000, 20000, 50000].map((c) => html`<button type="button" class="chip" data-amt="${c}">${money(c)}</button>`)}</div>
+        : html`<h2>Top up</h2><form class="stack" id="tu">
+          <div class="chips" role="radiogroup" aria-label="Who is it for?"><button type="button" class="chip" role="radio" data-for="me" aria-pressed="true">For me</button><button type="button" class="chip" role="radio" data-for="friend" aria-pressed="false">For a friend</button></div>
+          <div class="field" id="friend" hidden><label for="fe">Your friend's email</label><input id="fe" name="friendEmail" type="email" autocomplete="off"><span class="hint">They need a TicketRoom account. The money goes on their balance for this event.</span></div>
+          <div id="invite"></div>
+          <div class="row">${[10000, 20000, 50000].map((c) => html`<button type="button" class="chip" data-amt="${c}">${money(c)}</button>`)}</div>
           <div class="field"><label for="amt">Amount (R)</label><input id="amt" name="amount" inputmode="decimal" required placeholder="e.g. 150"><span class="hint">Between ${money(w.limits.minTopupCents)} and ${money(w.limits.maxTopupCents)}. Max balance ${money(w.limits.maxBalanceCents)}.</span></div>
           <button class="btn btn-primary">Top up</button></form>`}
         ${w.cashout ? "" : w.balanceCents > 0 ? html`<button class="btn btn-link" id="rf">Request refund of unused balance</button>` : ""}</section></div>
@@ -203,7 +272,10 @@ async function wallet({ eventId }) {
     <h2 class="mt-lg">Activity</h2>
     ${w.history.length ? html`<ul class="activity card flat">${w.history.map((h) => {
       const out = h.amount_cents < 0;
-      const what = h.kind === "purchase" ? h.vendor || "Purchase" : h.kind === "topup" ? "Top-up" : h.kind === "desk_topup" ? `Top-up at the desk (${h.vendor === "cash" ? "cash" : "card"})`
+      if (h.kind === "gift") return html`<li><div class="grow"><strong>Top-up for ${h.vendor}</strong>${h.test ? html` <span class="badge warn">test</span>` : ""}
+        <div class="small muted">${fmtDate(h.created_at, { day: "numeric", month: "short" })}, ${fmtTime(h.created_at)} · <span class="mono">${h.reference}</span> · on their balance</div></div>
+        <div class="right"><div class="amt">${moneyExact(h.amount_cents)}</div>${h.status === "confirmed" ? "" : badge(h.status)}</div></li>`;
+      const what = h.kind === "purchase" ? h.vendor || "Purchase" : h.kind === "topup" ? (h.vendor ? `Top-up from ${h.vendor}` : "Top-up") : h.kind === "desk_topup" ? `Top-up at the desk (${h.vendor === "cash" ? "cash" : "card"})`
         : h.kind === "cashout" ? (h.vendor === "eft" ? "Cash-out by EFT" : "Cash-out at the venue") : out ? "Refund to your card" : "Purchase refunded";
       return html`<li><div class="grow"><strong>${what}</strong>${h.test ? html` <span class="badge warn">test</span>` : ""}
         <div class="small muted">${fmtDate(h.created_at, { day: "numeric", month: "short" })}, ${fmtTime(h.created_at)} · <span class="mono">${h.reference}</span></div></div>
@@ -212,9 +284,26 @@ async function wallet({ eventId }) {
   if ($("#tu")) onSubmit($("#tu"), async (v) => {
     const cents = parseRand(v.amount);
     if (!cents) throw Object.assign(new Error("Enter an amount in rand."), { details: { amount: "Enter an amount like 150 or 150.50." } });
-    const r = await post(`/api/me/wallets/${eventId}/topups`, { amountCents: cents, idempotencyKey: idem() });
-    if (r.payment.redirectUrl) location.href = r.payment.redirectUrl;
+    const friend = !$("#friend").hidden;
+    if (friend && !v.friendEmail) throw Object.assign(new Error("Add your friend's email."), { details: { friendEmail: "Who should get the money?" } });
+    try {
+      const r = await post(`/api/me/wallets/${eventId}/topups`, { amountCents: cents, idempotencyKey: idem(), ...(friend ? { friendEmail: v.friendEmail } : {}) });
+      if (r.payment.redirectUrl) location.href = r.payment.redirectUrl;
+    } catch (err) {
+      if (err.code !== "friend_not_found") throw err;
+      render($("#invite"), html`<div class="callout warn stack"><p class="mb-0">${err.message}</p><button type="button" class="btn btn-dark btn-sm" data-invite>Send an invite to ${v.friendEmail}</button></div>`);
+      $("[data-invite]").addEventListener("click", async () => {
+        try { await post(`/api/me/wallets/${eventId}/invite`, { email: v.friendEmail }); render($("#invite"), html`<p class="callout good mb-0">Invite sent. Once they've signed up you can top them up.</p>`); }
+        catch (e2) { toast(e2.message, "bad"); }
+      });
+    }
   });
+  $$("[data-for]").forEach((b) => b.addEventListener("click", () => {
+    $$("[data-for]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    $("#friend").hidden = b.dataset.for !== "friend";
+    render($("#invite"), "");
+    if (b.dataset.for === "friend") $("#fe").focus();
+  }));
   $("[data-cashout]")?.addEventListener("click", () => cashoutDialog(w, eventId));
   $$("[data-cocancel]").forEach((b) => b.addEventListener("click", async () => {
     if (!(await confirmDialog("Cancel this cash-out?", "The money goes back on your balance.", { confirm: "Cancel cash-out" }))) return;
@@ -410,7 +499,7 @@ function welcome() {
   if (accountType(u) !== "customer") return wrongAccountPage(u, "customer");
   nav();
   router([
-    ["/", tickets], ["/tickets", tickets], ["/saved", saved], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],
+    ["/", tickets], ["/tickets", tickets], ["/saved", saved], ["/orders", orders], ["/transfers", transfers], ["/waitlists", waitlists], ["/resale", resale], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],
     ["/wallet", gate("cashless", wallets)], ["/wallet/:eventId", gate("cashless", wallet)], ["/refunds", refunds], ["/payment-methods", gate("payments", paymentMethods)], ["/settings", settings],
   ], () => { location.hash = "#/tickets"; });
 })();

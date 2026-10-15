@@ -250,7 +250,9 @@ export const badge = (status) => {
     // organiser verification
     missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn",
     // Promote
-    posted: "good", ended: "plain" };
+    posted: "good", ended: "plain",
+    // Waitlists and TicketRoom Exchange
+    resold: "info", sold: "good", "paid to you": "good", "up for resale": "warn", "offered to waitlist": "warn", "being paid": "warn", waiting: "warn", offered: "warn", left: "plain", closed: "plain", "ticket offered": "info", manual_pending: "warn" };
   return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
 };
 

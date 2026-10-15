@@ -74,12 +74,12 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
     $types = [];
     foreach (rows('SELECT id, name, kind, admits FROM ticket_types WHERE event_id = ?', [$ev['id']]) as $t) $types[$t['id']] = gate_label($t);
     $generatedAt = now_iso();
-    $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id, test FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
+    $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id, test, revoked_reason FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
     $list = [];
     while ($t = $st->fetch(PDO::FETCH_NUM)) {
         $first = staff_short_name($t[3]);
         // Test tickets ride along as "not valid", so offline phones refuse them too.
-        $list[] = [$t[0], (int) $t[1], (int) $t[5] === 1 ? 0 : ($t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0)), $first, (int) $t[5] === 1 ? 'Test ticket' : ($types[$t[4]] ?? '')];
+        $list[] = [$t[0], (int) $t[1], (int) $t[5] === 1 ? 0 : ($t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0)), $first, (int) $t[5] === 1 ? 'Test ticket' : ($t[6] === 'resold' ? 'Resold' : ($types[$t[4]] ?? ''))];
     }
     $st->closeCursor();
     // Gate passes ride along; the sixth field marks a re-entry pass.

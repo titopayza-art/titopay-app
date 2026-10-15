@@ -62,8 +62,9 @@ route('GET', '/api/me/wallets/:eventId', function ($a) {
 route('POST', '/api/me/wallets/:eventId/topups', function ($a) {
     $u = require_auth();
     limit('topup', 10, 900, $u['id']);
-    $b = check(body(), ['amountCents' => R::int(['min' => 1, 'max' => 100000000]), 'idempotencyKey' => R::idemKey(), 'paymentMethod' => R::oneOf(['card'], ['optional' => true, 'fallback' => 'card'])]);
-    $out = topup_start($u, $a['eventId'], $b['amountCents'], $b['idempotencyKey']);
+    $b = check(body(), ['amountCents' => R::int(['min' => 1, 'max' => 100000000]), 'idempotencyKey' => R::idemKey(), 'paymentMethod' => R::oneOf(['card'], ['optional' => true, 'fallback' => 'card']),
+        'friendEmail' => R::email(['optional' => true])]);
+    $out = topup_start($u, $a['eventId'], $b['amountCents'], $b['idempotencyKey'], $b['friendEmail'] ?? null);
     return json_out(['topup' => ['reference' => $out['topup']['reference'], 'status' => $out['topup']['status']], 'payment' => $out['payment']], empty($out['replay']) ? 201 : 200);
 });
 

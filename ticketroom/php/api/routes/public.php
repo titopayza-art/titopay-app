@@ -81,7 +81,7 @@ route('GET', '/api/public/events/:slug', function ($a) {
     // waiting for approval exactly as buyers will see it, without sales.
     $pv = qs('preview') ? verify_link(qs('preview')) : null;
     $states = "'published','cancelled','completed'" . ($pv ? ",'draft','pending_approval'" : '');
-    $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.transfers_enabled, e.cashless_enabled, e.capacity, e.lineup, e.organiser_id
+    $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.transfers_enabled, e.cashless_enabled, e.capacity, e.lineup, e.organiser_id, e.resale_enabled
                 FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.slug = ? AND e.status IN ($states)", [$a['slug']]);
     if (!$ev || ($pv && ($pv['pv'] ?? '') !== $ev['id'] && $ev['status'] !== 'published')) throw not_found('Event not found.');
     $preview = $pv && ($pv['pv'] ?? '') === $ev['id'];
@@ -93,10 +93,18 @@ route('GET', '/api/public/events/:slug', function ($a) {
         $ev['previewOrganiserId'] = $me && val('SELECT 1 FROM organiser_members WHERE organiser_id = ? AND user_id = ?', [$ev['organiser_id'], $me['id']]) ? $ev['organiser_id'] : null;
     }
     unset($ev['organiser_id']);
+    // Waitlist offers that ran out pass to the next person before anyone looks.
+    if (val("SELECT 1 FROM waitlist_entries WHERE event_id = ? AND status = 'offered' AND offer_expires_at < ? LIMIT 1", [$ev['id'], now_iso()])) waitlist_expire_offers($ev['id']);
     $types = rows("SELECT id, name, description, kind, admits, price_cents, per_order_limit, sales_start_at, sales_end_at, MAX(quantity_total - quantity_sold - quantity_held, 0) AS remaining
                      FROM ticket_types WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, price_cents", [$ev['id']]);
-    foreach ($types as &$t) $t['fee_cents'] = ticket_fee((int) $t['price_cents']);
+    $cust = user() && account_type(user()) === 'customer' ? user() : null;
+    $mine = $cust ? array_column(rows("SELECT ticket_type_id, status FROM waitlist_entries WHERE event_id = ? AND user_id = ? AND status IN ('waiting','offered')", [$ev['id'], $cust['id']]), 'status', 'ticket_type_id') : [];
+    foreach ($types as &$t) { $t['fee_cents'] = ticket_fee((int) $t['price_cents']); $t['on_waitlist'] = isset($mine[$t['id']]); }
+    unset($t);
     $ev['salesOpen'] = $ev['status'] === 'published' && sales_open($ev);
+    // TicketRoom Exchange: resale tickets for sold-out types (after the waitlist has had its turn).
+    $ev['resaleOpen'] = resale_open($ev + ['doors_open_at' => $ev['doors_open_at']]);
+    $ev['resale'] = $ev['salesOpen'] ? resale_public_listings($ev, $types) : [];
     // "This event is cashless": pay at the stalls with a wristband, topped up in your account.
     $ev['cashless'] = cashless_open_event($ev);
     $ev['cashless_enabled'] = $ev['cashless'];
@@ -186,11 +194,16 @@ route('POST', '/api/public/orders', function () {
         'marketingOptIn' => R::obj(['email' => R::bool(), 'sms' => R::bool()], ['optional' => true]), 'idempotencyKey' => R::idemKey(),
         'paymentMethod' => R::oneOf(['card', 'titopay_wallet'], ['optional' => true, 'fallback' => 'card']),
         'guest' => R::obj(['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true])], ['optional' => true]),
+        'waitlistOffer' => R::str(['optional' => true, 'max' => 100]),
     ]);
     // Signed in as an organiser or staff: tickets are bought as a guest, never into a work account.
     $u = user() && account_type(user()) === 'customer' ? user() : null;
     if ($u) limit('order', 20, 60, $u['id']);
-    else {
+    elseif (!empty($b['waitlistOffer'])) {
+        // The private waitlist link was sent to this person: they buy as themselves.
+        limit('guestorder', 120, 3600);
+        $u = exchange_buyer(row('SELECT * FROM users WHERE id = ?', [waitlist_offer($b['waitlistOffer'])['user_id']]));
+    } else {
         if (empty($b['guest'])) throw bad('Tell us your name and email so we can send your tickets.', ['guest' => 'Required.']);
         // Many phones share one address (mobile networks, venue Wi-Fi): a roomy
         // limit per address, a tight one per email.

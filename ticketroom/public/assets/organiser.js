@@ -132,6 +132,7 @@ function eventForm(e = {}) {
       <span class="hint">Shown on your event page, and people can filter events by age group.</span></fieldset>
     <div class="field"><label for="ageRestriction">Age restriction <span class="muted">(entry rule)</span></label><input id="ageRestriction" name="ageRestriction" maxlength="60" value="${e.age_restriction || ""}" placeholder="e.g. 18+"><span class="hint">Leave empty if anyone may enter.</span></div>
     <label class="check"><input type="checkbox" name="transfersEnabled" ${raw(e.transfers_enabled === false ? "" : "checked")}><span>Allow ticket holders to transfer tickets</span></label>
+    <label class="check"><input type="checkbox" name="resaleEnabled" ${raw(e.resale_enabled === false ? "" : "checked")}><span>Allow fan resale on TicketRoom Exchange <span class="muted">(never above face value; your waitlist gets first offer; turning it off takes listings down)</span></span></label>
     <label class="check" data-feature="cashless"><input type="checkbox" name="cashlessEnabled" ${raw(e.cashless_enabled ? "checked" : "")}><span>Cashless event (wristbands / tags and vendor POS)</span></label>
     <button class="btn btn-primary" type="submit">${e.id ? "Save changes" : "Create draft"}</button></form>`;
 }
@@ -146,7 +147,7 @@ function eventPayload(v) {
   const ageGroups = Object.keys(AGE_GROUPS).filter((k) => v[`ag_${k}`]);
   for (const k of Object.keys(AGE_GROUPS)) delete v[`ag_${k}`];
   return { ...v, ageGroups, capacity: Number(v.capacity), startsAt: toIso(v.startsAt), endsAt: toIso(v.endsAt), salesStartAt: toIso(v.salesStartAt), salesEndAt: toIso(v.salesEndAt),
-    imageUploadId: v.imageUploadId || undefined, province: v.province || undefined, transfersEnabled: !!v.transfersEnabled, cashlessEnabled: !!v.cashlessEnabled, isFree: !!v.isFree };
+    imageUploadId: v.imageUploadId || undefined, province: v.province || undefined, transfersEnabled: !!v.transfersEnabled, resaleEnabled: !!v.resaleEnabled, cashlessEnabled: !!v.cashlessEnabled, isFree: !!v.isFree };
 }
 
 // "All ages" and the specific groups exclude each other.
@@ -259,8 +260,8 @@ async function overviewTab(el, d) {
       <div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.tickets, title: "Tickets sold per day", tickEvery: 3 })}</div>
       <div class="table-wrap hidden mt" id="dtbl"><table><thead><tr><th>Day</th><th class="num">Tickets</th><th class="num">Revenue</th></tr></thead><tbody>${a.daily.filter((x) => x.tickets).map((x) => html`<tr><td>${x.day}</td><td class="num">${x.tickets}</td><td class="num">${moneyExact(x.revenue_cents)}</td></tr>`)}</tbody></table></div></section>
     <div class="grid-2 mt">
-      <section class="card"><h3>By ticket type</h3><div class="table-wrap"><table><thead><tr><th>Type</th><th class="num">Price</th><th>Sold</th><th class="num">In</th></tr></thead><tbody>
-        ${a.byType.map((x) => html`<tr><td>${x.name}</td><td class="num">${moneyExact(x.price_cents)}</td><td><div class="small">${x.quantity_sold}/${x.quantity_total}${x.quantity_held ? ` (+${x.quantity_held} reserved)` : ""}</div><div class="meter"><i data-pct="${x.quantity_total ? (x.quantity_sold / x.quantity_total) * 100 : 0}"></i></div></td><td class="num">${x.checked_in}</td></tr>`)}</tbody></table></div></section>
+      <section class="card"><h3>By ticket type</h3><div class="table-wrap"><table><thead><tr><th>Type</th><th class="num">Price</th><th>Sold</th><th class="num">Waitlist</th><th class="num">In</th></tr></thead><tbody>
+        ${a.byType.map((x) => html`<tr><td>${x.name}</td><td class="num">${moneyExact(x.price_cents)}</td><td><div class="small">${x.quantity_sold}/${x.quantity_total}${x.quantity_held ? ` (+${x.quantity_held} reserved)` : ""}</div><div class="meter"><i data-pct="${x.quantity_total ? (x.quantity_sold / x.quantity_total) * 100 : 0}"></i></div>${x.on_resale || x.resold ? html`<div class="tiny muted">${x.on_resale} on resale · ${x.resold} resold</div>` : ""}</td><td class="num">${x.waiting}</td><td class="num">${x.checked_in}</td></tr>`)}</tbody></table></div></section>
       <section class="card"><h3>Sales by channel</h3>${a.trackingLinks.length ? html`<div class="table-wrap"><table><thead><tr><th>Link</th><th class="num">Clicks</th><th class="num">Orders</th><th class="num">Revenue</th></tr></thead><tbody>
         ${a.trackingLinks.map((l) => html`<tr><td>${l.label}<div class="tiny muted mono">${l.code}</div></td><td class="num">${l.clicks}</td><td class="num">${l.orders}</td><td class="num">${moneyExact(l.revenue_cents)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">Create tracking links under Promos & links to see which channels sell.</p>`}</section>
       <section class="card"><h3>Check-ins by hour</h3>${a.checkinsByHour.length ? barChart(a.checkinsByHour, { label: (x) => x.hour.slice(0, 2), value: (x) => x.n, title: "Check-ins by hour", height: 150 }) : html`<p class="muted">No scans yet. Gate staff use the Scanner on their phones.</p>`}</section>
@@ -278,7 +279,7 @@ async function ticketsTab(el, d, reload) {
     ${d.ticketTypes.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th class="num">Price</th><th>Quantity</th><th>Per order</th><th>Status</th><th></th></tr></thead><tbody>
       ${d.ticketTypes.map((t) => html`<tr><td><strong>${t.name}</strong>${t.description ? html`<div class="small muted">${t.description}</div>` : ""}</td>
         <td>${TICKET_KINDS[t.kind]?.label || t.kind}${t.admits > 1 ? html`<div class="small muted">Admits ${t.admits}</div>` : ""}</td><td class="num">${t.price_cents ? moneyExact(t.price_cents) : "Free"}</td>
-        <td>${t.quantity_sold} sold${t.quantity_held ? `, ${t.quantity_held} reserved` : ""} / ${t.quantity_total}</td><td>${t.per_order_limit}</td><td>${badge(t.status)}</td>
+        <td>${t.quantity_sold} sold${t.quantity_held ? `, ${t.quantity_held} reserved` : ""} / ${t.quantity_total}${t.waiting ? html`<div class="small wl-count">${t.waiting} on the waitlist</div>` : ""}</td><td>${t.per_order_limit}</td><td>${badge(t.status)}</td>
         <td>${editable ? html`<button class="btn btn-ghost btn-sm" data-edit="${t.id}">Edit</button>` : ""}</td></tr>`)}</tbody></table></div>`
       : empty("No ticket types yet. Add at least one before submitting.")}
     <p class="small muted mt mb-0">Sell any kind of ticket: general, early bird, VIP, golden circle, student, child, pensioner, couple, group or table, day and season passes, backstage and hospitality. A couple, group or table ticket lets several people in on one QR code; the gate scanner shows how many. Buyers pay a service fee per paid ticket on top of your price. Once a ticket type has sales its price is locked. To change the price, add a new release such as "Second release".</p>

@@ -208,6 +208,12 @@ function payment_apply(string $provider, string $reference, string $outcome, int
             }
             if ($p['environment'] !== 'live') q('UPDATE orders SET test = 1 WHERE id = ?', [$p['order_id']]);
             $order = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
+            // A TicketRoom Exchange purchase (lib/exchange.php): a new ticket for the buyer, the seller's is voided.
+            if (!empty($order['resale_listing_id'])) {
+                resale_payment_confirmed($order, $p);
+                audit('payment.confirmed', ['entityType' => 'payment', 'entityId' => $p['id'], 'details' => ['order' => $order['reference'], 'amount' => (int) $p['amount_cents'], 'resale' => true]]);
+                return 'confirmed';
+            }
             ledger_payment($order, $p);
             payment_fulfil($order, $p);
             if ((int) $order['test'] === 1) q('UPDATE tickets SET test = 1 WHERE order_id = ?', [$order['id']]);
@@ -383,6 +389,11 @@ function refund_complete(string $refundId, string $providerRef, ?array $actor): 
     }
     $ids = json_decode((string) $r['ticket_ids'], true) ?: [];
     if ($ids) q("UPDATE tickets SET status = 'refunded', updated_at = ? WHERE id IN (" . placeholders($ids) . ") AND status IN ('valid','used')", array_merge([$now], $ids));
+    if ($ids) {
+        // A refunded ticket comes off TicketRoom Exchange, and its place goes to the waitlist.
+        foreach (rows("SELECT * FROM resale_listings WHERE ticket_id IN (" . placeholders($ids) . ") AND status IN ('active','offered')", $ids) as $l) resale_close_listing($l, 'closed', 'refunded');
+        waitlist_tickets_returned($ids, $r['kind']);
+    }
     $order = row('SELECT * FROM orders WHERE id = ?', [$r['order_id']]);
     $refunded = (int) $order['refunded_cents'] + $total;
     $status = $order['status'] === 'paid_unfulfilled' || $refunded >= (int) $order['total_cents'] ? ($order['status'] === 'paid_unfulfilled' ? 'paid_unfulfilled' : 'refunded') : 'partially_refunded';
@@ -442,8 +453,10 @@ function ledger_refund(array $order, array $payment, array $refund): void
     $net = (int) $order['subtotal_cents'] - (int) $order['discount_cents'];
     $amount = (int) $refund['amount_cents'];
     $commission = $net > 0 ? (int) round($amount * (int) $order['organiser_fee_cents'] / $net) : 0;
+    // A resale payment that found its ticket gone goes back from what was set aside for the seller.
+    $from = !empty($order['resale_listing_id']) && $refund['kind'] === 'unfulfilled' ? RESALE_SELLERS : ledger_org_account($order);
     ledger_post('refund', $refund['reference'], [
-        [ledger_org_account($order), $amount - $commission],
+        [$from, $amount - $commission],
         ['revenue:commission', $commission],
         ['revenue:booking_fees', (int) $refund['fee_refund_cents']],
         ['provider:' . $payment['provider'], -($amount + (int) $refund['fee_refund_cents'])],
@@ -458,11 +471,13 @@ function ledger_check(): array
     foreach (rows("SELECT DISTINCT provider FROM payments WHERE environment = 'live' UNION SELECT DISTINCT provider FROM promotion_payments WHERE environment = 'live' AND provider <> 'balance'") as $p) {
         $expected = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE provider = ? AND environment = 'live' AND status IN ('confirmed','partially_refunded','refunded')", [$p['provider']])
             - (int) val("SELECT COALESCE(SUM(r.amount_cents + r.fee_refund_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = ? AND p.environment = 'live' AND r.status = 'completed'", [$p['provider']])
-            + (int) val("SELECT COALESCE(SUM(amount_cents - refunded_cents),0) FROM promotion_payments WHERE provider = ? AND environment = 'live' AND status IN ('confirmed','refunded')", [$p['provider']]);
+            + (int) val("SELECT COALESCE(SUM(amount_cents - refunded_cents),0) FROM promotion_payments WHERE provider = ? AND environment = 'live' AND status IN ('confirmed','refunded')", [$p['provider']])
+            - (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM resale_payouts WHERE provider = ? AND method = 'card' AND test = 0 AND status = 'paid'", [$p['provider']]);
         $ledger = ledger_balance("provider:{$p['provider']}");
         $clearing[] = ['account' => "provider:{$p['provider']}", 'ledgerCents' => $ledger, 'expectedCents' => $expected, 'ok' => $ledger === $expected];
     }
     $clearing[] = cashless_ledger_check();
+    $clearing[] = resale_ledger_check();
     $ok = !$bad && !array_filter($clearing, fn($c) => !$c['ok']);
     return ['entries' => (int) val("SELECT count(*) FROM ledger_entries WHERE account NOT LIKE 'test:%'"), 'sumCents' => (int) val('SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries'),
         'testEntries' => (int) val("SELECT count(*) FROM ledger_entries WHERE account LIKE 'test:%'"),
@@ -539,6 +554,8 @@ function clear_test_orders(array $actor): array
         // Practice cashless money goes too (its test: ledger entries stay, as history).
         $wallets = affected('UPDATE cashless_wallets SET test_balance_cents = 0, updated_at = ? WHERE test_balance_cents > 0', [$now]);
         q("UPDATE wallet_topups SET status = 'cancelled' WHERE test = 1 AND status = 'pending'");
+        // Practice resale listings close with their tickets.
+        foreach (rows("SELECT * FROM resale_listings WHERE test = 1 AND status IN ('active','offered')") as $l) resale_close_listing($l, 'closed', 'test_cleared');
         // TEST Promote purchases stop too: no free promotion carries over into live.
         $promos = affected("UPDATE event_promotions SET status = 'cancelled', updated_at = ? WHERE test = 1 AND status IN ('pending_payment','active')", [$now]);
         audit('payments.test_cleared', ['actor' => $actor, 'details' => ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets, 'promotions' => $promos]]);

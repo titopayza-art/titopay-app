@@ -79,7 +79,7 @@ function base_url(): string { return rtrim((string) cfg('baseUrl', 'https://tick
 function data_dir(): string { return (string) $GLOBALS['TR_DATA_DIR']; }
 
 // ============================================================== database
-const BOOL_COLS = ['is_free', 'featured', 'transfers_enabled', 'cashless_enabled', 'can_scan', 'can_manage_tags', 'active', 'granted',
+const BOOL_COLS = ['is_free', 'featured', 'transfers_enabled', 'resale_enabled', 'cashless_enabled', 'can_scan', 'can_manage_tags', 'active', 'granted',
     'has_pin', 'helpful', 'overdue', 'mine', 'resolved', 'signature_valid', 'email_verified'];
 const JSON_COLS = ['details', 'keywords', 'audience'];
 

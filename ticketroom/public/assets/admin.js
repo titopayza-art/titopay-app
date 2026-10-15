@@ -336,6 +336,7 @@ async function refunds() {
       <td>${isF() && r.status === "requested" && !r.mine ? html`<div class="row"><button class="btn btn-good btn-sm" data-ok="${r.id}">Approve</button><button class="btn btn-ghost btn-sm" data-no="${r.id}">Reject</button></div>` : ""}
         ${isF() && r.status === "failed" ? html`<button class="btn btn-ghost btn-sm" data-retry="${r.id}">Retry</button>` : ""}${isF() && r.status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-manual="${r.id}">Mark paid manually</button>` : ""}${r.mine && r.status === "requested" ? html`<span class="tiny muted">yours — needs someone else</span>` : ""}</td></tr>`))}</div>`);
   if ((await features()).cashDesk) main.insertAdjacentHTML("beforeend", '<div id="cos"></div>'), cashouts($("#cos"));
+  main.insertAdjacentHTML("beforeend", '<div id="rps"></div>'); resalePayouts($("#rps"));
   $$("[data-f]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_rf", b.dataset.f); refunds(); }));
   $$("[data-ok]").forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/refunds/${b.dataset.ok}/decide`, { approve: true }), "Approved and processed.")) refunds(); }));
   $$("[data-no]").forEach((b) => b.addEventListener("click", async () => { const why = await reason("Reject refund", "The requester will see this note."); if (why && await act(() => post(`/api/admin/refunds/${b.dataset.no}/decide`, { approve: false, note: why }))) refunds(); }));
@@ -495,6 +496,25 @@ async function cashouts(box) {
   $$("[data-cor]", box).forEach((b) => b.addEventListener("click", async () => { const why = await reason("Reject cash-out", "The guest is emailed this reason and the money goes back on their balance."); if (why && await act(() => post(`/api/admin/cashouts/${b.dataset.cor}/decide`, { approve: false, note: why }))) cashouts(box); }));
   $$("[data-cov]", box).forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/cashouts/${b.dataset.cov}/reveal-account`); dialog("Account number", html`<p class="mono">${r.accountNumber}</p><p class="small muted">This view is in the audit log.</p>`); } catch (err) { toast(err.message, "bad"); } }));
   $$("[data-cop]", box).forEach((b) => b.addEventListener("click", async () => { const ref = await reason("Record the EFT", "Make the EFT from TicketRoom's bank first, then enter its reference.", "Bank reference"); if (ref && await act(() => post(`/api/admin/cashouts/${b.dataset.cop}/mark-paid`, { bankReference: ref }), "Cash-out marked as paid.")) cashouts(box); }));
+}
+
+// TicketRoom Exchange: sellers of resold tickets are paid back to their card
+// (automatic, or by hand for PayFast) or by EFT (finance approves and pays).
+async function resalePayouts(box) {
+  const { payouts: list } = await get("/api/admin/resale-payouts");
+  const open = list.filter((p) => p.status !== "paid");
+  render(box, html`<h2 class="mt-lg">Resale payouts</h2><p class="small muted">Fans who sold a ticket on TicketRoom Exchange. Card payouts go back to the card they paid with; EFT payouts need approval, then the EFT.</p>
+    ${tbl(["Ref", "Seller", "Event", "How", "#Amount", "Status", ""], [...open, ...list.filter((p) => p.status === "paid").slice(0, 20)].map((p) => html`<tr><td class="mono">${p.reference}${p.test ? html` <span class="badge warn">test</span>` : ""}<div class="tiny muted">${p.listing_reference}</div></td>
+      <td>${p.seller_name}<div class="tiny muted">${p.seller_email}</div></td><td class="small">${p.event_title}</td>
+      <td class="small">${p.method === "card" ? `Card (${p.provider})` : p.bank_account_last4 ? html`EFT ${p.bank_name} ••••${p.bank_account_last4}<div class="tiny muted">${p.bank_account_holder}</div>` : "EFT, no account yet"}${p.failure_reason ? html`<div class="tiny">${p.failure_reason}</div>` : ""}</td>
+      <td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td>
+      <td>${isF() && p.status === "requested" ? html`<button class="btn btn-good btn-sm" data-rpa="${p.id}">Approve</button>` : ""}
+        ${isF() && p.status === "approved" ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-rpv="${p.id}">Show account no.</button><button class="btn btn-dark btn-sm" data-rpp="${p.id}">Mark paid</button></div>` : ""}
+        ${isF() && p.status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-rpp="${p.id}">Mark refunded</button>` : ""}${isF() && p.status === "failed" ? html`<button class="btn btn-ghost btn-sm" data-rpr="${p.id}">Retry</button>` : ""}</td></tr>`), "No resale payouts.")}`);
+  $$("[data-rpa]", box).forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/resale-payouts/${b.dataset.rpa}/approve`), "Approved.")) resalePayouts(box); }));
+  $$("[data-rpv]", box).forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/resale-payouts/${b.dataset.rpv}/reveal-account`); dialog("Account number", html`<p class="mono">${r.accountNumber}</p><p class="small muted">This view is in the audit log.</p>`); } catch (err) { toast(err.message, "bad"); } }));
+  $$("[data-rpp]", box).forEach((b) => b.addEventListener("click", async () => { const ref = await reason("Record the payment", "Make the EFT, or the refund in the provider dashboard, first. Then enter its reference.", "Reference"); if (ref && await act(() => post(`/api/admin/resale-payouts/${b.dataset.rpp}/mark-paid`, { reference: ref }), "Payout marked as paid.")) resalePayouts(box); }));
+  $$("[data-rpr]", box).forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/resale-payouts/${b.dataset.rpr}/retry`), "Retried.")) resalePayouts(box); }));
 }
 
 // Wristbands & wallets: run a top-up or cash-out desk for any cashless event,

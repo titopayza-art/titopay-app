@@ -359,7 +359,9 @@ function wallet_history(string $userId, string $eventId): array
 {
     return array_map(function ($r) { $r['amount_cents'] = (int) $r['amount_cents']; $r['test'] = (int) $r['test'] === 1; return $r; }, rows(
         "SELECT * FROM (
-           SELECT 'topup' AS kind, reference, amount_cents, status, created_at, NULL AS vendor, test FROM wallet_topups WHERE user_id = ? AND event_id = ?
+           SELECT 'topup' AS kind, reference, amount_cents, status, created_at, (SELECT full_name FROM users WHERE id = wallet_topups.paid_by) AS vendor, test FROM wallet_topups WHERE user_id = ? AND event_id = ?
+           UNION ALL
+           SELECT 'gift', reference, amount_cents, status, created_at, (SELECT full_name FROM users WHERE id = wallet_topups.user_id), test FROM wallet_topups WHERE paid_by = ? AND event_id = ?
            UNION ALL
            SELECT 'purchase', s.reference, -s.total_cents, s.status, s.created_at, v.name, s.test FROM pos_sales s JOIN vendors v ON v.id = s.vendor_id WHERE s.user_id = ? AND s.event_id = ?
            UNION ALL
@@ -370,38 +372,42 @@ function wallet_history(string $userId, string $eventId): array
            SELECT 'desk_topup', reference, amount_cents, status, created_at, method, test FROM desk_topups WHERE user_id = ? AND event_id = ?
            UNION ALL
            SELECT 'cashout', reference, -(amount_cents + fee_cents), status, created_at, method, test FROM wallet_cashouts WHERE user_id = ? AND event_id = ?
-         ) ORDER BY created_at DESC LIMIT 200", [$userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId]));
+         ) ORDER BY created_at DESC LIMIT 200", [$userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId]));
 }
 
 // ============================================================== top-ups
 // Starts a card top-up. The balance only grows when the provider confirms
 // the payment (payment_apply → topup_confirm), never from the browser.
-function topup_start(array $u, string $eventId, int $amount, string $idem): array
+// With $friendEmail the money goes on a friend's balance for the same event
+// (they need a TicketRoom account); the payer pays and both see it.
+function topup_start(array $u, string $eventId, int $amount, string $idem, ?string $friendEmail = null): array
 {
     $lim = cashless_limits();
     if ($amount < $lim['minTopupCents'] || $amount > $lim['maxTopupCents']) {
         throw conflict('Top-ups must be between ' . rand_short($lim['minTopupCents']) . ' and ' . rand_short($lim['maxTopupCents']) . '.', 'topup_limits', ['amount' => 'Choose an amount in that range.']);
     }
-    $made = tx(function () use ($u, $eventId, $amount, $idem, $lim) {
-        $prior = row('SELECT * FROM wallet_topups WHERE user_id = ? AND idempotency_key = ?', [$u['id'], $idem]);
+    $made = tx(function () use ($u, $eventId, $amount, $idem, $lim, $friendEmail) {
+        $prior = row('SELECT * FROM wallet_topups WHERE ((user_id = ? AND paid_by IS NULL) OR paid_by = ?) AND idempotency_key = ?', [$u['id'], $u['id'], $idem]);
         if ($prior) return ['topup' => $prior, 'replay' => true];
+        $friend = $friendEmail !== null ? friend_wallet_user($friendEmail, $u) : null;
+        $for = $friend['id'] ?? $u['id'];
         $ev = cashless_event($eventId);
         if ($ev['status'] !== 'published' || to_unix($ev['ends_at']) < microtime(true)) throw conflict('Top-ups are closed for this event.', 'event_closed');
         if (!val("SELECT 1 FROM tickets WHERE owner_user_id = ? AND event_id = ? AND status IN ('valid','used') LIMIT 1", [$u['id'], $eventId])) {
             throw conflict('You need a ticket for this event to top up.', 'no_ticket');
         }
         // Top-ups still waiting at the provider count against the cap.
-        $pending = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM wallet_topups WHERE user_id = ? AND event_id = ? AND status = 'pending' AND created_at > ?", [$u['id'], $eventId, iso_in(-3600)]);
-        if (wallet_total($u['id'], $eventId) + $pending + $amount > $lim['maxBalanceCents']) {
-            throw conflict('An event balance cannot go over ' . rand_short($lim['maxBalanceCents']) . '.', 'balance_cap', ['amount' => 'Choose a smaller amount.']);
+        $pending = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM wallet_topups WHERE user_id = ? AND event_id = ? AND status = 'pending' AND created_at > ?", [$for, $eventId, iso_in(-3600)]);
+        if (wallet_total($for, $eventId) + $pending + $amount > $lim['maxBalanceCents']) {
+            throw conflict(($friend ? 'Their' : 'An event') . ' balance cannot go over ' . rand_short($lim['maxBalanceCents']) . '.', 'balance_cap', ['amount' => 'Choose a smaller amount.']);
         }
         $now = now_iso();
-        $t = insert('wallet_topups', ['id' => uuid(), 'reference' => reference('TU'), 'user_id' => $u['id'], 'event_id' => $eventId, 'amount_cents' => $amount, 'status' => 'pending',
-            'idempotency_key' => $idem, 'test' => pay_test() ? 1 : 0, 'created_at' => $now]);
+        $t = insert('wallet_topups', ['id' => uuid(), 'reference' => reference('TU'), 'user_id' => $for, 'event_id' => $eventId, 'amount_cents' => $amount, 'status' => 'pending',
+            'idempotency_key' => $idem, 'test' => pay_test() ? 1 : 0, 'created_at' => $now, 'paid_by' => $friend ? $u['id'] : null]);
         $p = insert('payments', ['id' => uuid(), 'order_id' => null, 'purpose' => 'topup', 'topup_id' => $t['id'], 'provider' => pay_provider(), 'environment' => pay_mode(),
             'amount_cents' => $amount, 'status' => 'initiated', 'created_at' => $now, 'updated_at' => $now]);
         audit('wallet.topup_started', ['actor' => $u, 'entityType' => 'wallet_topup', 'entityId' => $t['id'], 'organiserId' => $ev['organiser_id'],
-            'details' => ['reference' => $t['reference'], 'amount' => $amount, 'eventId' => $eventId, 'test' => pay_test()]]);
+            'details' => ['reference' => $t['reference'], 'amount' => $amount, 'eventId' => $eventId, 'test' => pay_test(), 'forFriend' => $friend['id'] ?? null]]);
         return ['topup' => $t, 'payment' => $p, 'event' => $ev];
     });
     if (!empty($made['replay'])) {
@@ -439,9 +445,11 @@ function topup_checkout(array $t, array $p, array $ev): array
 // What the /pay page and PayFast's form need to know about a top-up.
 function topup_pay_details(array $p): array
 {
-    $t = row('SELECT t.*, e.title, u.full_name, u.email FROM wallet_topups t JOIN events e ON e.id = t.event_id JOIN users u ON u.id = t.user_id WHERE t.id = ?', [$p['topup_id']]);
+    // A friend's top-up is paid by the person who asked for it.
+    $t = row('SELECT t.*, e.title, u.full_name, u.email, f.full_name AS friend_name FROM wallet_topups t JOIN events e ON e.id = t.event_id JOIN users u ON u.id = COALESCE(t.paid_by, t.user_id)
+               LEFT JOIN users f ON f.id = t.user_id AND t.paid_by IS NOT NULL WHERE t.id = ?', [$p['topup_id']]);
     return ['id' => $t['id'], 'reference' => $t['reference'], 'buyer_name' => $t['full_name'], 'buyer_email' => $t['email'], 'total_cents' => (int) $t['amount_cents'],
-        'title' => 'Cashless top-up: ' . $t['title'], 'event_id' => $t['event_id'], 'item_name' => "TicketRoom top-up {$t['reference']}"];
+        'title' => ($t['friend_name'] ? "Cashless top-up for {$t['friend_name']}: " : 'Cashless top-up: ') . $t['title'], 'event_id' => $t['event_id'], 'item_name' => "TicketRoom top-up {$t['reference']}"];
 }
 // Called from payment_apply() inside its transaction, only on a verified
 // provider confirmation (or the sandbox's answer). Safe to call twice.
@@ -456,9 +464,17 @@ function topup_confirm(array $p): void
     ledger_post('wallet_topup', $t['reference'], [['provider:' . $p['provider'], $amount], [wallet_account($t['user_id'], $t['event_id']), -$amount]], $test);
     $u = row('SELECT email, full_name FROM users WHERE id = ?', [$t['user_id']]);
     $ev = row('SELECT id, title, organiser_id FROM events WHERE id = ?', [$t['event_id']]);
-    outbox_enqueue(['to' => $u['email'], 'userId' => $t['user_id']] + tpl('topupConfirmed', ['name' => $u['full_name'], 'event' => $ev, 'amountCents' => $amount, 'test' => $test,
-        'balanceCents' => wallet_total($t['user_id'], $t['event_id'])]));
-    audit('wallet.topup_confirmed', ['entityType' => 'wallet_topup', 'entityId' => $t['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['reference' => $t['reference'], 'amount' => $amount, 'test' => $test]]);
+    if ($t['paid_by']) {
+        // Topped up by a friend: both get an email.
+        $from = row('SELECT email, full_name FROM users WHERE id = ?', [$t['paid_by']]);
+        outbox_enqueue(['to' => $u['email'], 'userId' => $t['user_id']] + tpl('friendTopup', ['name' => $u['full_name'], 'fromName' => $from['full_name'], 'event' => $ev, 'amountCents' => $amount, 'test' => $test,
+            'balanceCents' => wallet_total($t['user_id'], $t['event_id'])]));
+        outbox_enqueue(['to' => $from['email'], 'userId' => $t['paid_by']] + tpl('friendTopupSent', ['name' => $from['full_name'], 'friendName' => $u['full_name'], 'event' => $ev, 'amountCents' => $amount, 'test' => $test, 'reference' => $t['reference']]));
+    } else {
+        outbox_enqueue(['to' => $u['email'], 'userId' => $t['user_id']] + tpl('topupConfirmed', ['name' => $u['full_name'], 'event' => $ev, 'amountCents' => $amount, 'test' => $test,
+            'balanceCents' => wallet_total($t['user_id'], $t['event_id'])]));
+    }
+    audit('wallet.topup_confirmed', ['entityType' => 'wallet_topup', 'entityId' => $t['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['reference' => $t['reference'], 'amount' => $amount, 'test' => $test, 'paidBy' => $t['paid_by']]]);
 }
 // A payment that failed or was cancelled at the provider.
 function topup_closed(array $p, string $outcome): void
@@ -510,7 +526,7 @@ function wallet_refund_request(array $u, string $eventId, string $reason = 'Unus
 function wallet_card_payments(string $userId, string $eventId, bool $test): array
 {
     $pays = rows("SELECT p.* FROM payments p JOIN wallet_topups t ON t.id = p.topup_id
-                   WHERE t.user_id = ? AND t.event_id = ? AND p.purpose = 'topup' AND p.status IN ('confirmed','partially_refunded') AND (p.environment <> 'live') = ?
+                   WHERE t.user_id = ? AND t.event_id = ? AND t.paid_by IS NULL AND p.purpose = 'topup' AND p.status IN ('confirmed','partially_refunded') AND (p.environment <> 'live') = ?
                    ORDER BY p.confirmed_at DESC, p.created_at DESC", [$userId, $eventId, $test ? 1 : 0]);
     foreach ($pays as &$p) {
         $held = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM refunds WHERE payment_id = ? AND status IN ('requested','processing','manual_pending','failed')", [$p['id']]);

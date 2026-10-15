@@ -195,6 +195,8 @@ function create_order(array $user, array $in): array
         if ($prior) return ['order' => $prior, 'replay' => true];
         $event = row('SELECT * FROM events WHERE slug = ?', [$in['eventSlug']]);
         if (!$event) throw not_found('Event not found.');
+        // A waitlist offer: the place held for this person goes to this order.
+        $waitEntry = !empty($in['waitlistOffer']) ? waitlist_take_primary($in['waitlistOffer'], $event, $in['items']) : null;
         $qt = order_quote($event, $in['items'], $in['promoCode'] ?? null);
         // Capacity counts people: a couple ticket uses two places.
         $used = (int) val('SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
@@ -227,6 +229,7 @@ function create_order(array $user, array $in): array
             'promo_code_id' => $qt['promo']['id'] ?? null, 'tracking_link_id' => $trackingId ?: null, 'idempotency_key' => $in['idempotencyKey'],
             'expires_at' => iso_in(HOLD_MINUTES * 60), 'created_at' => $now, 'updated_at' => $now,
         ]);
+        if ($waitEntry) q('UPDATE waitlist_entries SET order_id = ? WHERE id = ?', [$order['id'], $waitEntry]);
         foreach ($qt['lines'] as $l) {
             insert('order_items', ['id' => uuid(), 'order_id' => $order['id'], 'ticket_type_id' => $l['ticketType']['id'], 'quantity' => $l['quantity'], 'unit_price_cents' => $l['unitPrice'], 'unit_fee_cents' => $l['unitFee']]);
         }
@@ -268,8 +271,12 @@ function fulfil_order(string $orderId): array
 }
 function release_holds(array $order): void
 {
+    // A resale order holds a listing, not places on sale.
+    if (!empty($order['resale_listing_id'])) { resale_release_order($order); return; }
     foreach (rows('SELECT * FROM order_items WHERE order_id = ?', [$order['id']]) as $it) q('UPDATE ticket_types SET quantity_held = MAX(quantity_held - ?, 0) WHERE id = ?', [$it['quantity'], $it['ticket_type_id']]);
     if ($order['promo_code_id']) q('UPDATE promo_codes SET used_count = used_count - 1 WHERE id = ? AND used_count > 0', [$order['promo_code_id']]);
+    // Places that come free go to the waitlist first.
+    if (val("SELECT 1 FROM waitlist_entries WHERE event_id = ? AND status = 'waiting' LIMIT 1", [$order['event_id']])) waitlist_sweep($order['event_id']);
 }
 function expire_due_orders(): int
 {
@@ -375,7 +382,7 @@ const PASS_AFTER_H = 24;
 
 function tickets_for_user(string $userId): array
 {
-    $list = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test,
+    $list = rows("SELECT t.id, t.code, t.status, t.revoked_reason, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test, t.order_id, t.ticket_type_id, e.resale_enabled, e.doors_open_at,
                          tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
                          e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, o.reference AS order_reference
                     FROM tickets t JOIN events e ON e.id = t.event_id JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
@@ -384,7 +391,8 @@ function tickets_for_user(string $userId): array
         $tr = row("SELECT id, to_email, expires_at FROM ticket_transfers WHERE ticket_id = ? AND status = 'pending'", [$t['id']]);
         $t['pending_transfer'] = $tr ? ['id' => $tr['id'], 'toEmail' => $tr['to_email'], 'expiresAt' => $tr['expires_at']] : null;
         $t['qrPayload'] = $t['status'] === 'valid' ? qr_payload($t) : null;
-        unset($t['qr_version']);
+        $t['resale'] = resale_ticket_info($t, $userId);
+        unset($t['qr_version'], $t['order_id']);
     }
     return $list;
 }
@@ -403,6 +411,7 @@ function start_transfer(array $user, string $ticketId, string $toEmail): array
         if ($t['status'] !== 'valid') throw conflict('Only unused, valid tickets can be transferred.', 'ticket_not_valid');
         if ($t['event_status'] !== 'published' || to_unix($t['starts_at']) <= microtime(true)) throw conflict('Transfers close when the event starts.', 'transfer_closed');
         if (val("SELECT 1 FROM ticket_transfers WHERE ticket_id = ? AND status = 'pending'", [$t['id']])) throw conflict('This ticket already has a transfer waiting. Cancel it first.', 'duplicate');
+        if (val("SELECT 1 FROM resale_listings WHERE ticket_id = ? AND status IN ('active','offered','held')", [$t['id']])) throw conflict('This ticket is up for resale. Take it off TicketRoom Exchange first.', 'ticket_listed');
         $token = random_token(24);
         $recipient = val("SELECT id FROM users WHERE lower(email) = ? AND status = 'active'", [$toEmail]);
         $tr = insert('ticket_transfers', ['id' => uuid(), 'ticket_id' => $t['id'], 'from_user_id' => $user['id'], 'to_email' => $toEmail, 'to_user_id' => $recipient ?: null,
@@ -479,9 +488,16 @@ function admit(array $staff, array $b): array
             if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) { $log('invalid', $t['id']); return ['outcome' => 'invalid', 'message' => 'This QR code was replaced (ticket transferred or reissued). Ask for the current ticket.']; }
         }
         if ($t['event_id'] !== $eventId) { $log('wrong_event', $t['id']); return ['outcome' => 'wrong_event', 'message' => 'This ticket is for a different event.']; }
+        // Sold on TicketRoom Exchange: the buyer has a new code, this one is void.
+        if ($t['status'] === 'revoked' && $t['revoked_reason'] === 'resold') { $log('revoked', $t['id']); return ['outcome' => 'resold', 'message' => 'This ticket was resold on TicketRoom Exchange. The new owner has a new code.', 'holderName' => $t['holder_name']]; }
         if (in_array($t['status'], ['revoked', 'refunded'], true)) { $log($t['status'], $t['id']); return ['outcome' => $t['status'], 'message' => "This ticket was {$t['status']}."]; }
         // Bought in test mode (sandbox): never valid for entry.
         if ((int) $t['test'] === 1) { $log('invalid', $t['id']); return ['outcome' => 'test_ticket', 'message' => 'Test ticket, bought while payments were in test mode. Not valid for entry.', 'holderName' => $t['holder_name']]; }
+        // Up for resale: it can't be used and sold too.
+        if ($t['status'] === 'valid' && val("SELECT 1 FROM resale_listings WHERE ticket_id = ? AND status IN ('active','offered','held')", [$t['id']])) {
+            $log('invalid', $t['id']);
+            return ['outcome' => 'listed', 'message' => 'This ticket is up for resale. The holder must take it off TicketRoom Exchange first.', 'holderName' => $t['holder_name']];
+        }
         $tt = row('SELECT name, kind, admits FROM ticket_types WHERE id = ?', [$t['ticket_type_id']]);
         $type = gate_label($tt);
         // Offline scans synced later keep the time the fan actually walked in.

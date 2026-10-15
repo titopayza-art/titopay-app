@@ -425,6 +425,45 @@ function tpl(string $name, array $a): array
         case 'gatePass':
             return ['subject' => "Your gate pass for {$a['event']}",
                 'body' => $hi . "{$a['organiser']} has given you a {$a['role']} pass for {$a['event']} ({$a['when']}, {$a['venue']}).\n\nOpen your pass: {$a['url']}\n\nShow the QR code at the gate. " . ($a['reentry'] ? 'It lets you in and out as often as you need.' : 'It works for one entry.') . " Keep the link to yourself: anyone with it can use your pass." . FOOTER];
+        // Waitlists, TicketRoom Exchange and friend top-ups (lib/exchange.php).
+        case 'waitlistJoined':
+            $e = $a['event'];
+            return ['subject' => "You're on the waitlist for {$e['title']}",
+                'body' => $hi . "You're number {$a['position']} in line for a {$a['ticketType']} ticket for {$e['title']} on " . when_str($e['starts_at']) . ".\n\n"
+                    . "When a ticket comes up (someone gets a refund, a booking isn't paid, or a fan resells theirs at no more than they paid), we'll email you a private link. It holds the ticket for you for {$a['minutes']} minutes, so keep an eye on your inbox.\n\n"
+                    . "Changed your mind? Leave the waitlist: {$a['leaveUrl']}" . FOOTER];
+        case 'waitlistOffer':
+            $e = $a['event'];
+            return ['subject' => "A ticket for {$e['title']} is yours if you want it",
+                'body' => $hi . "Good news: a {$a['ticketType']} ticket for {$e['title']} has come up, and you're next in line.\n\n"
+                    . 'Price: ' . format_zar((int) $a['priceCents']) . ' plus a ' . format_zar((int) $a['feeCents']) . ' booking fee' . (!empty($a['resale']) ? ' (a fan is reselling it at no more than they paid)' : '') . ".\n\n"
+                    . "Get my ticket: {$a['url']}\n\nWe're holding it for you until " . time_str($a['until']) . " ({$a['minutes']} minutes). After that it goes to the next person in line." . FOOTER];
+        case 'resaleSold':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "Your ticket for {$a['event']['title']} has sold",
+                'body' => $hi . ($test ? "This was a TEST sale, made while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "Your ticket for {$a['event']['title']} sold on TicketRoom Exchange. The buyer has a new ticket with a new code, so your old QR code no longer works.\n\n"
+                    . 'We\'re paying you ' . format_zar((int) $a['amountCents']) . ($a['method'] === 'card' ? ', back to the card you paid with. Banks usually show it within 3 to 7 working days.' : ' by EFT to the bank account you gave us. TicketRoom finance pays within a few working days.')
+                    . "\nReference {$a['reference']}" . FOOTER];
+        case 'resalePaid':
+            return ['subject' => "Your resale money for {$a['event']['title']} is on its way",
+                'body' => $hi . 'We have paid you ' . format_zar((int) $a['amountCents']) . " for the ticket you sold for {$a['event']['title']} (reference {$a['reference']}).\n\n"
+                    . ($a['method'] === 'card' ? 'It goes back to the card you paid with. Banks usually show it within 3 to 7 working days.' : "It went by EFT to {$a['bank']}. EFTs usually clear within 1 to 2 working days.") . FOOTER];
+        case 'friendTopup':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "{$a['fromName']} topped up your balance for {$a['event']['title']}",
+                'body' => $hi . ($test ? "This was a TEST top-up, paid while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "{$a['fromName']} added " . format_zar((int) $a['amountCents']) . " to your cashless balance for {$a['event']['title']}. Your balance is now " . format_zar((int) $a['balanceCents']) . ".\n\n"
+                    . "Pay at the stalls by tapping your wristband. Link one in your account if you haven't yet.\n\nSee my balance: $B/account#/wallet" . FOOTER];
+        case 'friendTopupSent':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "You topped up {$a['friendName']} for {$a['event']['title']}",
+                'body' => $hi . ($test ? "This was a TEST top-up. No real money moved.\n\n" : '')
+                    . 'Done. ' . format_zar((int) $a['amountCents']) . " is on {$a['friendName']}'s cashless balance for {$a['event']['title']}, and we've let them know.\nReference {$a['reference']}" . FOOTER];
+        case 'friendInvite':
+            return ['subject' => "{$a['fromName']} wants to top up your wallet for {$a['event']['title']}",
+                'body' => "Hi there,\n\n{$a['fromName']} wants to add money to your cashless balance for {$a['event']['title']}, so you can tap and pay at the stalls.\n\n"
+                    . "You need a free TicketRoom account first. Sign up with this email address: {$a['url']}\n\nOnce you've confirmed it, let {$a['fromName']} know and they can top you up.\n\nThe event: {$a['eventUrl']}" . FOOTER];
         // Promote (lib/promote.php).
         case 'promotionConfirmed':
             $p = $a['promotion']; $e = $a['event']; $test = (int) ($p['test'] ?? 0) === 1;
@@ -509,6 +548,13 @@ function email_catalog(): array
         ['key' => 'verificationRejected', 'name' => 'Verification document not accepted', 'audience' => 'Organiser', 'trigger' => 'When staff reject a verification document, with the reason', 'sample' => fn() => tpl('verificationRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'document' => 'Bank confirmation letter', 'reason' => 'The letter is older than 3 months. Please ask your bank for a new one.'])],
         ['key' => 'verificationComplete', 'name' => 'Verification complete', 'audience' => 'Organiser', 'trigger' => 'When every required verification item is approved', 'sample' => fn() => tpl('verificationComplete', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'paid' => true])],
         ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/scan#/reset/sample"])],
+        ['key' => 'waitlistJoined', 'name' => 'Joined a waitlist', 'audience' => 'Attendee', 'trigger' => 'When someone joins the waitlist for a sold-out ticket', 'sample' => fn() => tpl('waitlistJoined', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketType' => 'General', 'position' => 3, 'leaveUrl' => "$B/events/soweto-sunset-sessions?leave=sample", 'minutes' => WAITLIST_OFFER_MINUTES])],
+        ['key' => 'waitlistOffer', 'name' => 'Waitlist ticket offer', 'audience' => 'Attendee', 'trigger' => 'When a ticket comes up for the next person in line', 'sample' => fn() => tpl('waitlistOffer', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketType' => 'General', 'priceCents' => 15000, 'feeCents' => 1000, 'resale' => true, 'url' => "$B/events/soweto-sunset-sessions?offer=sample", 'until' => iso_in(1800), 'minutes' => WAITLIST_OFFER_MINUTES])],
+        ['key' => 'resaleSold', 'name' => 'Resale ticket sold', 'audience' => 'Attendee', 'trigger' => 'When a ticket listed on TicketRoom Exchange is bought', 'sample' => fn() => tpl('resaleSold', ['name' => 'Sipho', 'event' => $ev, 'amountCents' => 15000, 'method' => 'card', 'reference' => 'RP-7KQ2M9PX'])],
+        ['key' => 'resalePaid', 'name' => 'Resale money paid', 'audience' => 'Attendee', 'trigger' => 'When a seller is paid for a resold ticket', 'sample' => fn() => tpl('resalePaid', ['name' => 'Sipho', 'event' => $ev, 'amountCents' => 15000, 'reference' => 'RP-7KQ2M9PX', 'method' => 'eft', 'bank' => 'FNB ••••4321'])],
+        ['key' => 'friendTopup', 'name' => 'Topped up by a friend', 'audience' => 'Attendee', 'trigger' => "When a friend's card top-up of your balance is confirmed", 'sample' => fn() => tpl('friendTopup', ['name' => 'Zanele', 'fromName' => 'Sipho Ndlovu', 'event' => $ev, 'amountCents' => 20000, 'balanceCents' => 20000])],
+        ['key' => 'friendTopupSent', 'name' => 'You topped up a friend', 'audience' => 'Attendee', 'trigger' => "When your top-up of a friend's balance is confirmed", 'sample' => fn() => tpl('friendTopupSent', ['name' => 'Sipho', 'friendName' => 'Zanele Khumalo', 'event' => $ev, 'amountCents' => 20000, 'reference' => 'TU-7KQ2M9PX'])],
+        ['key' => 'friendInvite', 'name' => 'Invite to get topped up', 'audience' => 'Everyone', 'trigger' => 'When someone wants to top up a friend who has no account yet', 'sample' => fn() => tpl('friendInvite', ['fromName' => 'Sipho Ndlovu', 'event' => $ev, 'url' => "$B/account", 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
         ['key' => 'promotionConfirmed', 'name' => 'Promote receipt', 'audience' => 'Organiser', 'trigger' => 'When a Promote purchase is paid (card or balance)', 'sample' => fn() => tpl('promotionConfirmed', ['name' => 'Naledi', 'event' => $ev + ['ends_at' => $ev['starts_at']],
             'promotion' => ['reference' => 'PR-7KQ2M9XW', 'price_cents' => 150000, 'paid_with' => 'card', 'paid_at' => now_iso(), 'ends_at' => $ev['starts_at'], 'test' => 0]])],
         ['key' => 'promotionRefunded', 'name' => 'Promote refunded', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom refunds a Promote package (event cancelled)', 'sample' => fn() => tpl('promotionRefunded', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'amountCents' => 150000, 'toBalance' => false])],

@@ -11,7 +11,7 @@ let EVENT = null, cam = null, nfcAbort = null, mode = "gate", deskTicket = null;
 
 const VERDICT = {
   admitted: ["ok", "ADMIT"], already_used: ["no", "ALREADY SCANNED"], invalid: ["no", "NOT VALID"], test_ticket: ["no", "TEST TICKET"], wrong_event: ["warn", "WRONG EVENT"],
-  revoked: ["no", "REVOKED"], refunded: ["no", "REFUNDED"], event_not_live: ["warn", "NOT OPEN"], offline: ["warn", "NO CONNECTION"],
+  revoked: ["no", "REVOKED"], refunded: ["no", "REFUNDED"], resold: ["no", "RESOLD"], listed: ["no", "ON RESALE"], event_not_live: ["warn", "NOT OPEN"], offline: ["warn", "NO CONNECTION"],
 };
 // No answer, or the server too busy to answer: check against the phone's list.
 const unreachable = (err) => err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504;

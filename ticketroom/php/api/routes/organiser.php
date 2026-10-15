@@ -65,13 +65,13 @@ function org_dashboard(string $orgId): array
     $events = rows("SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.capacity,
                            COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0) AS sold,
                            e.is_free, (SELECT count(*) FROM ticket_types WHERE event_id = e.id) AS ticket_types,
-                           COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . " AND test = 0),0) AS revenue_cents,
-                           COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . " AND test = 0),0) AS organiser_fee_cents
+                           COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL),0) AS revenue_cents,
+                           COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL),0) AS organiser_fee_cents
                       FROM events e WHERE e.organiser_id = ? ORDER BY e.starts_at DESC", [$orgId]);
     foreach ($events as &$e) foreach (['sold', 'revenue_cents', 'organiser_fee_cents', 'capacity', 'ticket_types'] as $k) $e[$k] = (int) $e[$k];
     unset($e);
     $last7 = row("SELECT COALESCE(SUM(o.subtotal_cents - o.discount_cents),0) AS revenue_cents, COUNT(*) AS orders
-                    FROM orders o JOIN events e ON e.id = o.event_id WHERE e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 AND o.paid_at > ?", [$orgId, iso_in(-7 * 86400)]);
+                    FROM orders o JOIN events e ON e.id = o.event_id WHERE e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 AND o.resale_listing_id IS NULL AND o.paid_at > ?", [$orgId, iso_in(-7 * 86400)]);
     $now = now_iso();
     return [
         'events' => $events,
@@ -90,24 +90,24 @@ function org_dashboard(string $orgId): array
 function org_event_analytics(array $event): array
 {
     $id = $event['id'];
-    $tr = row("SELECT COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN 1 ELSE 0 END),0) AS orders,
-                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN subtotal_cents - discount_cents ELSE 0 END),0) AS ticket_revenue_cents,
-                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN fee_cents ELSE 0 END),0) AS fees_cents,
-                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 THEN organiser_fee_cents ELSE 0 END),0) AS organiser_fee_cents,
+    $tr = row("SELECT COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL THEN 1 ELSE 0 END),0) AS orders,
+                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL THEN subtotal_cents - discount_cents ELSE 0 END),0) AS ticket_revenue_cents,
+                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL THEN fee_cents ELSE 0 END),0) AS fees_cents,
+                      COALESCE(SUM(CASE WHEN status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL THEN organiser_fee_cents ELSE 0 END),0) AS organiser_fee_cents,
                       COALESCE(SUM(refunded_cents),0) AS refunded_cents,
                       COALESCE(SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END),0) AS abandoned,
                       COALESCE(SUM(CASE WHEN status = 'pending_payment' THEN 1 ELSE 0 END),0) AS pending
-                 FROM orders WHERE event_id = ?", [$id]);
+                 FROM orders WHERE event_id = ? AND resale_listing_id IS NULL", [$id]);
     $tr = array_map('intval', $tr);
 
     // Last 30 days (UTC dates), oldest first, every day present.
     $since = gmdate('Y-m-d', time() - 29 * 86400);
     $tick = [];
     foreach (rows("SELECT substr(o.paid_at,1,10) AS d, SUM(oi.quantity) AS n FROM orders o JOIN order_items oi ON oi.order_id = o.id
-                    WHERE o.event_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 AND o.paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $tick[$r['d']] = (int) $r['n'];
+                    WHERE o.event_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 AND o.resale_listing_id IS NULL AND o.paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $tick[$r['d']] = (int) $r['n'];
     $rev = [];
     foreach (rows("SELECT substr(paid_at,1,10) AS d, SUM(subtotal_cents - discount_cents) AS c FROM orders
-                    WHERE event_id = ? AND status IN " . ORG_PAID . " AND test = 0 AND paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $rev[$r['d']] = (int) $r['c'];
+                    WHERE event_id = ? AND status IN " . ORG_PAID . " AND test = 0 AND resale_listing_id IS NULL AND paid_at >= ? GROUP BY 1", [$id, $since]) as $r) $rev[$r['d']] = (int) $r['c'];
     $daily = [];
     for ($i = 29; $i >= 0; $i--) {
         $d = gmdate('Y-m-d', time() - $i * 86400);
@@ -115,7 +115,10 @@ function org_event_analytics(array $event): array
     }
 
     $byType = rows("SELECT tt.id, tt.name, tt.kind, tt.admits, tt.price_cents, tt.quantity_total, tt.quantity_sold, tt.quantity_held,
-                           (SELECT count(*) FROM tickets t WHERE t.ticket_type_id = tt.id AND t.status = 'used') AS checked_in
+                           (SELECT count(*) FROM tickets t WHERE t.ticket_type_id = tt.id AND t.status = 'used') AS checked_in,
+                           (SELECT count(*) FROM waitlist_entries w WHERE w.ticket_type_id = tt.id AND w.status IN ('waiting','offered')) AS waiting,
+                           (SELECT count(*) FROM resale_listings r WHERE r.ticket_type_id = tt.id AND r.status IN ('active','offered','held')) AS on_resale,
+                           (SELECT count(*) FROM resale_listings r WHERE r.ticket_type_id = tt.id AND r.status = 'sold') AS resold
                       FROM ticket_types tt WHERE tt.event_id = ? ORDER BY tt.sort_order, tt.price_cents", [$id]);
     $checkins = row("SELECT COALESCE(SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END),0) AS admitted,
                             COALESCE(SUM(CASE WHEN status IN ('valid','used') THEN 1 ELSE 0 END),0) AS issued FROM tickets WHERE event_id = ?", [$id]);
@@ -149,7 +152,7 @@ function org_event_shape(bool $partial = false): array
         'startsAt' => R::date($o), 'endsAt' => R::date($o), 'doorsOpenAt' => R::date(['optional' => true]), 'capacity' => R::int(['min' => 1, 'max' => 200000] + $o),
         'salesStartAt' => R::date(['optional' => true]), 'salesEndAt' => R::date(['optional' => true]),
         'refundPolicy' => R::text(['optional' => true, 'max' => 2000]), 'accessibilityInfo' => R::text(['optional' => true, 'max' => 2000]), 'ageRestriction' => R::str(['optional' => true, 'max' => 60]),
-        'transfersEnabled' => org_bool(), 'cashlessEnabled' => org_bool(), 'imageUploadId' => R::uuid(['optional' => true]),
+        'transfersEnabled' => org_bool(), 'resaleEnabled' => org_bool(), 'cashlessEnabled' => org_bool(), 'imageUploadId' => R::uuid(['optional' => true]),
         'isFree' => org_bool(), 'ageGroups' => R::arr(R::oneOf(array_keys(AGE_GROUPS)), ['optional' => true, 'max' => 8]),
         'lineup' => R::text(['optional' => true, 'max' => 4000]),
     ];
@@ -188,7 +191,7 @@ function org_age_groups(array $b, ?string $restriction): array
 const ORG_EVENT_COLS = ['title' => 'title', 'summary' => 'summary', 'description' => 'description', 'category' => 'category', 'venueName' => 'venue_name', 'address' => 'address',
     'city' => 'city', 'province' => 'province', 'startsAt' => 'starts_at', 'endsAt' => 'ends_at', 'doorsOpenAt' => 'doors_open_at', 'capacity' => 'capacity',
     'salesStartAt' => 'sales_start_at', 'salesEndAt' => 'sales_end_at', 'refundPolicy' => 'refund_policy', 'accessibilityInfo' => 'accessibility_info',
-    'ageRestriction' => 'age_restriction', 'transfersEnabled' => 'transfers_enabled', 'cashlessEnabled' => 'cashless_enabled', 'imageUploadId' => 'image_upload_id', 'isFree' => 'is_free',
+    'ageRestriction' => 'age_restriction', 'transfersEnabled' => 'transfers_enabled', 'resaleEnabled' => 'resale_enabled', 'cashlessEnabled' => 'cashless_enabled', 'imageUploadId' => 'image_upload_id', 'isFree' => 'is_free',
     'ageGroups' => 'age_groups', 'lineup' => 'lineup'];
 
 function org_assert_upload(string $orgId, ?string $uploadId): void
@@ -578,7 +581,8 @@ route('GET', '/api/organiser/:orgId/events/:eventId', function ($a) {
     unset($l);
     return [
         'event' => $event, 'role' => $role,
-        'ticketTypes' => rows('SELECT * FROM ticket_types WHERE event_id = ? ORDER BY sort_order, price_cents', [$event['id']]),
+        'ticketTypes' => rows("SELECT tt.*, (SELECT count(*) FROM waitlist_entries w WHERE w.ticket_type_id = tt.id AND w.status IN ('waiting','offered')) AS waiting
+                                 FROM ticket_types tt WHERE tt.event_id = ? ORDER BY tt.sort_order, tt.price_cents", [$event['id']]),
         'promoCodes' => rows('SELECT * FROM promo_codes WHERE event_id = ? ORDER BY created_at DESC', [$event['id']]),
         'trackingLinks' => $links,
     ];
@@ -628,6 +632,8 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId', function ($a) {
             'body' => "{$u['fullName']} ({$u['email']}) edited a published event.\n\nEvent: {$event['title']}\nChanged: " . implode(', ', $changed) . "\nPage: " . base_url() . "/events/{$event['slug']}\n\nCheck it in Admin portal → All events; suspend it there if the change is not acceptable."]);
     }
     if (function_exists('kyc_recheck_live_event')) kyc_recheck_live_event($event['id']);
+    // Resale switched off: tickets up for resale come off TicketRoom Exchange.
+    if (array_key_exists('resaleEnabled', $b) && !$b['resaleEnabled'] && (int) $event['resale_enabled'] === 1) resale_close_event($u, $event['id'], 'resale_off');
     return ['event' => row('SELECT * FROM events WHERE id = ?', [$event['id']])];
 });
 

@@ -327,8 +327,14 @@ async function eventPage(slug) {
       ${ticketTypes.length ? ticketTypes.map((t) => html`<div class="tt"><div class="info"><div class="name">${t.name}</div>
           <div class="meta">${t.price_cents === 0 ? "Free" : html`${moneyExact(t.price_cents)} <span>+ ${moneyExact(t.fee_cents)} booking fee</span>`}${t.remaining === 0 ? " · Sold out" : t.remaining < 25 ? ` · Only ${t.remaining} left` : ""}</div>
           ${t.admits > 1 || TICKET_KINDS[t.kind]?.note ? html`<div class="meta">${[t.admits > 1 ? `Admits ${t.admits} people` : "", TICKET_KINDS[t.kind]?.note || ""].filter(Boolean).join(" · ")}</div>` : ""}
-          ${t.description ? html`<div class="meta">${t.description}</div>` : ""}</div>
+          ${t.description ? html`<div class="meta">${t.description}</div>` : ""}
+          ${t.remaining === 0 && !closed ? (t.on_waitlist ? html`<p class="wl-on" role="status">You're on the waitlist. We'll email you when one comes up.</p>`
+            : html`<button type="button" class="btn btn-ghost btn-sm wl-join" data-wl="${t.id}">Join the waitlist</button>`) : ""}</div>
         <div class="stepper" role="group" aria-label="${t.name} quantity"><button data-dec="${t.id}" aria-label="Fewer ${t.name}" ${raw(qty[t.id] === 0 ? "disabled" : "")}>−</button><output aria-live="polite">${qty[t.id]}</output><button data-inc="${t.id}" aria-label="More ${t.name}" ${raw(closed || qty[t.id] >= Math.min(t.per_order_limit, t.remaining) ? "disabled" : "")}>+</button></div></div>`) : html`<p class="muted">No tickets available.</p>`}
+      ${e.resale?.length ? html`<section class="resale-box" aria-labelledby="rs-h"><h3 id="rs-h">Resale tickets</h3>
+        <p class="small muted">Sold out, but these fans can't make it. Every resale ticket costs no more than they paid, and you get a brand new ticket with its own code.</p>
+        ${e.resale.map((l) => html`<div class="tt resale-tt"><div class="info"><div class="name">${l.ticketType}</div><div class="meta">${moneyExact(l.priceCents)} <span>+ ${moneyExact(l.feeCents)} booking fee</span></div></div>
+          <button type="button" class="btn btn-primary btn-sm" data-resale="${l.id}">Buy</button></div>`)}</section>` : ""}
       <div class="totals"><div class="line"><span>${count} ticket${count === 1 ? "" : "s"}</span><span>${moneyExact(sub)}</span></div>
         <div class="line"><span>Booking fee</span><span>${moneyExact(fee)}</span></div>
         <div class="line total"><span>Total</span><span>${moneyExact(sub + fee)}</span></div></div>
@@ -339,6 +345,55 @@ async function eventPage(slug) {
     $$("[data-dec]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.dec]--; drawSelect(); $(`[data-dec="${b.dataset.dec}"]`, box)?.focus(); }));
     // No account needed: signed-in people check out as themselves, anyone else as a guest.
     $("[data-continue]", box).addEventListener("click", async () => drawCheckout(await me()));
+    $$("[data-wl]", box).forEach((b) => b.addEventListener("click", () => joinWaitlist(ticketTypes.find((t) => t.id === b.dataset.wl))));
+    $$("[data-resale]", box).forEach((b) => b.addEventListener("click", async () => drawResale(e.resale.find((l) => l.id === b.dataset.resale), await me())));
+  };
+
+  // Waitlist: signed-in customers join in one tap; anyone else gives a name and email.
+  const customer = (u) => u && (u.account_type || "customer") === "customer";
+  const joinWaitlist = async (t) => {
+    const u = await me();
+    const done = (r) => { t.on_waitlist = true; drawSelect(); toast(r.waitlist.already ? "You're already on the waitlist." : `You're on the waitlist, number ${r.waitlist.position} in line. We'll email you when a ticket comes up.`, "good"); };
+    if (customer(u)) { try { done(await post(`/api/public/events/${slug}/waitlist`, { ticketTypeId: t.id })); } catch (err) { toast(err.message, "bad"); } return; }
+    const d = dialog(`Waitlist: ${t.name}`, html`<form class="stack"><p class="mb-0">When a ${t.name} ticket comes up, we email you a private link that holds it for you for half an hour. First in line, first offered.</p>
+      <div class="field"><label for="wl-name">Your name</label><input id="wl-name" name="fullName" autocomplete="name" required maxlength="120"></div>
+      <div class="field"><label for="wl-email">Email</label><input id="wl-email" name="email" type="email" autocomplete="email" required></div>
+      <button class="btn btn-primary btn-block">Join the waitlist</button><p class="tiny muted mb-0">We only use your email for this waitlist. You can leave it any time from the link we send.</p></form>`);
+    onSubmit($("form", d), async (v) => { const r = await post(`/api/public/events/${slug}/waitlist`, { ticketTypeId: t.id, ...v }); d.close(); done(r); });
+  };
+
+  // Pay for a resale ticket, or for a ticket held by a waitlist offer.
+  const go = (res) => {
+    const k = res.accessKey ? `?k=${encodeURIComponent(res.accessKey)}` : "";
+    if (res.payment?.redirectUrl && res.order.status === "pending_payment") location.href = res.payment.redirectUrl;
+    else location.href = `/orders/${res.order.reference}${k}`;
+  };
+  const drawResale = (l, u, offer = null) => {
+    const key = sessionStorage.getItem(`tr_idem_rs_${l.id}`) || idem();
+    sessionStorage.setItem(`tr_idem_rs_${l.id}`, key);
+    const asGuest = !customer(u) && !offer;
+    render(box, html`<div class="steps"><span>Tickets</span><span aria-current="step">Checkout</span><span>Payment</span></div>
+      <h2 id="tix-h">${offer ? "Your ticket is held" : "Resale ticket"}</h2>
+      ${offer ? html`<p class="callout good mb-0" role="status">We're holding this ticket for you until <strong>${fmtTime(offer.expiresAt)}</strong>. After that it goes to the next person in line.</p>` : ""}
+      <div class="totals"><div class="line"><span>1 × ${l.ticketType}${offer?.kind === "resale" || !offer ? " (resale)" : ""}</span><span>${moneyExact(l.priceCents)}</span></div>
+        <div class="line"><span>Booking fee</span><span>${moneyExact(l.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(l.priceCents + l.feeCents)}</span></div></div>
+      <form class="stack mt" id="rpay">
+        ${customer(u) ? html`<p class="small mb-0">Your ticket goes to <strong>${u.email}</strong>.</p>` : offer ? html`<p class="small mb-0">Your ticket goes to <strong>${offer.email}</strong>, the email you joined the waitlist with.</p>`
+        : html`<fieldset class="stack card flat"><legend class="label">Your details</legend>
+          <div class="field"><label for="r-name">Full name</label><input id="r-name" name="gName" autocomplete="name" required maxlength="120"></div>
+          <div class="field"><label for="r-email">Email</label><input id="r-email" name="gEmail" type="email" autocomplete="email" required><span class="hint">Your ticket is sent here.</span></div></fieldset>`}
+        ${!offer || offer.kind === "resale" ? html`<p class="small muted mb-0">A new ticket with its own QR code is made for you when you pay. The seller's old code stops working.</p>` : ""}
+        ${cfg.paymentsTest ? html`<p class="callout warn mb-0"><strong>Test mode.</strong> Payments are being tested, so no real money moves and tickets are marked TEST. They will not get you in.</p>` : ""}
+        <button class="btn btn-primary btn-block" type="submit">Pay ${moneyExact(l.priceCents + l.feeCents)}</button>
+        <button class="btn btn-link btn-block" type="button" data-back>Back to tickets</button></form>`);
+    $("[data-back]", box).addEventListener("click", () => { history.replaceState(null, "", location.pathname); drawSelect(); });
+    onSubmit($("#rpay"), async (v) => {
+      const res = offer && offer.kind === "primary"
+        ? await post("/api/public/orders", { eventSlug: slug, items: [{ ticketTypeId: offer.ticketType.id, quantity: 1 }], idempotencyKey: key, waitlistOffer: offer.token })
+        : await post(`/api/public/resale/${l.id}/orders`, { idempotencyKey: key, ...(offer ? { offer: offer.token } : {}), ...(asGuest ? { guest: { fullName: v.gName, email: v.gEmail } } : {}) });
+      sessionStorage.removeItem(`tr_idem_rs_${l.id}`);
+      go(res);
+    });
   };
 
   const drawCheckout = async (u, promo = "") => {
@@ -413,6 +468,25 @@ async function eventPage(slug) {
       else location.href = `/orders/${res.order.reference}${k}`;
     });
   };
+  // A link from a waitlist email: the offered ticket, held for this person.
+  const qp = new URLSearchParams(location.search);
+  if (qp.get("leave")) {
+    try { await post("/api/public/waitlist/leave", { token: qp.get("leave") }); toast("You've left the waitlist.", "good"); } catch (err) { toast(err.message, "bad"); }
+    history.replaceState(null, "", location.pathname);
+  }
+  if (qp.get("offer")) {
+    try {
+      const { offer } = await get(`/api/public/waitlist/offer?t=${encodeURIComponent(qp.get("offer"))}`);
+      drawResale({ id: offer.listingId || offer.ticketType.id, ticketType: offer.ticketType.name, priceCents: offer.priceCents, feeCents: offer.feeCents }, await me(), { ...offer, token: qp.get("offer") });
+      $("#box").scrollIntoView({ block: "start" });
+      return;
+    } catch (err) {
+      drawSelect();
+      box.insertAdjacentHTML("afterbegin", `<p class="callout warn" role="status"></p>`);
+      $(".callout", box).textContent = err.message;
+      return;
+    }
+  }
   drawSelect();
 }
 

@@ -131,6 +131,7 @@ export function check(value, gate) {
   if (!t) return { outcome: "invalid", message: "Not on this event's ticket list." };
   const [version, st, name, type, multi] = t;
   if (p.version !== null && p.version !== version) return { outcome: "invalid", message: "This QR code was replaced. Ask for the current ticket.", holderName: name };
+  if (st === 0 && type === "Resold") return { outcome: "resold", message: "This ticket was resold on TicketRoom Exchange. The new owner has a new code.", holderName: name };
   if (st === 2) return { outcome: "already_used", message: "Already scanned.", holderName: name, ticketType: type };
   if (st !== 1) return { outcome: "invalid", message: "This ticket is no longer valid.", holderName: name, ticketType: type };
   if (!multi) t[1] = 2;
