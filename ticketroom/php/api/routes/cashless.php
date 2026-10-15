@@ -55,6 +55,7 @@ route('GET', '/api/me/wallets/:eventId', function ($a) {
         'history' => wallet_history($u['id'], $ev['id']),
         'limits' => cashless_limits() + ['topupFeeCents' => 0, 'refundFeeCents' => 0],
         'tags' => array_values(array_filter(tags_for_user($u['id']), fn($t) => $t['event_id'] === $ev['id'] && $t['status'] === 'active')),
+        'cashout' => cashout_options($u, $ev),
     ];
 });
 
@@ -413,9 +414,13 @@ route('GET', '/api/admin/cashless', function () {
                            (SELECT COALESCE(SUM(amount_cents),0) FROM wallet_topups t WHERE t.event_id = e.id AND t.status = 'confirmed' AND t.test = 0) AS topups_cents,
                            (SELECT COALESCE(SUM(balance_cents),0) FROM cashless_wallets w WHERE w.event_id = e.id) AS outstanding_cents,
                            (SELECT COALESCE(SUM(amount_cents),0) FROM refunds r WHERE r.event_id = e.id AND r.kind = 'wallet_balance' AND r.status IN ('requested','processing','manual_pending','failed')) AS refunds_pending_cents,
-                           (SELECT COALESCE(SUM(amount_cents),0) FROM refunds r WHERE r.event_id = e.id AND r.kind = 'wallet_balance' AND r.status = 'completed') AS refunded_cents
+                           (SELECT COALESCE(SUM(amount_cents),0) FROM refunds r WHERE r.event_id = e.id AND r.kind = 'wallet_balance' AND r.status = 'completed') AS refunded_cents,
+                           (SELECT COALESCE(SUM(amount_cents),0) FROM desk_topups d WHERE d.event_id = e.id AND d.status = 'confirmed' AND d.test = 0 AND d.method = 'cash') AS desk_cash_cents,
+                           (SELECT COALESCE(SUM(amount_cents),0) FROM desk_topups d WHERE d.event_id = e.id AND d.status = 'confirmed' AND d.test = 0 AND d.method = 'card') AS desk_card_cents,
+                           (SELECT COALESCE(SUM(amount_cents),0) FROM wallet_cashouts c WHERE c.event_id = e.id AND c.status = 'paid' AND c.test = 0 AND c.method = 'cash') AS cashed_out_cash_cents,
+                           (SELECT COALESCE(SUM(amount_cents),0) FROM wallet_cashouts c WHERE c.event_id = e.id AND c.status = 'paid' AND c.test = 0 AND c.method = 'eft') AS cashed_out_eft_cents
                       FROM events e JOIN organisers o ON o.id = e.organiser_id
                      WHERE e.cashless_enabled = 1 OR EXISTS (SELECT 1 FROM cashless_wallets w WHERE w.event_id = e.id) ORDER BY e.starts_at DESC LIMIT 200");
-    foreach ($events as &$e) foreach (['topups_cents', 'outstanding_cents', 'refunds_pending_cents', 'refunded_cents'] as $k) $e[$k] = (int) $e[$k];
+    foreach ($events as &$e) foreach (['topups_cents', 'outstanding_cents', 'refunds_pending_cents', 'refunded_cents', 'desk_cash_cents', 'desk_card_cents', 'cashed_out_cash_cents', 'cashed_out_eft_cents'] as $k) $e[$k] = (int) $e[$k];
     return ['events' => $events, 'vendors' => vendor_settlement_rows('1 = 1', []), 'commissionCents' => -ledger_balance(CASHLESS_COMMISSION)];
 });

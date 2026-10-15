@@ -15,6 +15,7 @@ require TR_APP . '/lib/wallet.php';
 require TR_APP . '/lib/integrations.php';
 require TR_APP . '/lib/payments.php';
 require TR_APP . '/lib/cashless.php';
+require TR_APP . '/lib/cashdesk.php';
 require TR_APP . '/lib/verification.php';
 
 // The data folder holds everything the site creates for itself: the
@@ -158,7 +159,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -275,6 +276,9 @@ const UPGRADES = [
         'ALTER TABLE users ADD COLUMN phone_verified_at TEXT',
         'CREATE TABLE IF NOT EXISTS phone_codes (user_id TEXT PRIMARY KEY REFERENCES users(id), phone TEXT NOT NULL, code_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)',
     ],
+    // Cashless in person: top-up desk, cash-up, guest cash-outs (EFT or cash
+    // at the venue). Only its own tables, created if missing.
+    17 => ['@cashdesk'],
 ];
 // The verification tables, exactly as written at the end of schema.sql.
 function tr_verification_tables(): void
@@ -322,7 +326,7 @@ function tr_upgrade(): void
             if (in_array($v, $done, true)) continue;
             foreach ($steps as $sql) {
                 try {
-                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), default => db()->exec($sql) };
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@cashdesk' => tr_upgrade_cashdesk(), default => db()->exec($sql) };
                 } catch (PDOException $e) {
                     if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
                 }
@@ -370,6 +374,8 @@ function jobs(): array
         ['complete-events', 900, fn() => q("UPDATE events SET status = 'completed', updated_at = ? WHERE status = 'published' AND ends_at < ?", [now_iso(), iso_in(-2 * 86400)])],
         // Unused cashless balances go up for refund a couple of days after the event.
         ['cashless-leftover-refunds', 3600, fn() => cashless_auto_refunds()],
+        // One email after a cashless event to everyone with money left: cash it out in one tap.
+        ['cashout-reminders', 1800, fn() => cashout_reminders()],
         ['expire-transfers', 900, fn() => q("UPDATE ticket_transfers SET status = 'expired' WHERE status = 'pending' AND expires_at < ?", [now_iso()])],
         ['retention', 21600, function () {
             q('DELETE FROM sessions WHERE expires_at < ? OR revoked_at < ?', [iso_in(-30 * 86400), iso_in(-30 * 86400)]);

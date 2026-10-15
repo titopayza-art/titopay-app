@@ -841,6 +841,73 @@ CREATE UNIQUE INDEX IF NOT EXISTS refunds_one_pos_sale ON refunds (pos_sale_id) 
 CREATE INDEX IF NOT EXISTS payouts_vendor_idx ON payouts (vendor_id, status);
 -- cashless:end
 
+-- cashdesk:begin
+-- Top-ups and cash-outs in person (upgrade 17 runs this same block, so every
+-- statement here must be safe to repeat). Money taken at a desk is held by
+-- the organiser (ledger organiser:<org>:event:<ev>:desk_cash / :desk_card)
+-- and comes off what TicketRoom pays them; cash paid out at the cash-out
+-- desk goes back on.
+CREATE TABLE IF NOT EXISTS cashless_event_settings (
+  event_id             TEXT PRIMARY KEY REFERENCES events(id),
+  cashout_desk_open    INTEGER NOT NULL DEFAULT 0,
+  desk_daily_cap_cents INTEGER CHECK (desk_daily_cap_cents IS NULL OR desk_daily_cap_cents > 0),
+  updated_by           TEXT REFERENCES users(id),
+  updated_at           TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS desk_topups (
+  id              TEXT PRIMARY KEY,
+  reference       TEXT NOT NULL UNIQUE,
+  event_id        TEXT NOT NULL REFERENCES events(id),
+  organiser_id    TEXT NOT NULL REFERENCES organisers(id),
+  user_id         TEXT NOT NULL REFERENCES users(id),
+  tag_id          TEXT REFERENCES tags(id),
+  method          TEXT NOT NULL CHECK (method IN ('cash','card')),
+  amount_cents    INTEGER NOT NULL CHECK (amount_cents > 0),
+  status          TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed','undone','reversed')),
+  staff_id        TEXT NOT NULL REFERENCES users(id),
+  staff_kind      TEXT NOT NULL CHECK (staff_kind IN ('organiser','event_staff','ticketroom')),
+  idempotency_key TEXT NOT NULL,
+  test            INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL,
+  undone_at       TEXT,
+  undone_by       TEXT REFERENCES users(id),
+  undo_reason     TEXT,
+  UNIQUE (staff_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS desk_topups_event_idx ON desk_topups (event_id, staff_id, created_at);
+CREATE INDEX IF NOT EXISTS desk_topups_user_idx ON desk_topups (user_id, event_id);
+-- A guest's balance paid out by EFT (finance pays) or as cash at the venue's
+-- cash-out desk (the guest shows a code). Card cash-outs are refunds.
+CREATE TABLE IF NOT EXISTS wallet_cashouts (
+  id                  TEXT PRIMARY KEY,
+  reference           TEXT NOT NULL UNIQUE,
+  event_id            TEXT NOT NULL REFERENCES events(id),
+  user_id             TEXT NOT NULL REFERENCES users(id),
+  method              TEXT NOT NULL CHECK (method IN ('eft','cash')),
+  amount_cents        INTEGER NOT NULL CHECK (amount_cents > 0),
+  fee_cents           INTEGER NOT NULL DEFAULT 0 CHECK (fee_cents >= 0),
+  test                INTEGER NOT NULL DEFAULT 0,
+  status              TEXT NOT NULL CHECK (status IN ('requested','approved_once','approved','paid','rejected','cancelled')),
+  bank_account_holder TEXT,
+  bank_name           TEXT,
+  bank_branch_code    TEXT,
+  bank_account_enc    TEXT,
+  bank_account_last4  TEXT,
+  code_hash           TEXT UNIQUE,
+  code_enc            TEXT,
+  first_approved_by   TEXT REFERENCES users(id),
+  approved_by         TEXT REFERENCES users(id),
+  paid_by             TEXT REFERENCES users(id),
+  bank_reference      TEXT,
+  note                TEXT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  paid_at             TEXT
+);
+CREATE INDEX IF NOT EXISTS wallet_cashouts_status_idx ON wallet_cashouts (status, created_at);
+CREATE INDEX IF NOT EXISTS wallet_cashouts_user_idx ON wallet_cashouts (user_id, event_id);
+-- cashdesk:end
+
 -- Organiser verification (FICA / KYC). Kept in its own tables: documents
 -- live encrypted in the data folder's private/ folder, never in public_html.
 -- (bootstrap.php's upgrade 12 runs everything from this comment down.)

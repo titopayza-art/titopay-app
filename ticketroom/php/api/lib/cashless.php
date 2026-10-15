@@ -366,7 +366,11 @@ function wallet_history(string $userId, string $eventId): array
            SELECT 'refund', r.reference, CASE WHEN r.kind = 'pos_sale' THEN r.amount_cents ELSE -r.amount_cents END, r.status, r.created_at, NULL,
                   CASE WHEN r.kind = 'pos_sale' THEN (SELECT s.test FROM pos_sales s WHERE s.id = r.pos_sale_id) ELSE (SELECT p.environment <> 'live' FROM payments p WHERE p.id = r.payment_id) END
              FROM refunds r WHERE r.user_id = ? AND r.event_id = ? AND r.kind IN ('pos_sale','wallet_balance')
-         ) ORDER BY created_at DESC LIMIT 200", [$userId, $eventId, $userId, $eventId, $userId, $eventId]));
+           UNION ALL
+           SELECT 'desk_topup', reference, amount_cents, status, created_at, method, test FROM desk_topups WHERE user_id = ? AND event_id = ?
+           UNION ALL
+           SELECT 'cashout', reference, -(amount_cents + fee_cents), status, created_at, method, test FROM wallet_cashouts WHERE user_id = ? AND event_id = ?
+         ) ORDER BY created_at DESC LIMIT 200", [$userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId]));
 }
 
 // ============================================================== top-ups
@@ -473,21 +477,19 @@ function wallet_refund_request(array $u, string $eventId, string $reason = 'Unus
     return tx(function () use ($u, $eventId, $reason) {
         $ev = row('SELECT * FROM events WHERE id = ?', [$eventId]);
         if (!$ev) throw not_found('Event not found.');
-        if (to_unix($ev['ends_at']) > microtime(true) && $ev['status'] !== 'cancelled') throw conflict('You can ask for your unused balance back once the event is over.', 'event_not_ended');
+        if (!cashout_open($ev)) throw conflict('You can ask for your unused balance back once the event is over.', 'event_not_ended');
         $w = wallet_get($u['id'], $eventId);
         if ((int) $w['balance_cents'] + (int) $w['test_balance_cents'] <= 0) throw conflict('There is no balance to refund.', 'nothing_to_refund');
         $made = [];
         foreach ([false, true] as $test) {
-            $amount = (int) ($test ? $w['test_balance_cents'] : $w['balance_cents']);
+            // Only money paid online by card goes back to a card; the rest
+            // (cash or card at the desk) goes back as cash or by EFT.
+            $amount = min((int) ($test ? $w['test_balance_cents'] : $w['balance_cents']), wallet_card_refundable($u['id'], $eventId, $test));
             if ($amount <= 0) continue;
             if (!wallet_debit($u['id'], $eventId, $amount, $test)) throw conflict('Your balance just changed. Please try again.', 'balance_changed');
             $left = $amount;
-            $pays = rows("SELECT p.* FROM payments p JOIN wallet_topups t ON t.id = p.topup_id
-                           WHERE t.user_id = ? AND t.event_id = ? AND p.purpose = 'topup' AND p.status IN ('confirmed','partially_refunded') AND (p.environment <> 'live') = ?
-                           ORDER BY p.confirmed_at DESC, p.created_at DESC", [$u['id'], $eventId, $test ? 1 : 0]);
-            foreach ($pays as $p) {
-                $held = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM refunds WHERE payment_id = ? AND status IN ('requested','processing','manual_pending','failed')", [$p['id']]);
-                $take = min($left, (int) $p['amount_cents'] - (int) $p['refunded_cents'] - $held);
+            foreach (wallet_card_payments($u['id'], $eventId, $test) as $p) {
+                $take = min($left, $p['room']);
                 if ($take <= 0) continue;
                 $now = now_iso();
                 $made[] = insert('refunds', ['id' => uuid(), 'reference' => reference('RF'), 'order_id' => null, 'payment_id' => $p['id'], 'amount_cents' => $take, 'fee_refund_cents' => 0,
@@ -498,21 +500,39 @@ function wallet_refund_request(array $u, string $eventId, string $reason = 'Unus
             }
             if ($left > 0) throw new RuntimeException("wallet refund: {$left} cents not covered by top-ups for {$u['id']} / $eventId");
         }
+        if (!$made) throw conflict('This balance was topped up at the event, so it can only go back as cash at the cash-out desk or by EFT to your bank account.', 'no_card_money');
         audit('refund.requested', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $made[0]['id'], 'organiserId' => $ev['organiser_id'],
             'details' => ['kind' => 'wallet_balance', 'amount' => array_sum(array_column($made, 'amount_cents')), 'refunds' => array_column($made, 'reference')]]);
         return $made;
     });
 }
+// Online card top-ups that can still take a refund, newest first, with how much each can take.
+function wallet_card_payments(string $userId, string $eventId, bool $test): array
+{
+    $pays = rows("SELECT p.* FROM payments p JOIN wallet_topups t ON t.id = p.topup_id
+                   WHERE t.user_id = ? AND t.event_id = ? AND p.purpose = 'topup' AND p.status IN ('confirmed','partially_refunded') AND (p.environment <> 'live') = ?
+                   ORDER BY p.confirmed_at DESC, p.created_at DESC", [$userId, $eventId, $test ? 1 : 0]);
+    foreach ($pays as &$p) {
+        $held = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM refunds WHERE payment_id = ? AND status IN ('requested','processing','manual_pending','failed')", [$p['id']]);
+        $p['room'] = max(0, (int) $p['amount_cents'] - (int) $p['refunded_cents'] - $held);
+    }
+    return $pays;
+}
+function wallet_card_refundable(string $userId, string $eventId, bool $test): int
+{
+    return array_sum(array_column(wallet_card_payments($userId, $eventId, $test), 'room'));
+}
 // Nobody has to remember: a few days after a cashless event ends, every
 // balance still left is put up for refund automatically (background job).
 function cashless_auto_refunds(): int
 {
-    $days = (int) cfg('cashless.autoRefundAfterDays', 2);
+    $days = (int) cfg('cashless.autoRefundAfterDays', 14);
     if ($days < 0) return 0;
     $n = 0;
     $due = rows("SELECT w.user_id, w.event_id FROM cashless_wallets w JOIN events e ON e.id = w.event_id JOIN users u ON u.id = w.user_id
                   WHERE (w.balance_cents > 0 OR w.test_balance_cents > 0) AND e.ends_at < ? AND u.status <> 'deleted' LIMIT 200", [iso_in(-$days * 86400)]);
     foreach ($due as $w) {
+        if (wallet_card_refundable($w['user_id'], $w['event_id'], false) + wallet_card_refundable($w['user_id'], $w['event_id'], true) === 0) continue;
         try {
             wallet_refund_request(['id' => $w['user_id'], 'primaryRole' => 'system'], $w['event_id'], 'Unused cashless balance (automatic after the event)');
             $n++;
@@ -857,6 +877,8 @@ function cashless_ledger_check(): array
     $ledger = -(int) val("SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries WHERE account LIKE 'wallet:%'");
     $held = (int) val("SELECT COALESCE(SUM(r.amount_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id
                         WHERE r.kind = 'wallet_balance' AND p.environment = 'live' AND r.status IN ('requested','processing','manual_pending','failed')");
+    // Cash-outs by EFT or at the desk hold the money (amount and fee) until they are paid.
+    $held += (int) val("SELECT COALESCE(SUM(amount_cents + fee_cents),0) FROM wallet_cashouts WHERE test = 0 AND status IN ('requested','approved_once','approved')");
     $expected = (int) val('SELECT COALESCE(SUM(balance_cents),0) FROM cashless_wallets') + $held;
     return ['account' => 'wallets', 'ledgerCents' => $ledger, 'expectedCents' => $expected, 'ok' => $ledger === $expected];
 }

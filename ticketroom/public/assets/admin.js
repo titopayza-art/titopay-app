@@ -1,6 +1,7 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError } from "/assets/core.js";
+import { features, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError } from "/assets/core.js";
+import { deskPicker } from "/assets/cashdesk.js";
 
 const main = $("#main");
 let R = new Set();
@@ -159,7 +160,7 @@ const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { con
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
   render($("#sidenav"), html`<a href="#/">Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
+    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/wallets" data-feature="cashDesk">Wristbands & wallets</a><a href="#/support">Support${c(counts.support)}</a>
     <div class="sect" data-feature="finance" data-role-need="admin finance">Finance</div><a href="#/refunds" data-feature="finance" data-role-need="admin finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance" data-role-need="admin finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance" data-role-need="admin finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance" data-role-need="admin finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance" data-role-need="admin finance">Ledger</a>
     <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
@@ -334,6 +335,7 @@ async function refunds() {
       <td class="num">${moneyExact(r.amount_cents + r.fee_refund_cents)}</td><td>${badge(r.status)}</td>
       <td>${isF() && r.status === "requested" && !r.mine ? html`<div class="row"><button class="btn btn-good btn-sm" data-ok="${r.id}">Approve</button><button class="btn btn-ghost btn-sm" data-no="${r.id}">Reject</button></div>` : ""}
         ${isF() && r.status === "failed" ? html`<button class="btn btn-ghost btn-sm" data-retry="${r.id}">Retry</button>` : ""}${isF() && r.status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-manual="${r.id}">Mark paid manually</button>` : ""}${r.mine && r.status === "requested" ? html`<span class="tiny muted">yours — needs someone else</span>` : ""}</td></tr>`))}</div>`);
+  if ((await features()).cashDesk) main.insertAdjacentHTML("beforeend", '<div id="cos"></div>'), cashouts($("#cos"));
   $$("[data-f]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_rf", b.dataset.f); refunds(); }));
   $$("[data-ok]").forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/refunds/${b.dataset.ok}/decide`, { approve: true }), "Approved and processed.")) refunds(); }));
   $$("[data-no]").forEach((b) => b.addEventListener("click", async () => { const why = await reason("Reject refund", "The requester will see this note."); if (why && await act(() => post(`/api/admin/refunds/${b.dataset.no}/decide`, { approve: false, note: why }))) refunds(); }));
@@ -424,6 +426,34 @@ async function tags() {
   });
   $("#ts").addEventListener("submit", (e) => { e.preventDefault(); draw($("#tqq").value); });
   draw();
+}
+
+// Guests' cash-outs by EFT. Finance approves (two people above the limit),
+// sees the account number once (logged), pays it and records the reference.
+async function cashouts(box) {
+  const { cashouts: list, dualApprovalCents } = await get("/api/admin/cashouts");
+  const eft = list.filter((c) => c.method === "eft");
+  render(box, html`<h2 class="mt-lg">Wallet cash-outs by EFT</h2><p class="small muted">Guests asking for what was left on their cashless balance. Cash-outs of ${moneyExact(dualApprovalCents)} or more need two people in finance.</p>
+    ${tbl(["Ref", "Guest", "Event", "Bank", "#Amount", "Status", ""], eft.map((c) => html`<tr><td class="mono">${c.reference}${c.test ? html` <span class="badge warn">test</span>` : ""}</td><td>${c.guest_name}<div class="tiny muted">${c.guest_email}</div></td><td class="small">${c.event_title}</td>
+      <td class="small">${c.bank_name} ••••${c.bank_account_last4}<div class="tiny muted">${c.bank_account_holder}</div></td><td class="num">${moneyExact(c.amount_cents)}${c.fee_cents ? html`<div class="tiny muted">fee ${moneyExact(c.fee_cents)}</div>` : ""}</td>
+      <td>${badge(c.status === "approved_once" ? "needs second approval" : c.status)}${c.first_approved_by_name ? html`<div class="tiny muted">first: ${c.first_approved_by_name}</div>` : ""}</td>
+      <td>${isF() && ["requested", "approved_once"].includes(c.status) ? html`<div class="row"><button class="btn btn-good btn-sm" data-coa="${c.id}">Approve</button><button class="btn btn-ghost btn-sm" data-cor="${c.id}">Reject</button></div>` : ""}
+        ${isF() && c.status === "approved" ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-cov="${c.id}">Show account no.</button><button class="btn btn-dark btn-sm" data-cop="${c.id}">Mark paid</button></div>` : ""}</td></tr>`), "No EFT cash-outs.")}`);
+  $$("[data-coa]", box).forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/cashouts/${b.dataset.coa}/decide`, { approve: true }), "Approved.")) cashouts(box); }));
+  $$("[data-cor]", box).forEach((b) => b.addEventListener("click", async () => { const why = await reason("Reject cash-out", "The guest is emailed this reason and the money goes back on their balance."); if (why && await act(() => post(`/api/admin/cashouts/${b.dataset.cor}/decide`, { approve: false, note: why }))) cashouts(box); }));
+  $$("[data-cov]", box).forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/cashouts/${b.dataset.cov}/reveal-account`); dialog("Account number", html`<p class="mono">${r.accountNumber}</p><p class="small muted">This view is in the audit log.</p>`); } catch (err) { toast(err.message, "bad"); } }));
+  $$("[data-cop]", box).forEach((b) => b.addEventListener("click", async () => { const ref = await reason("Record the EFT", "Make the EFT from TicketRoom's bank first, then enter its reference.", "Bank reference"); if (ref && await act(() => post(`/api/admin/cashouts/${b.dataset.cop}/mark-paid`, { bankReference: ref }), "Cash-out marked as paid.")) cashouts(box); }));
+}
+
+// Wristbands & wallets: run a top-up or cash-out desk for any cashless event,
+// and see what came in and went out at each one.
+async function wallets() {
+  const fin = await get("/api/admin/cashless");
+  render(main, html`${head("Wristbands & wallets", "Top up a guest's wristband with cash or a card machine, pay out balances in cash, and see each event's cashless money.")}
+    ${tbl(["Event", "#Online top-ups", "#Desk cash", "#Desk card", "#Cashed out", "#Still on wallets"], fin.events.map((e) => html`<tr><td>${e.title}<div class="tiny muted">${e.organiser_name}</div></td><td class="num">${moneyExact(e.topups_cents)}</td>
+      <td class="num">${moneyExact(e.desk_cash_cents)}</td><td class="num">${moneyExact(e.desk_card_cents)}</td><td class="num">${moneyExact(e.cashed_out_cash_cents + e.cashed_out_eft_cents + e.refunded_cents)}</td><td class="num">${moneyExact(e.outstanding_cents)}</td></tr>`), "No cashless events yet.")}
+    <div id="desk" class="mt-lg"></div>`);
+  deskPicker($("#desk"), { title: "Run a desk", intro: "Choose the event. Every top-up is logged under your name." });
 }
 
 async function terminals() {
@@ -911,6 +941,6 @@ async function integrations() {
   await header($("#header"), { portal: "admin" });
   document.title = "Admin portal | TicketRoom";
   nav();
-  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
+  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/wallets", gate("cashDesk", wallets)], ["/support", support],
     ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();
