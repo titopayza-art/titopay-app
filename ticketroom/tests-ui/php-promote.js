@@ -122,7 +122,7 @@ const ledgerOk = async (a, label) => { const r = await a.get("/api/admin/reconci
     await org.goto(`${BASE}/organisers#/events/${ev1.id}/promote`);
     await org.getByRole("heading", { name: "Let your crowd know, loud and clear" }).waitFor();
     await org.getByText(/Test mode\./).waitFor();
-    for (const t of ["Unlimited email campaigns", "SMS campaigns", "Your event on our socials", "Results you can trust", "Seamless cashout"]) await org.locator(".promote-includes strong", { hasText: t }).waitFor();
+    for (const t of ["Unlimited email campaigns", "SMS campaigns", "Your event on our socials", "Results you can trust", "Quick cash-out"]) await org.locator(".promote-includes strong", { hasText: t }).waitFor();
     assert.equal(await org.locator("#main").evaluate((m) => /—/.test(m.innerText)), false, "no em dashes in the copy");
     await org.getByRole("button", { name: "Pay R1 500 by card" }).click();
     await org.waitForURL(/\/pay\?p=.*m=sandbox/);

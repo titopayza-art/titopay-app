@@ -118,7 +118,7 @@ function eventForm(e = {}) {
     <div class="grid-2"><div class="field"><label for="venueName">Venue</label><input id="venueName" name="venueName" required value="${e.venue_name || ""}"></div>
       <div class="field"><label for="address">Street address</label><input id="address" name="address" value="${e.address || ""}"></div></div>
     <div class="grid-2"><div class="field"><label for="city">City</label><input id="city" name="city" required value="${e.city || ""}"></div>
-      <div class="field"><label for="province">Province</label><select id="province" name="province"><option value="">—</option>${PROVINCES.map((p) => html`<option ${sel(p, e.province)}>${p}</option>`)}</select></div></div>
+      <div class="field"><label for="province">Province</label><select id="province" name="province"><option value="">–</option>${PROVINCES.map((p) => html`<option ${sel(p, e.province)}>${p}</option>`)}</select></div></div>
     <div class="field"><label for="description">Description</label><textarea id="description" name="description" maxlength="8000">${e.description || ""}</textarea></div>
     <div class="field"><label for="lineup">Line up <span class="muted">(optional)</span></label><textarea id="lineup" name="lineup" maxlength="4000" rows="4" placeholder="${"20:00 Black Coffee\n21:30 Sjava\nDJ Maphorisa"}">${lineupText(e.lineup)}</textarea>
       <span class="hint">One act per line, headliner first. Start a line with a time to show set times. Shown in the Line up tab and in Trending artists.</span></div>
@@ -374,7 +374,7 @@ async function attendeesTab(el, d) {
     const checkedIn = r.checkedIn ?? list.filter((a) => a.status === "used").length;
     $("#att-sum").textContent = `${total.toLocaleString("en-ZA")} ticket${total === 1 ? "" : "s"} · ${checkedIn.toLocaleString("en-ZA")} checked in`;
     render($("#att-list"), html`${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Holder</th><th>Ticket</th><th>Code</th><th>Order</th><th>Status</th><th>Checked in</th></tr></thead><tbody>
-      ${list.map((a) => html`<tr><td>${a.holder_name || "—"}</td><td>${a.ticket_type}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty(q ? "No tickets match that search." : "No attendees yet.")}
+      ${list.map((a) => html`<tr><td>${a.holder_name || "–"}</td><td>${a.ticket_type}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty(q ? "No tickets match that search." : "No attendees yet.")}
       ${page > 1 || r.more ? html`<div class="row between mt"><button class="btn btn-ghost btn-sm" data-pg="-1" ${raw(page > 1 ? "" : "disabled")}>Previous</button><span class="small muted">Page ${page}</span><button class="btn btn-ghost btn-sm" data-pg="1" ${raw(r.more ? "" : "disabled")}>Next</button></div>` : ""}`);
     $("#att-list").querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => { page += Number(b.dataset.pg); draw(); }));
   }
@@ -658,7 +658,7 @@ const PROMOTE_INCLUDES = (sms) => [
   ["SMS campaigns", sms ? "Text the same opted-in crowd. Each SMS holds up to 160 characters and carries an opt-out link." : "Text your opted-in crowd as soon as TicketRoom switches SMS on. Email works from day one."],
   ["Your event on our socials", "Send us a caption, the dates you want and your links. We post it on TicketRoom's social media and tell you when it is live."],
   ["Results you can trust", "Messages sent, clicks, tickets and revenue for every campaign, day by day. We only show what we can measure."],
-  ["Seamless cashout", "Pay by card, or straight from your available ticket balance. No invoice, no waiting."],
+  ["Quick cash-out", "Pay by card, or straight from your available ticket balance. No invoice, no waiting."],
 ];
 const PROMOTE_FAQ = (r) => [
   ["Who gets my messages?", "Only people who bought tickets from you and ticked the box to hear from you. Every message has an unsubscribe or opt-out link, as POPIA requires."],
@@ -917,7 +917,7 @@ async function verification() {
   render(main, html`${head("Verification", "FICA requires us to know who sells tickets on TicketRoom. We only ask for what applies to you, and we say why.")}
     <p class="callout ${v.overall === "complete" ? "good" : v.overall === "in_review" ? "" : "warn"}"><strong>${badge(v.overall)}</strong> ${OVERALL_TEXT[v.overall]}</p>
     ${v.provider.simulated ? html`<p class="callout warn small"><strong>Test mode:</strong> identity checks are simulated by the TicketRoom sandbox. ${v.provider.rule}</p>` : ""}
-    <section class="card"><h2>What this unlocks</h2><ol class="steps-list gates">
+    <section class="card"><h2>What each step opens up</h2><ol class="steps-list gates">
       ${gateRow(g.freeSubmit.ok && g.paidSubmit.ok, "Submit events for review", g.freeSubmit.ok ? "Your ID and signed terms are in." : `Upload your ID and sign the terms first. ${need(g.freeSubmit.missing)}`)}
       ${gateRow(g.freePublish.ok && g.paidPublish.ok, "Events go live and on sale", g.paidPublish.ok ? "Approved. Free and paid events can go live once we approve each event." : `Free events go live, and paid events go on sale, only after your ID and signed terms are approved. ${need(g.paidPublish.missing)}`)}
       ${gateRow(g.payouts.ok, "Payouts", g.payouts.ok ? "Your bank account is verified." : v.sellsPaid ? `Blocked until your bank account is verified. ${need(g.payouts.missing)}` : "Only for paid events. Tick \"We will sell paid tickets\" below to see what payouts need.")}
@@ -1004,7 +1004,7 @@ async function queries() {
   QUERIES = open; nav();
   render(main, html`${head("Customer queries", "Questions from your ticket buyers that TicketRoom customer care has passed to you. Please reply within two working days.")}
     ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Customer</th><th>Question</th><th>Event</th><th>Status</th><th></th></tr></thead><tbody>
-      ${list.map((q) => html`<tr><td class="mono">${q.reference}</td><td>${q.full_name || ""}<div class="tiny muted">${q.email}</div></td><td><strong>${q.subject}</strong></td><td class="small">${q.event_title || "—"}</td>
+      ${list.map((q) => html`<tr><td class="mono">${q.reference}</td><td>${q.full_name || ""}<div class="tiny muted">${q.email}</div></td><td><strong>${q.subject}</strong></td><td class="small">${q.event_title || "–"}</td>
         <td>${q.handled_by === "organiser" ? badge(q.status) : html`<span class="badge plain">back with TicketRoom</span>`}</td><td><a class="btn btn-ghost btn-sm" href="#/queries/${q.id}">Open</a></td></tr>`)}</tbody></table></div>`
       : empty("No customer queries. When TicketRoom passes you a question from a ticket buyer, it appears here and we email you.")}`);
 }
@@ -1020,7 +1020,7 @@ async function query({ id }) {
           <label class="check"><input type="checkbox" name="resolve" checked><span>This answers it: mark resolved</span></label><button class="btn btn-primary">Send reply</button></form></section>
         <section class="card"><form class="stack" id="qb"><div class="field"><label for="qn">Not yours to answer?</label><textarea id="qn" name="note" required minlength="3" placeholder="Tell TicketRoom why, e.g. it's about a payment."></textarea></div><button class="btn btn-ghost">Send back to TicketRoom</button></form></section>`
         : html`<p class="callout">This query is back with TicketRoom customer care.</p>`}
-        <section class="card"><h3>Customer</h3><dl class="dl"><dt>Name</dt><dd>${q.full_name || "—"}</dd><dt>Email</dt><dd>${q.email}</dd>${q.phone ? html`<dt>Phone</dt><dd>${q.phone}</dd>` : ""}</dl>
+        <section class="card"><h3>Customer</h3><dl class="dl"><dt>Name</dt><dd>${q.full_name || "–"}</dd><dt>Email</dt><dd>${q.email}</dd>${q.phone ? html`<dt>Phone</dt><dd>${q.phone}</dd>` : ""}</dl>
           <p class="tiny muted mb-0">Use these details only to answer this question (POPIA).</p></section></div></div>`);
   if ($("#qr")) onSubmit($("#qr"), async (v) => { await post(`${base()}/queries/${id}/reply`, { message: v.message, resolve: !!v.resolve }); toast("Reply emailed to the customer.", "good"); query({ id }); });
   if ($("#qb")) onSubmit($("#qb"), async (v) => { await post(`${base()}/queries/${id}/return`, { note: v.note }); toast("Sent back to TicketRoom.", "good"); location.hash = "#/queries"; });

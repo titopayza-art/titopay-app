@@ -353,7 +353,7 @@ function fin_integration(string $group): array
         $p = pay_provider();
         return ['key' => 'payments', 'group' => 'payments', 'label' => 'Card payments', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : pay_mode(),
             'status' => pay_ready() ? 'active' : 'not set up',
-            'endpoint' => $p === 'yoco' ? yoco_base() : ($p === 'payfast' ? payfast_host() : ($p === 'sandbox' ? 'TicketRoom practice payment page' : '—')),
+            'endpoint' => $p === 'yoco' ? yoco_base() : ($p === 'payfast' ? payfast_host() : ($p === 'sandbox' ? 'TicketRoom practice payment page' : '–')),
             'notifyUrl' => in_array($p, ['none', 'sandbox'], true) ? null : base_url() . "/api/webhooks/$p", 'credentials' => $creds ?: (object) [], 'fields' => $form,
             'testOrders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'")];
     }
@@ -372,7 +372,7 @@ function fin_integration(string $group): array
     }
     $p = sms_provider();
     return ['key' => 'sms', 'group' => 'sms', 'label' => 'SMS', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : 'live', 'status' => sms_ready() ? 'active' : 'not set up',
-        'endpoint' => $p === 'bulksms' ? 'api.bulksms.com' : ($p === 'clickatell' ? 'platform.clickatell.com' : '—'), 'credentials' => $creds ?: (object) [], 'fields' => $form];
+        'endpoint' => $p === 'bulksms' ? 'api.bulksms.com' : ($p === 'clickatell' ? 'platform.clickatell.com' : '–'), 'credentials' => $creds ?: (object) [], 'fields' => $form];
 }
 route('GET', '/api/admin/integrations', function () {
     adm_admin(); // provider settings are for admins only

@@ -559,7 +559,7 @@ function email_catalog(): array
             'promotion' => ['reference' => 'PR-7KQ2M9XW', 'price_cents' => 150000, 'paid_with' => 'card', 'paid_at' => now_iso(), 'ends_at' => $ev['starts_at'], 'test' => 0]])],
         ['key' => 'promotionRefunded', 'name' => 'Promote refunded', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom refunds a Promote package (event cancelled)', 'sample' => fn() => tpl('promotionRefunded', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'amountCents' => 150000, 'toBalance' => false])],
         ['key' => 'socialRequested', 'name' => 'Social post request', 'audience' => 'Staff', 'trigger' => 'When a promoted organiser asks for a social post', 'sample' => fn() => tpl('socialRequested', ['organiser' => 'Soweto Community Arts', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'],
-            'request' => ['caption' => 'Sunset, good music and the best crowd in Soweto. Tickets are going fast!', 'preferredDates' => 'Friday and Saturday morning', 'links' => ["$B/events/soweto-sunset-sessions"], 'images' => ['poster']]])],
+            'request' => ['caption' => 'Sunset, good music and the best crowd in Soweto. Book before they sell out.', 'preferredDates' => 'Friday and Saturday morning', 'links' => ["$B/events/soweto-sunset-sessions"], 'images' => ['poster']]])],
         ['key' => 'socialPostLive', 'name' => 'Social post is live', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom posts a promoted event on its socials', 'sample' => fn() => tpl('socialPostLive', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'links' => ['https://www.instagram.com/p/sample/']])],
     ];
 }

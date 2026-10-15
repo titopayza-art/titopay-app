@@ -100,7 +100,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     assert.equal(pub.cashless, true, "event payload says cashless");
     const visitor = await page(browser, null, { width: 390, height: 844 });
     await visitor.goto(`${BASE}/events/${ev.slug}`);
-    await visitor.getByText("This event is cashless!").waitFor(); await shot(visitor, "1-event-page-cashless");
+    await visitor.getByText("This event is cashless", { exact: true }).waitFor(); await shot(visitor, "1-event-page-cashless");
     step("organiser switches cashless on for the event; the public event page says it is cashless");
 
     // 3. Attendees with tickets: Sipho (free ticket) and Thabo (a sandbox card payment: a TEST ticket).
