@@ -142,8 +142,8 @@ function showResult(kind, r) {
     pending: html`<div class="verdict idle"><div class="big">CHARGING…</div><div>Waiting for TicketRoom. Don't hand over goods yet.</div></div>`,
     uncertain: html`<div class="verdict warn"><div class="big">CHECKING</div><div>${typeof r === "string" ? r : "Connection dropped. Checking whether this sale went through. It will NOT be charged twice."}</div></div>`,
     not_charged: html`<div class="verdict no"><div class="big">NOT CHARGED</div><div>The sale did not reach TicketRoom. Nothing was taken. You can try again.</div></div>`,
-    approved: html`<div class="verdict ok"><div class="big">APPROVED</div><div>${r?.totalCents ? moneyExact(r.totalCents) : ""} · ${r?.reference || ""}</div></div>`,
-    declined: html`<div class="verdict no"><div class="big">DECLINED</div><div>${r?.message || ""}</div></div>`,
+    approved: html`<div class="verdict ok"><div class="big">APPROVED</div><div>${r?.totalCents ? moneyExact(r.totalCents) : ""} · ${r?.reference || ""}</div>${r?.balanceCents != null ? html`<div class="small">Left on the band: ${moneyExact(r.balanceCents)}</div>` : ""}</div>`,
+    declined: html`<div class="verdict no"><div class="big">DECLINED</div><div>${r?.message || ""}</div>${r?.balanceCents != null ? html`<div class="small">On the band: ${moneyExact(r.balanceCents)}</div>` : ""}</div>`,
     error: html`<div class="verdict no"><div class="big">NOT CHARGED</div><div>${r || ""}</div></div>`,
   }[kind];
   render(main, html`${nav()}<div role="status" aria-live="assertive">${box}</div>

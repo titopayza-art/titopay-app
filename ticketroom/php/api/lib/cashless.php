@@ -65,6 +65,10 @@ function tr_upgrade_cashless(): void
         $have = array_column(rows("PRAGMA table_info($table)"), 'name');
         foreach ($cols as $c => $def) if (!in_array($c, $have, true)) db()->exec("ALTER TABLE $table ADD COLUMN $c $def");
     }
+    // The new tables first: the rebuilt tables' rows point at them.
+    $sql = (string) file_get_contents(TR_APP . '/schema.sql');
+    if (!preg_match('/-- cashless:begin\n(.*)-- cashless:end/s', $sql, $m)) throw new RuntimeException('schema.sql has no cashless block. Upload the complete TicketRoom package.');
+    db()->exec($m[1]);
     $nullableOrder = fn(string $s) => (string) preg_replace('/\border_id(\s+)TEXT\s+NOT NULL\b/i', 'order_id$1TEXT', $s, 1);
     tr_rebuild_table('payments', $nullableOrder);
     tr_rebuild_table('refunds', function (string $s) use ($nullableOrder) {
@@ -74,9 +78,6 @@ function tr_upgrade_cashless(): void
             return "CHECK (kind IN ($kinds))";
         }, $nullableOrder($s), 1);
     });
-    $sql = (string) file_get_contents(TR_APP . '/schema.sql');
-    if (!preg_match('/-- cashless:begin\n(.*)-- cashless:end/s', $sql, $m)) throw new RuntimeException('schema.sql has no cashless block. Upload the complete TicketRoom package.');
-    db()->exec($m[1]);
 }
 // Rebuilds a table with an edited definition, keeping every row, column,
 // index and trigger. Runs inside the upgrade's transaction with foreign keys
@@ -203,6 +204,9 @@ function tag_activate(array $tag, string $userId, string $eventId, string $ticke
 }
 function tag_ticket_for(string $userId, string $eventId): string
 {
+    if (val("SELECT 1 FROM tags WHERE event_id = ? AND user_id = ? AND status = 'active'", [$eventId, $userId])) {
+        throw conflict('There is already an active tag for this event on this account. Report it lost first if you are replacing it.', 'tag_already_linked');
+    }
     $id = val("SELECT t.id FROM tickets t WHERE t.owner_user_id = ? AND t.event_id = ? AND t.status IN ('valid','used')
                  AND NOT EXISTS (SELECT 1 FROM tags g WHERE g.ticket_id = t.id AND g.status = 'active') ORDER BY t.created_at LIMIT 1", [$userId, $eventId]);
     if (!$id) throw conflict('You need a ticket for this event before linking a tag.', 'no_ticket');

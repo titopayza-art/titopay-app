@@ -219,6 +219,25 @@ written to the audit log.
   makes the EFT from TicketRoom's bank, and records the bank reference.
   The organiser is emailed at each step.
 
+**Cashless events (wristbands)** switch on by themselves once card
+payments work (the sandbox too, for practice). Nothing else to set up.
+- The organiser ticks **Cashless event** on the event, then registers the
+  wristbands' chip numbers (Vendors & POS → Wristbands). The download is
+  the only copy of each band's printed code and activation code.
+- Attendees link a band in their account (or at the registration desk in
+  the gate scanner), top up by card, and tap to pay. Purchases of R200 or
+  more need their spending PIN. A lost band is blocked from the account in
+  one tap; the balance stays on the account for the next band.
+- The organiser adds vendors, invites their staff by email and registers
+  a till for each phone (ticketroom.co.za/pos). TicketRoom's commission is
+  the percentage set per vendor; top-ups and refunds carry no fee.
+- After the event: unused balances go back to the card (asked for from the
+  account, or automatically two days later), approved by finance under
+  **Refunds**. Vendor takings are settled to the organiser under **Payouts**.
+- Limits can be changed in `ticketroom-data/config.php`:
+  `'cashless' => ['minTopupCents' => 5000, 'maxTopupCents' => 300000, 'maxBalanceCents' => 500000, 'pinThresholdCents' => 20000]`,
+  or `'cashless' => ['enabled' => false]` to switch it off for the whole site.
+
 ---
 
 ## 10. SMS (optional)

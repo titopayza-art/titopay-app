@@ -517,7 +517,9 @@ async function vendorsTab(el, d, reload) {
         <div><div class="label">Terminals</div>${v.terminals.length ? html`<ul class="small">${v.terminals.map((t) => html`<li>${t.label} ${badge(t.status)} ${t.lastSeenAt ? html`<span class="muted">seen ${fmtDateTime(t.lastSeenAt)}</span>` : ""} ${edit && t.status !== "retired" ? html`<button class="btn-link" data-tstatus="${t.id}" data-s="${t.status === "active" ? "suspended" : "active"}">${t.status === "active" ? "suspend" : "activate"}</button>` : ""}</li>`)}</ul>` : html`<p class="small muted">No terminals.</p>`}
           ${edit ? html`<form class="row" data-term="${v.id}"><input name="label" required placeholder="e.g. Till 1" class="grow" aria-label="Terminal name"><button class="btn btn-ghost btn-sm">Register terminal</button></form>` : ""}</div></div></section>`)}</div>` : empty("No vendors yet.")}
     ${edit ? html`<section class="card mt"><h3>Add vendor</h3><form class="stack" id="vf"><div class="grid-2"><div class="field"><label for="vn">Vendor name</label><input id="vn" name="name" required></div><div class="field"><label for="vc">Commission (%)</label><input id="vc" name="commission" inputmode="decimal" value="0"></div></div>
-      <div class="field"><label for="vd">What they sell</label><input id="vd" name="description" maxlength="240"></div><button class="btn btn-dark">Add vendor</button></form></section>` : ""}`);
+      <div class="field"><label for="vd">What they sell</label><input id="vd" name="description" maxlength="240"></div><button class="btn btn-dark">Add vendor</button></form></section>` : ""}
+    <div id="bands"></div>`);
+  if (FEATURES.tagRegistry) wristbands($("#bands", el), d, edit);
   if ($("#vf")) onSubmit($("#vf"), async (v) => { await post(`${base()}/events/${d.event.id}/vendors`, { name: v.name, description: v.description, commissionBps: Math.round(Number(v.commission || 0) * 100) }); toast("Vendor added.", "good"); reload(); });
   $$("[data-member]", el).forEach((f) => onSubmit(f, async (v) => { await post(`${base()}/events/${d.event.id}/vendors/${f.dataset.member}/members`, v); toast("Vendor staff added.", "good"); reload(); }));
   $$("[data-term]", el).forEach((f) => onSubmit(f, async (v) => {
@@ -527,6 +529,26 @@ async function vendorsTab(el, d, reload) {
   $$("[data-vstatus]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/vendors/${b.dataset.vstatus}`, { status: b.dataset.s }); reload(); }));
   $$("[data-tstatus]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/terminals/${b.dataset.tstatus}`, { status: b.dataset.s }); reload(); }));
   $$("[data-vpay]", el).forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`${base()}/events/${d.event.id}/vendors/${b.dataset.vpay}/payout`); toast(`Settlement ${r.payout.reference} requested for ${moneyExact(r.payout.amount_cents)}.`, "good"); } catch (err) { toast(err.message, "bad"); } }));
+}
+
+// Wristbands for this event: register the chip numbers of a box of bands in
+// one go. The download is the only copy of each band's printed code and
+// activation code. Shown only where the server offers it (features.tagRegistry).
+async function wristbands(el, d, edit) {
+  const { tags: list, counts } = await get(`${base()}/events/${d.event.id}/tags`);
+  const n = (k) => counts[k] || 0;
+  render(el, html`<section class="card mt"><h3>Wristbands</h3>
+    <p class="small muted">${list.length ? `${list.length} registered: ${n("active")} linked to a ticket, ${n("assigned")} not linked yet, ${n("lost") + n("blocked")} blocked.` : "No wristbands registered yet."} Attendees link a band in their account with the code printed on it, or at your registration desk (Gate scanner, Tag desk).</p>
+    ${edit ? html`<form class="stack" id="bf"><div class="field"><label for="bu">Chip numbers (UIDs), one per line</label><textarea id="bu" name="uids" rows="4" class="mono" placeholder="04A1B2C3D4E5F6"></textarea><span class="hint">Read them with the supplier's list or a phone's NFC reader. Up to 2000 at a time.</span></div>
+      <button class="btn btn-dark">Register wristbands</button></form>` : ""}</section>`);
+  if ($("#bf", el)) onSubmit($("#bf", el), async (v) => {
+    const r = await post(`${base()}/events/${d.event.id}/tags`, { uids: String(v.uids || "").split(/\s+/).filter(Boolean) });
+    const csv = ["chip_uid,band_code,activation_code", ...r.tags.map((t) => [t.payload.replace(/^UID:/, ""), t.displayCode, t.activationCode].join(","))].join("\n");
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `wristbands-${r.batchId.slice(0, 8)}.csv` });
+    a.click();
+    toast(`${r.tags.length} wristbands registered. Keep the downloaded list safe: it is the only copy of the activation codes.`, "good");
+    wristbands(el, d, edit);
+  });
 }
 
 async function detailsTab(el, d, reload) {
