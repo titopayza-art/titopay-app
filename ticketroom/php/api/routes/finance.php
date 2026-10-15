@@ -303,7 +303,7 @@ route('GET', '/api/me/refunds', function () {
 });
 
 // ============================================================== integrations
-const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'sms' => 'SMS'];
+const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'sms' => 'SMS', 'google' => 'Sign in with Google'];
 function fin_integration(string $group): array
 {
     $form = integration_form($group);
@@ -323,6 +323,11 @@ function fin_integration(string $group): array
             'notifyUrl' => in_array($p, ['none', 'sandbox'], true) ? null : base_url() . "/api/webhooks/$p", 'credentials' => $creds ?: (object) [], 'fields' => $form,
             'testOrders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'")];
     }
+    if ($group === 'google') {
+        $on = google_ready();
+        return ['key' => 'google', 'group' => 'google', 'label' => 'Sign in with Google', 'provider' => cfg('google.enabled') === 'on' ? 'google' : 'none', 'environment' => $on ? 'live' : 'not set up',
+            'status' => $on ? 'active' : 'not set up', 'endpoint' => 'accounts.google.com', 'redirectUrl' => google_redirect_uri(), 'credentials' => $creds ?: (object) [], 'fields' => $form];
+    }
     $p = sms_provider();
     return ['key' => 'sms', 'group' => 'sms', 'label' => 'SMS', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : 'live', 'status' => sms_ready() ? 'active' : 'not set up',
         'endpoint' => $p === 'bulksms' ? 'api.bulksms.com' : ($p === 'clickatell' ? 'platform.clickatell.com' : '—'), 'credentials' => $creds ?: (object) [], 'fields' => $form];
@@ -331,14 +336,14 @@ route('GET', '/api/admin/integrations', function () {
     adm_admin(); // provider settings are for admins only
     return [
         'defaults' => ['bookingFeeCents' => (int) cfg('fees.ticketFeeFixedCents', 1000), 'bookingFeeBps' => (int) cfg('fees.ticketFeeBps', 0), 'organiserCommissionBps' => (int) cfg('fees.organiserCommissionBps', 500)],
-        'integrations' => [fin_integration('payments'), fin_integration('mail'), fin_integration('sms')],
+        'integrations' => [fin_integration('payments'), fin_integration('mail'), fin_integration('sms'), fin_integration('google')],
     ];
 });
 // Saving needs the admin's own password: these settings move money and send mail as TicketRoom.
 route('PUT', '/api/admin/integrations/:key', function ($a) {
     $u = adm_admin();
     limit('integsave', 20, 3600, $u['id']);
-    $group = ['email' => 'mail', 'payments' => 'payments', 'sms' => 'sms'][$a['key']] ?? null;
+    $group = ['email' => 'mail', 'payments' => 'payments', 'sms' => 'sms', 'google' => 'google'][$a['key']] ?? null;
     if (!$group) throw not_found('Unknown integration.');
     $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'values' => R::obj([], ['optional' => true]), 'clear' => R::arr(R::str(['max' => 60]), ['optional' => true, 'max' => 20])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
@@ -368,6 +373,9 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     if ($key === 'email') $result = smtp_health();
     elseif ($key === 'sms') $result = sms_health();
     elseif ($key === 'payments') $result = fin_payments_health();
+    elseif ($key === 'google') $result = !google_ready() ? ['ok' => false, 'detail' => 'Switch it on and enter the client ID and secret.']
+        : (preg_match('/^[\w-]+\.apps\.googleusercontent\.com$/', (string) cfg('google.clientId')) ? ['ok' => true, 'detail' => 'Ready. Make sure ' . google_redirect_uri() . ' is listed under Authorised redirect URIs in Google Cloud.']
+        : ['ok' => false, 'detail' => 'That does not look like a Google OAuth client ID (it ends in .apps.googleusercontent.com).']);
     if (isset($result['detail'])) $result['detail'] = integration_scrub((string) $result['detail']);
     else throw not_found('Unknown integration.');
     audit('integration.health_checked', ['actor' => $u, 'entityType' => 'integration', 'entityId' => $key, 'details' => ['ok' => $result['ok']]]);

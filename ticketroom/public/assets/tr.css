@@ -601,3 +601,9 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
 .switch input:focus-visible + .sr-only + .track { outline: 3px solid var(--amber-500); outline-offset: 2px; }
 .footer-link { padding: 0; font: inherit; color: inherit; text-align: left; }
 .contact-grid { align-items: start; }
+
+/* Sign in with Google */
+.btn-google { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: #1F1F1F; border: 1px solid #C4C9D2; font-weight: 600; }
+.btn-google:hover { background: #F6F8FB; }
+.or-line { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; }
+.or-line::before, .or-line::after { content: ""; flex: 1; height: 1px; background: var(--line); }
