@@ -41,7 +41,7 @@ const KYC_ITEMS = [
     'resolution' => ['label' => 'Resolution appointing the representative', 'kind' => 'document', 'reason' => 'Confirms the organisation chose you to act for it.'],
     'terms' => ['label' => 'Signed organiser terms', 'kind' => 'terms', 'reason' => 'Your agreement to run events lawfully and honour every ticket.'],
     'email' => ['label' => 'Verified email address', 'kind' => 'check', 'reason' => 'So buyers and TicketRoom can reach you.'],
-    'phone' => ['label' => 'Verified mobile number', 'kind' => 'check', 'reason' => 'Phone checks are not available yet, so this does not hold anything up.'],
+    'phone' => ['label' => 'Verified mobile number', 'kind' => 'check', 'reason' => 'So buyers, gate staff and TicketRoom can reach you on the day. Confirm it with a code we SMS you.'],
     // ---- per event
     'venue_agreement' => ['label' => 'Venue booking or hire agreement', 'kind' => 'document', 'event' => true, 'reason' => 'Confirms the venue is booked for your date.'],
     'event_permit' => ['label' => 'Event permit or municipal approval', 'kind' => 'document', 'event' => true, 'reason' => 'Events for 2 000 or more people, or in a public space, need approval from the municipality (Safety at Sports and Recreational Events Act).'],
@@ -231,7 +231,8 @@ function kyc_org_items(array $v, bool $paid): array
     }
     $keys['terms'] = $events;
     $keys['email'] = $events;
-    $keys['phone'] = [];
+    // Required once SMS is set up; until then nobody could confirm it, so it never blocks.
+    $keys['phone'] = function_exists('sms_ready') && sms_ready() ? $events : [];
     if ($paid) {
         if ($type === 'individual') $keys['proof_of_address'] = ['payouts'];
         if ($type === 'company') $keys['business_address'] = ['payouts'];
@@ -305,12 +306,14 @@ function kyc_event_items(array $ev, array $risk): array
 function kyc_with_status(array $items, array $docs, array $v, string $orgId): array
 {
     $emailOk = (bool) val("SELECT 1 FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = ? AND m.role = 'owner' AND u.email_verified_at IS NOT NULL LIMIT 1", [$orgId]);
+    $phoneOk = (bool) val("SELECT 1 FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = ? AND m.role = 'owner' AND u.phone_verified_at IS NOT NULL LIMIT 1", [$orgId]);
+    $smsOn = function_exists('sms_ready') && sms_ready();
     foreach ($items as &$it) {
         $doc = $docs[$it['key']] ?? null;
         $it['document'] = kyc_doc_view($doc);
         $it['status'] = match ($it['kind']) {
             'terms' => ($v['terms_signed_at'] && $v['terms_version'] === KYC_TERMS_VERSION) ? 'approved' : 'missing',
-            'check' => $it['key'] === 'email' ? ($emailOk ? 'approved' : 'missing') : 'not_verified',
+            'check' => $it['key'] === 'email' ? ($emailOk ? 'approved' : 'missing') : ($phoneOk ? 'approved' : ($smsOn ? 'missing' : 'not_verified')),
             default => $doc && !$doc['deleted_at'] ? $doc['status'] : 'missing',
         };
         $it['rejectReason'] = $it['status'] === 'rejected' ? ($doc['reject_reason'] ?? null) : null;
@@ -587,4 +590,32 @@ function kyc_view(string $orgId, bool $full): array
             rows("SELECT occurred_at, action, actor_role FROM audit_log WHERE organiser_id = ? AND action IN ('verification.document_viewed','verification.id_revealed','verification.bank_revealed') ORDER BY id DESC LIMIT 50", [$orgId]));
     }
     return $out;
+}
+
+// A live event changed (capacity, ticket prices, category): work out its risk
+// again. If it now needs documents it does not have, the organiser and the
+// TicketRoom team are told once per new list. Sales carry on; staff decide.
+function kyc_recheck_live_event(string $eventId): void
+{
+    $ev = row('SELECT * FROM events WHERE id = ?', [$eventId]);
+    if (!$ev || $ev['status'] !== 'published') return;
+    try {
+        $es = kyc_event_state($ev, kyc_state($ev['organiser_id']));
+    } catch (Throwable $e) { error_log('[kyc] recheck: ' . $e->getMessage()); return; }
+    $missing = kyc_missing($es['items'], 'publish', 'approved');
+    $key = "riskcheck:$eventId";
+    $sig = $missing ? sha1(implode('|', $missing)) : '';
+    if ((string) val('SELECT value FROM meta WHERE key = ?', [$key]) === $sig) return;
+    q('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [$key, $sig]);
+    if (!$missing) return;
+    $list = '- ' . implode("\n- ", $missing);
+    $why = $es['risk']['reasons'] ? 'Why: ' . implode('; ', $es['risk']['reasons']) . ".\n\n" : '';
+    $support = settings_all()['support']['email'];
+    outbox_enqueue(['to' => $support, 'subject' => "[TicketRoom] Live event needs documents: {$ev['title']}",
+        'body' => "A published event changed and now needs documents it doesn't have.\n\nEvent: {$ev['title']}\n{$why}Missing:\n$list\n\nReview it in Admin portal → Verification. Sales are still open."]);
+    foreach (rows("SELECT u.id, u.email, u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = ? AND m.role = 'owner'", [$ev['organiser_id']]) as $o) {
+        outbox_enqueue(['to' => $o['email'], 'userId' => $o['id'], 'subject' => "Documents needed for {$ev['title']}",
+            'body' => 'Hi ' . first_name($o['full_name']) . ",\n\nYour changes to {$ev['title']} mean we need a few more documents for it:\n\n$list\n\n{$why}Upload them in the organiser portal under the event's Permits & checks tab: " . base_url() . "/organisers#/events/{$ev['id']}/checks\n\nYour event stays on sale while we look at them." . FOOTER]);
+    }
+    audit('event.risk_recheck', ['entityType' => 'event', 'entityId' => $eventId, 'organiserId' => $ev['organiser_id'], 'details' => ['missing' => $missing, 'level' => $es['risk']['level']]]);
 }

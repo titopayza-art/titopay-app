@@ -627,6 +627,7 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId', function ($a) {
         outbox_enqueue(['to' => $s['support']['email'], 'subject' => "[TicketRoom] Live event edited: {$event['title']}",
             'body' => "{$u['fullName']} ({$u['email']}) edited a published event.\n\nEvent: {$event['title']}\nChanged: " . implode(', ', $changed) . "\nPage: " . base_url() . "/events/{$event['slug']}\n\nCheck it in Admin portal → All events; suspend it there if the change is not acceptable."]);
     }
+    if (function_exists('kyc_recheck_live_event')) kyc_recheck_live_event($event['id']);
     return ['event' => row('SELECT * FROM events WHERE id = ?', [$event['id']])];
 });
 
@@ -682,6 +683,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/ticket-types', function ($a
     foreach ($b as $k => $v) $row[ORG_TT_COLS[$k]] = $v;
     insert('ticket_types', $row);
     audit('ticket_type.created', ['actor' => $u, 'entityType' => 'ticket_type', 'entityId' => $row['id'], 'organiserId' => $event['organiser_id'], 'details' => ['price' => $b['priceCents'], 'qty' => $b['quantityTotal']]]);
+    if (function_exists('kyc_recheck_live_event')) kyc_recheck_live_event($row['event_id']);
     return json_out(['ticketType' => row('SELECT * FROM ticket_types WHERE id = ?', [$row['id']])], 201);
 });
 
@@ -705,6 +707,7 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId/ticket-types/:ttId', funct
     $p[] = $cur['id'];
     q('UPDATE ticket_types SET ' . implode(', ', $sets) . ' WHERE id = ?', $p);
     audit('ticket_type.updated', ['actor' => $u, 'entityType' => 'ticket_type', 'entityId' => $cur['id'], 'organiserId' => $event['organiser_id'], 'details' => ['fields' => array_keys($b)]]);
+    if (function_exists('kyc_recheck_live_event')) kyc_recheck_live_event($cur['event_id']);
     return ['ticketType' => row('SELECT * FROM ticket_types WHERE id = ?', [$cur['id']])];
 });
 

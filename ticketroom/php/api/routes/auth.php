@@ -142,7 +142,46 @@ route('GET', '/api/auth/me', function () {
 route('PATCH', '/api/auth/me', function () {
     $u = require_auth();
     $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'phone' => R::phone(['optional' => true])]);
-    q('UPDATE users SET full_name = ?, phone = ?, updated_at = ? WHERE id = ?', [$b['fullName'], $b['phone'] ?? null, now_iso(), $u['id']]);
+    // A new number needs confirming again.
+    q('UPDATE users SET full_name = ?, phone = ?, phone_verified_at = CASE WHEN phone IS ? THEN phone_verified_at END, updated_at = ? WHERE id = ?',
+        [$b['fullName'], $b['phone'] ?? null, $b['phone'] ?? null, now_iso(), $u['id']]);
+    return ['user' => profile($u['id'])];
+});
+
+// Confirm a mobile number: a 6-digit code by SMS, valid 10 minutes, 5 tries.
+route('POST', '/api/auth/phone/send', function () {
+    $u = require_auth();
+    $b = check(body(), ['phone' => R::phone()]);
+    if (!sms_ready()) throw conflict('Phone confirmation needs SMS, which is not set up yet. Nothing is held up by this.', 'sms_off');
+    limit('phonesend', 5, 3600, $u['id']);
+    limit('phonesendto', 3, 3600, $b['phone']);
+    if (val("SELECT 1 FROM users WHERE phone = ? AND phone_verified_at IS NOT NULL AND status = 'active' AND id <> ?", [$b['phone'], $u['id']])) {
+        throw conflict('This mobile number is already confirmed on another TicketRoom account.', 'phone_taken', ['phone' => 'Already confirmed on another account.']);
+    }
+    $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    q('INSERT INTO phone_codes (user_id, phone, code_hash, attempts, expires_at, created_at) VALUES (?,?,?,0,?,?) ON CONFLICT(user_id) DO UPDATE SET phone = excluded.phone, code_hash = excluded.code_hash, attempts = 0, expires_at = excluded.expires_at, created_at = excluded.created_at',
+        [$u['id'], $b['phone'], hash_secret($code), iso_in(600), now_iso()]);
+    try { sms_send($b['phone'], "Your TicketRoom code is $code. It expires in 10 minutes. Never share it."); }
+    catch (Throwable $e) { error_log('[phone] send: ' . integration_scrub($e->getMessage())); throw new AppError(502, 'sms_failed', 'We could not send the SMS just now. Please try again in a minute.'); }
+    audit('user.phone_code_sent', ['actor' => $u, 'entityType' => 'user', 'entityId' => $u['id'], 'ip' => client_ip()]);
+    return ['sent' => true, 'sentTo' => substr($b['phone'], 0, 5) . str_repeat('•', 4) . substr($b['phone'], -3)];
+});
+route('POST', '/api/auth/phone/verify', function () {
+    $u = require_auth();
+    $b = check(body(), ['code' => R::str(['min' => 4, 'max' => 10])]);
+    $c = row('SELECT * FROM phone_codes WHERE user_id = ?', [$u['id']]);
+    if (!$c || to_unix($c['expires_at']) < microtime(true)) throw bad('That code has expired. Send a new one.', ['code' => 'Expired.']);
+    if ((int) $c['attempts'] >= 5) throw bad('Too many wrong codes. Send a new one.', ['code' => 'Too many tries.']);
+    if (!verify_secret(preg_replace('/\D/', '', $b['code']), $c['code_hash'])) {
+        q('UPDATE phone_codes SET attempts = attempts + 1 WHERE user_id = ?', [$u['id']]);
+        throw bad('That code is not right. Check the SMS and try again.', ['code' => 'Incorrect.']);
+    }
+    $now = now_iso();
+    tx(function () use ($u, $c, $now) {
+        q('UPDATE users SET phone = ?, phone_verified_at = ?, updated_at = ? WHERE id = ?', [$c['phone'], $now, $now, $u['id']]);
+        q('DELETE FROM phone_codes WHERE user_id = ?', [$u['id']]);
+    });
+    audit('user.phone_verified', ['actor' => $u, 'entityType' => 'user', 'entityId' => $u['id'], 'ip' => client_ip()]);
     return ['user' => profile($u['id'])];
 });
 

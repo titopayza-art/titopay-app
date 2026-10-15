@@ -90,7 +90,7 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
 
     // 2. Only what the rules require: by kind of organiser and paid tickets.
     let v = await reqs(K.o, K.orgId);
-    assert.equal(keys(v), "email,id_document,phone,terms", "individual, free events: ID, terms, email (phone shown, not required)");
+    assert.equal(keys(v), "email,id_document,phone,terms", "individual, free events: ID, terms, email (phone shown; required only once SMS is set up)");
     assert.equal(v.requirements.find((i) => i.key === "phone").status, "not_verified");
     assert.equal(v.requirements.find((i) => i.key === "phone").required, false, "phone does not hold anything up");
     assert.equal(v.requirements.find((i) => i.key === "email").status, "approved");
@@ -107,7 +107,7 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
     assert.equal(keys(await reqs(K.o, K.orgId)), "bank_confirmation,constitution,email,npo_certificate,phone,rep_id,resolution,terms", "NPO");
     await K.o.put(`/api/organiser/${K.orgId}/verification/profile`, { ...co, repIsDirector: true });
     assert.ok(!keys(await reqs(K.o, K.orgId)).includes("authorisation_letter"), "a director needs no letter of authorisation");
-    step("requirements follow the rules: individual / company / NPO, paid or free; phone shown as not verified and never blocks");
+    step("requirements follow the rules: individual / company / NPO, paid or free; phone not required until SMS is set up");
 
     // 3. Uploads: PDF, JPG or PNG only, by their first bytes; only what is needed.
     assert.equal((await up(K.o, K.orgId, "cipc_certificate", Buffer.from("just text, not a pdf"))).status, 415, "magic bytes checked");
@@ -150,7 +150,7 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
     await kp.getByRole("heading", { name: "Verification" }).waitFor();
     await kp.getByText("Confirms the company is registered and who its directors are.").waitFor();
     await kp.getByText(/Payouts/).first().waitFor();
-    await kp.getByText(/Phone checks are not available yet/).first().waitFor();
+    await kp.getByText(/Phone confirmation switches on when TicketRoom.s SMS is set up/).first().waitFor();
     await kp.getByRole("button", { name: "Read and sign" }).click();
     const td = kp.locator("dialog[open]");
     await td.getByLabel("Your full name").fill("Kgosi Molefe");
@@ -319,7 +319,7 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
     fs.cpSync(path.join(ROOT, "api"), path.join(tmp, "public_html", "api"), { recursive: true });
     fs.cpSync(dataDir, path.join(tmp, "ticketroom-data"), { recursive: true });
     const old = path.join(tmp, "ticketroom-data", "ticketroom.sqlite");
-    execFileSync("php", ["-r", `$d=new PDO('sqlite:${old}'); $d->exec("DROP TABLE organiser_verification; DROP TABLE verification_documents; DROP TABLE event_risk; UPDATE meta SET value = '10' WHERE key = 'schema_version'");`]);
+    execFileSync("php", ["-r", `$d=new PDO('sqlite:${old}'); $d->exec("DROP TABLE organiser_verification; DROP TABLE verification_documents; DROP TABLE event_risk; UPDATE meta SET value = '10' WHERE key = 'schema_version'; DELETE FROM meta WHERE key = 'upgrades_done'");`]);
     const out = execFileSync("php", ["-r", `require '${tmp}/public_html/api/bootstrap.php'; tr_load(); echo val("SELECT value FROM meta WHERE key = 'schema_version'"), ' ', val("SELECT count(*) FROM sqlite_master WHERE name IN ('organiser_verification','verification_documents','event_risk')");`]).toString();
     const [ver, tables] = out.split(" ").map(Number);
     assert.ok(ver >= 12 && tables === 3, `upgraded past 12 with the three verification tables (${out})`);
