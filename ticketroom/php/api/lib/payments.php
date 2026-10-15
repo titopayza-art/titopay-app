@@ -184,7 +184,12 @@ function payment_apply(string $provider, string $reference, string $outcome, int
 {
     return tx(function () use ($provider, $reference, $outcome, $amountCents) {
         $p = row('SELECT * FROM payments WHERE provider = ? AND provider_reference = ?', [$provider, $reference]);
-        if (!$p) throw not_found('Unknown payment reference.');
+        if (!$p) {
+            // A Promote purchase (lib/promote.php): same providers, its own records.
+            $pp = row('SELECT * FROM promotion_payments WHERE provider = ? AND provider_reference = ?', [$provider, $reference]);
+            if ($pp) return promo_payment_apply($pp, $outcome, $amountCents);
+            throw not_found('Unknown payment reference.');
+        }
         if ($outcome === 'paid') {
             if (in_array($p['status'], ['confirmed', 'refunded', 'partially_refunded'], true)) return 'duplicate';
             if ($amountCents !== (int) $p['amount_cents']) {
@@ -250,7 +255,7 @@ function payment_fulfil(array $order, array $payment): void
 // before a reservation expires, and by the admin "Re-check" button.
 function payment_sync(string $paymentId): string
 {
-    $p = row('SELECT * FROM payments WHERE id = ?', [$paymentId]);
+    $p = row('SELECT * FROM payments WHERE id = ?', [$paymentId]) ?: row('SELECT * FROM promotion_payments WHERE id = ?', [$paymentId]);
     if (!$p) throw not_found('Payment not found.');
     if ($p['provider'] !== 'yoco' || !$p['provider_reference'] || !in_array($p['status'], ['pending', 'failed', 'cancelled'], true)) return $p['status'];
     $s = yoco_status($p['provider_reference']);
@@ -398,6 +403,8 @@ function refund_complete(string $refundId, string $providerRef, ?array $actor): 
 //            organiser:<org>:payouts    paid out to the organiser
 //            revenue:booking_fees       TicketRoom's booking fees
 //            revenue:commission         TicketRoom's commission
+//            revenue:promotions         Promote packages (lib/promote.php)
+//            organiser:<org>:deductions what an organiser paid TicketRoom from their balance
 //            bank:payouts               money sent to organisers by EFT
 //            wallet:<user>:<event>      an attendee's cashless balance (lib/cashless.php)
 //            vendor:<vendor>:event:<ev> owed for a vendor's cashless sales
@@ -448,9 +455,10 @@ function ledger_check(): array
     $bad = rows('SELECT journal_id, SUM(amount_cents) AS s FROM ledger_entries GROUP BY journal_id HAVING SUM(amount_cents) <> 0 LIMIT 20');
     $clearing = [];
     // Real money only: test-mode payments are booked to test: accounts.
-    foreach (rows("SELECT DISTINCT provider FROM payments WHERE environment = 'live'") as $p) {
+    foreach (rows("SELECT DISTINCT provider FROM payments WHERE environment = 'live' UNION SELECT DISTINCT provider FROM promotion_payments WHERE environment = 'live' AND provider <> 'balance'") as $p) {
         $expected = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE provider = ? AND environment = 'live' AND status IN ('confirmed','partially_refunded','refunded')", [$p['provider']])
-            - (int) val("SELECT COALESCE(SUM(r.amount_cents + r.fee_refund_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = ? AND p.environment = 'live' AND r.status = 'completed'", [$p['provider']]);
+            - (int) val("SELECT COALESCE(SUM(r.amount_cents + r.fee_refund_cents),0) FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = ? AND p.environment = 'live' AND r.status = 'completed'", [$p['provider']])
+            + (int) val("SELECT COALESCE(SUM(amount_cents - refunded_cents),0) FROM promotion_payments WHERE provider = ? AND environment = 'live' AND status IN ('confirmed','refunded')", [$p['provider']]);
         $ledger = ledger_balance("provider:{$p['provider']}");
         $clearing[] = ['account' => "provider:{$p['provider']}", 'ledgerCents' => $ledger, 'expectedCents' => $expected, 'ok' => $ledger === $expected];
     }
@@ -484,12 +492,13 @@ function organiser_money(array $org): array
         $total += $bal;
         if ($ok) $releasable += $bal;
     }
-    $paid = ledger_balance("organiser:{$org['id']}:payouts");
+    // Paid out by EFT, plus anything paid to TicketRoom from the balance (Promote).
+    $paid = ledger_balance("organiser:{$org['id']}:payouts") + ledger_balance("organiser:{$org['id']}:deductions");
     $inFlight = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payouts WHERE organiser_id = ? AND vendor_id IS NULL AND status IN ('requested','approved')", [$org['id']]);
     $pendingRefunds = (int) val("SELECT COALESCE(SUM(r.amount_cents),0) FROM refunds r JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = o.event_id
                                   WHERE e.organiser_id = ? AND o.test = 0 AND r.status IN ('requested','processing','manual_pending','failed')", [$org['id']]);
     return ['events' => $events, 'totalCents' => $total - $paid, 'availableCents' => max(0, $releasable - $paid - $inFlight - $pendingRefunds),
-        'inFlightCents' => $inFlight, 'pendingRefundsCents' => $pendingRefunds];
+        'inFlightCents' => $inFlight, 'pendingRefundsCents' => $pendingRefunds, 'promoteFromBalanceCents' => ledger_balance("organiser:{$org['id']}:deductions")];
 }
 
 // ============================================================== sandbox
@@ -501,7 +510,8 @@ function sandbox_payment(string $paymentId, ?string $key): array
 {
     $d = verify_link($key);
     if (!$d || ($d['p'] ?? '') !== $paymentId) throw not_found('This payment link has expired. Go back to your order and try again.');
-    $p = row("SELECT * FROM payments WHERE id = ? AND provider = 'sandbox'", [$paymentId]);
+    $p = row("SELECT * FROM payments WHERE id = ? AND provider = 'sandbox'", [$paymentId])
+        ?: row("SELECT * FROM promotion_payments WHERE id = ? AND provider = 'sandbox'", [$paymentId]);
     if (!$p) throw not_found('Payment not found.');
     return $p;
 }
@@ -529,7 +539,9 @@ function clear_test_orders(array $actor): array
         // Practice cashless money goes too (its test: ledger entries stay, as history).
         $wallets = affected('UPDATE cashless_wallets SET test_balance_cents = 0, updated_at = ? WHERE test_balance_cents > 0', [$now]);
         q("UPDATE wallet_topups SET status = 'cancelled' WHERE test = 1 AND status = 'pending'");
-        audit('payments.test_cleared', ['actor' => $actor, 'details' => ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets]]);
-        return ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets];
+        // TEST Promote purchases stop too: no free promotion carries over into live.
+        $promos = affected("UPDATE event_promotions SET status = 'cancelled', updated_at = ? WHERE test = 1 AND status IN ('pending_payment','active')", [$now]);
+        audit('payments.test_cleared', ['actor' => $actor, 'details' => ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets, 'promotions' => $promos]]);
+        return ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets, 'promotions' => $promos];
     });
 }

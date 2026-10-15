@@ -8,6 +8,7 @@ define('TR_ROOT', dirname(__DIR__));  // public_html
 define('TR_VERSION', '1.1.0');
 require TR_APP . '/lib/core.php';
 require TR_APP . '/lib/site.php';
+require TR_APP . '/lib/places.php';
 require TR_APP . '/lib/messaging.php';
 require TR_APP . '/lib/domain.php';
 require TR_APP . '/lib/qr.php';
@@ -17,6 +18,7 @@ require TR_APP . '/lib/payments.php';
 require TR_APP . '/lib/cashless.php';
 require TR_APP . '/lib/cashdesk.php';
 require TR_APP . '/lib/verification.php';
+require TR_APP . '/lib/promote.php';
 
 // The data folder holds everything the site creates for itself: the
 // database, uploaded posters, the signing keys and your own settings. It goes
@@ -271,6 +273,11 @@ const UPGRADES = [
     14 => [
         '@cashless',
     ],
+    // Promote: the R1500 once-off event promotion package, its payments and
+    // campaign tracking links. Only its own tables and columns, each added if
+    // missing (see tr_promote_tables), so it works whatever ran before it.
+    // (13 is never used: some sites may already be past it.)
+    15 => ['@promote'],
     // Phone numbers confirmed with a code sent by SMS.
     16 => [
         'ALTER TABLE users ADD COLUMN phone_verified_at TEXT',
@@ -280,6 +287,24 @@ const UPGRADES = [
     // at the venue). Only its own tables, created if missing.
     17 => ['@cashdesk'],
 ];
+// Promote's tables and columns (version 13), each only if missing.
+function tr_promote_tables(): void
+{
+    foreach (['tracking_links' => 'campaign_id', 'campaigns' => 'promotion_id'] as $t => $c) {
+        if (!val("SELECT 1 FROM pragma_table_info('$t') WHERE name = ?", [$c])) db()->exec("ALTER TABLE $t ADD COLUMN $c TEXT");
+    }
+    foreach ([
+        'CREATE TABLE IF NOT EXISTS event_promotions (id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL REFERENCES events(id), organiser_id TEXT NOT NULL REFERENCES organisers(id), status TEXT NOT NULL CHECK (status IN (\'pending_payment\',\'active\',\'ended\',\'refunded\',\'cancelled\')), price_cents INTEGER NOT NULL CHECK (price_cents > 0), paid_with TEXT CHECK (paid_with IN (\'card\',\'balance\')), test INTEGER NOT NULL DEFAULT 0, social_status TEXT CHECK (social_status IN (\'requested\',\'scheduled\',\'posted\')), social_request TEXT, social_notes TEXT, social_links TEXT, social_updated_at TEXT, refund_status TEXT CHECK (refund_status IN (\'processing\',\'manual_pending\',\'completed\',\'failed\')), refund_reference TEXT, refund_reason TEXT, refund_provider_reference TEXT, refund_failure TEXT, refunded_by TEXT REFERENCES users(id), refunded_at TEXT, created_by TEXT NOT NULL REFERENCES users(id), paid_at TEXT, ends_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS event_promotions_open_uq ON event_promotions (event_id) WHERE status IN (\'pending_payment\',\'active\')',
+        'CREATE INDEX IF NOT EXISTS event_promotions_status_idx ON event_promotions (status, created_at)',
+        'CREATE INDEX IF NOT EXISTS event_promotions_org_idx ON event_promotions (organiser_id, created_at)',
+        'CREATE TABLE IF NOT EXISTS promotion_payments (id TEXT PRIMARY KEY, promotion_id TEXT NOT NULL REFERENCES event_promotions(id), provider TEXT NOT NULL, environment TEXT NOT NULL, provider_reference TEXT, amount_cents INTEGER NOT NULL CHECK (amount_cents > 0), status TEXT NOT NULL CHECK (status IN (\'initiated\',\'pending\',\'confirmed\',\'failed\',\'cancelled\',\'refunded\')), refunded_cents INTEGER NOT NULL DEFAULT 0, failure_reason TEXT, created_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confirmed_at TEXT)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS promotion_payments_ref_uq ON promotion_payments (provider, provider_reference)',
+        'CREATE INDEX IF NOT EXISTS promotion_payments_promo_idx ON promotion_payments (promotion_id)',
+        'CREATE INDEX IF NOT EXISTS campaigns_promotion_idx ON campaigns (promotion_id)',
+        'CREATE INDEX IF NOT EXISTS tracking_links_campaign_idx ON tracking_links (campaign_id)',
+    ] as $sql) db()->exec($sql);
+}
 // The verification tables, exactly as written at the end of schema.sql.
 function tr_verification_tables(): void
 {
@@ -326,7 +351,7 @@ function tr_upgrade(): void
             if (in_array($v, $done, true)) continue;
             foreach ($steps as $sql) {
                 try {
-                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@cashdesk' => tr_upgrade_cashdesk(), default => db()->exec($sql) };
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), default => db()->exec($sql) };
                 } catch (PDOException $e) {
                     if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
                 }
@@ -387,6 +412,8 @@ function jobs(): array
         // Organiser campaigns booked for later go out when their time comes.
         // Verification documents past their keeping time are deleted (POPIA).
         ['verification-retention', 21600, fn() => kyc_retention()],
+        // Promote packages end with their event; unpaid ones lapse after a day.
+        ['end-promotions', 300, fn() => promo_expire()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];

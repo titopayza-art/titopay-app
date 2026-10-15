@@ -425,6 +425,34 @@ function tpl(string $name, array $a): array
         case 'gatePass':
             return ['subject' => "Your gate pass for {$a['event']}",
                 'body' => $hi . "{$a['organiser']} has given you a {$a['role']} pass for {$a['event']} ({$a['when']}, {$a['venue']}).\n\nOpen your pass: {$a['url']}\n\nShow the QR code at the gate. " . ($a['reentry'] ? 'It lets you in and out as often as you need.' : 'It works for one entry.') . " Keep the link to yourself: anyone with it can use your pass." . FOOTER];
+        // Promote (lib/promote.php).
+        case 'promotionConfirmed':
+            $p = $a['promotion']; $e = $a['event']; $test = (int) ($p['test'] ?? 0) === 1;
+            $how = ($p['paid_with'] ?? 'card') === 'balance' ? 'from your TicketRoom balance' : 'by card';
+            return ['subject' => ($test ? '[TEST] ' : '') . "Promote is on for {$e['title']} ({$p['reference']})",
+                'body' => $hi . ($test ? "This is a TEST purchase, made while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "Thanks for promoting {$e['title']} with TicketRoom. Here is your receipt.\n\n"
+                    . "Promote package for {$e['title']}\nReference {$p['reference']}\nPaid " . format_zar((int) $p['price_cents']) . " $how, " . sa_time($p['paid_at'] ?? null, 'j F Y') . "\n"
+                    . 'Runs until the event ends: ' . when_str($e['ends_at'] ?? $p['ends_at']) . "\n\n"
+                    . "What you get until then:\n- As many email campaigns to your opted-in ticket buyers as you like\n- SMS campaigns, once SMS is switched on for your account\n- Your event on TicketRoom's social media: send us your caption and dates\n- Analytics for every campaign: messages sent, clicks, tickets and revenue\n\n"
+                    . "Start now: $B/organisers#/events/{$e['id']}/promote" . FOOTER];
+        case 'promotionRefunded':
+            $p = $a['promotion']; $e = $a['event'];
+            return ['subject' => "Your Promote package for {$e['title']} was refunded",
+                'body' => $hi . 'We have refunded ' . format_zar((int) $a['amountCents']) . " for Promote {$p['reference']} ({$e['title']}).\n\n"
+                    . (!empty($a['toBalance']) ? 'It is back in your TicketRoom balance.' : 'It goes back to the card you paid with. Banks usually show it within 3 to 7 working days.')
+                    . "\n\nQuestions? Reply to this email." . FOOTER];
+        case 'socialRequested':
+            $e = $a['event']; $r = $a['request']; $p = $a['promotion'];
+            return ['subject' => "Social post request: {$e['title']} ({$p['reference']})",
+                'body' => "{$a['organiser']} asked for a social post for {$e['title']}.\n\nCaption:\n{$r['caption']}\n\n"
+                    . 'Preferred dates: ' . ($r['preferredDates'] ?: 'any') . "\nLinks: " . ($r['links'] ? implode(' ', $r['links']) : 'none') . "\nImages: " . count($r['images'])
+                    . "\n\nOpen the Promotions queue: $B/admin#/promotions" . FOOTER];
+        case 'socialPostLive':
+            $e = $a['event'];
+            return ['subject' => "{$e['title']} is on TicketRoom's socials",
+                'body' => $hi . "Your post for {$e['title']} is live on TicketRoom's social media.\n\n" . implode("\n", $a['links'])
+                    . "\n\nShare it with your crowd: every like and share helps more people find your event.\n\nSee your campaign results: $B/organisers#/events/{$e['id']}/promote" . FOOTER];
     }
     throw new InvalidArgumentException("Unknown template $name");
 }
@@ -481,6 +509,12 @@ function email_catalog(): array
         ['key' => 'verificationRejected', 'name' => 'Verification document not accepted', 'audience' => 'Organiser', 'trigger' => 'When staff reject a verification document, with the reason', 'sample' => fn() => tpl('verificationRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'document' => 'Bank confirmation letter', 'reason' => 'The letter is older than 3 months. Please ask your bank for a new one.'])],
         ['key' => 'verificationComplete', 'name' => 'Verification complete', 'audience' => 'Organiser', 'trigger' => 'When every required verification item is approved', 'sample' => fn() => tpl('verificationComplete', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'paid' => true])],
         ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/scan#/reset/sample"])],
+        ['key' => 'promotionConfirmed', 'name' => 'Promote receipt', 'audience' => 'Organiser', 'trigger' => 'When a Promote purchase is paid (card or balance)', 'sample' => fn() => tpl('promotionConfirmed', ['name' => 'Naledi', 'event' => $ev + ['ends_at' => $ev['starts_at']],
+            'promotion' => ['reference' => 'PR-7KQ2M9XW', 'price_cents' => 150000, 'paid_with' => 'card', 'paid_at' => now_iso(), 'ends_at' => $ev['starts_at'], 'test' => 0]])],
+        ['key' => 'promotionRefunded', 'name' => 'Promote refunded', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom refunds a Promote package (event cancelled)', 'sample' => fn() => tpl('promotionRefunded', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'amountCents' => 150000, 'toBalance' => false])],
+        ['key' => 'socialRequested', 'name' => 'Social post request', 'audience' => 'Staff', 'trigger' => 'When a promoted organiser asks for a social post', 'sample' => fn() => tpl('socialRequested', ['organiser' => 'Soweto Community Arts', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'],
+            'request' => ['caption' => 'Sunset, good music and the best crowd in Soweto. Tickets are going fast!', 'preferredDates' => 'Friday and Saturday morning', 'links' => ["$B/events/soweto-sunset-sessions"], 'images' => ['poster']]])],
+        ['key' => 'socialPostLive', 'name' => 'Social post is live', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom posts a promoted event on its socials', 'sample' => fn() => tpl('socialPostLive', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'links' => ['https://www.instagram.com/p/sample/']])],
     ];
 }
 

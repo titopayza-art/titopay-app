@@ -281,6 +281,32 @@ that need them). Staff check the uploads in Admin portal → **Verification**.
   (FICA's minimum; you can choose up to 10), then deleted automatically.
   Replaced or rejected copies go after 90 days by default.
 
+## 10c. Promote (the R1500 organiser package)
+
+Organisers buy **Promote** for one event from the event's **Promote** tab
+in the organiser portal (also listed under **Promote** in their menu and
+on the public **/sell** page). It costs R1 500 once off and runs until the
+event ends: unlimited email campaigns to opted-in buyers (at most 6 sends
+an hour), SMS campaigns once SMS is set up (step 10), a post on
+TicketRoom's socials, and results per campaign.
+
+- **Payment.** By card through whatever is set up in step 9 (the sandbox
+  and test mode mark it **TEST**; it never counts as revenue), or by the
+  owner straight from the organiser's available balance (same verification
+  rules as a payout).
+- **Your work.** Admin portal → **Promotions** → *Social queue*: open a
+  request (caption, dates, links, pictures to download), mark it
+  *Scheduled*, then *Posted* with the post's link. The organiser is
+  emailed when it is live.
+- **Refunds.** If a promoted event is cancelled, finance presses
+  **Refund** on the promotion: card payments go back through the provider
+  (PayFast ones are refunded in the PayFast dashboard, then recorded with
+  **Record refund**); balance payments go back to the balance.
+- **Settings** (optional, in `ticketroom-data/config.php`):
+  `'promote' => ['priceCents' => 150000, 'smsCostPerSegmentCents' => 0]`.
+  With an SMS cost set, organisers see an estimate before each SMS send;
+  without it they are told no cost is set.
+
 ## 11. Maintenance mode
 
 Admin portal → **Site settings** → **Maintenance mode**. While it is on,

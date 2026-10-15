@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const PUBLIC_EVENT = "e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
-  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name, o.ref AS organiser_ref,
+  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, e.cashless_enabled, o.name AS organiser_name, o.ref AS organiser_ref,
   (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
   (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS remaining,
   (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes";
@@ -18,7 +18,9 @@ route('GET', '/api/public/events', function () {
         $where[] = "(lower(e.title) LIKE ? ESCAPE '\\' OR lower(e.venue_name) LIKE ? ESCAPE '\\' OR lower(e.city) LIKE ? ESCAPE '\\' OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(COALESCE(e.lineup, '')) LIKE ? ESCAPE '\\')";
         array_push($p, $like, $like, $like, $like, $like);
     }
-    if (qs('category')) { $where[] = 'e.category = ?'; $p[] = qs('category'); }
+    // One category, or several ("music,comedy").
+    $cats = array_values(array_intersect(array_filter(explode(',', (string) (qs('categories') ?: qs('category') ?: ''))), ['music', 'festival', 'comedy', 'sport', 'arts', 'food', 'business', 'family', 'nightlife', 'other']));
+    if ($cats) { $where[] = 'e.category IN (' . placeholders($cats) . ')'; array_push($p, ...$cats); }
     if (qs('city')) { $where[] = 'e.city = ?'; $p[] = qs('city'); }
     // An age group also matches events for all ages.
     if (isset(AGE_GROUPS[qs('age') ?? ''])) { $where[] = "(',' || COALESCE(e.age_groups, '') || ',' LIKE ? OR e.age_groups = 'all')"; $p[] = '%,' . qs('age') . ',%'; }
@@ -30,9 +32,48 @@ route('GET', '/api/public/events', function () {
         array_push($p, iso_at((float) $monday->modify('+4 days')->format('U')), iso_at((float) $monday->modify('+7 days')->format('U')));
     }
     if (qs('when') === 'month') { $where[] = 'e.starts_at < ?'; $p[] = iso_in(30 * 86400); }
-    $events = rows('SELECT ' . PUBLIC_EVENT . ' FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE ' . implode(' AND ', $where) . ' ORDER BY e.featured DESC, e.starts_at LIMIT 60', $p);
+    // Today, tomorrow, the next 7 days, or a date range (South African days).
+    $tz = new DateTimeZone('Africa/Johannesburg');
+    $day = fn(string $d) => new DateTimeImmutable($d, $tz);
+    $span = match (qs('when')) {
+        'today' => [$day('today'), $day('tomorrow')],
+        'tomorrow' => [$day('tomorrow'), $day('tomorrow +1 day')],
+        'week' => [$day('today'), $day('today +7 days')],
+        default => null,
+    };
+    $isDate = fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v);
+    if (!$span && ($isDate(qs('from')) || $isDate(qs('to')))) {
+        $span = [$isDate(qs('from')) ? $day(qs('from')) : $day('today'), $isDate(qs('to')) ? $day(qs('to'))->modify('+1 day') : $day('today +2 years')];
+    }
+    // An event counts if any part of it falls in the range (festivals run for days).
+    if ($span) { $where[] = 'e.starts_at < ? AND e.ends_at > ?'; array_push($p, iso_at((float) $span[1]->format('U')), iso_at((float) $span[0]->format('U'))); }
+    // Ticket price: the cheapest ticket on sale, in rand.
+    $minP = qs('minPrice'); $maxP = qs('maxPrice');
+    $priceSql = "COALESCE((SELECT MIN(tt.price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale'), 0)";
+    if (is_numeric($minP) && $minP > 0) { $where[] = "$priceSql >= ?"; $p[] = (int) round($minP * 100); }
+    if (is_numeric($maxP)) { $where[] = "$priceSql <= ?"; $p[] = (int) round($maxP * 100); }
+    if (qs('province')) { $where[] = 'e.province = ?'; $p[] = qs('province'); }
+    if (qs('cashless') === '1') $where[] = 'e.cashless_enabled = 1';
+    // Near a place: "near=lat,lng" (the browser's location) or "near=Durban" (a town), within "km".
+    $near = null;
+    $nq = trim((string) qs('near', ''));
+    if (preg_match('/^(-?\d{1,2}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)$/', $nq, $m)) $near = [(float) $m[1], (float) $m[2]];
+    elseif ($nq !== '') $near = place_of($nq, null);
+    $km = is_numeric(qs('km')) ? max(1, min(2000, (float) qs('km'))) : null;
+    $limit = $near ? 500 : 60;
+    $events = rows('SELECT ' . PUBLIC_EVENT . ' FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE ' . implode(' AND ', $where) . " ORDER BY e.featured DESC, e.starts_at LIMIT $limit", $p);
+    if ($near) {
+        foreach ($events as &$e) { $at = place_of($e['city'], $e['province']); $e['distance_km'] = $at ? (int) round(km_between($near, $at)) : null; }
+        unset($e);
+        if ($km) $events = array_values(array_filter($events, fn($e) => $e['distance_km'] !== null && $e['distance_km'] <= $km));
+        if (qs('sort') === 'distance') usort($events, fn($a, $b) => ($a['distance_km'] ?? 99999) <=> ($b['distance_km'] ?? 99999) ?: strcmp($a['starts_at'], $b['starts_at']));
+        $events = array_slice($events, 0, 60);
+    }
     $cities = rows("SELECT city, count(*) AS n FROM events WHERE status = 'published' AND ends_at > ? GROUP BY city ORDER BY n DESC", [now_iso()]);
-    return ['events' => $events, 'cities' => $cities];
+    // The nearest known town to a location, so the page can say "near Johannesburg".
+    $nearName = null;
+    if ($near) { $best = INF; foreach (SA_PLACES as $name => $pl) { $d = km_between($near, [$pl[0], $pl[1]]); if ($d < $best) { $best = $d; $nearName = ucwords($name); } } }
+    return ['events' => $events, 'cities' => $cities, 'total' => count($events), 'near' => $nearName];
 });
 
 route('GET', '/api/public/events/:slug', function ($a) {
@@ -229,6 +270,16 @@ route('GET', '/api/public/payments/:id/payfast', function ($a) {
     $d = verify_link(qs('k'));
     if (!$d || ($d['p'] ?? '') !== $a['id']) throw not_found('This payment link has expired. Go back to your order and try again.');
     $p = row("SELECT * FROM payments WHERE id = ? AND provider = 'payfast' AND status = 'pending'", [$a['id']]);
+    if (!$p) {
+        // A Promote purchase: back to the organiser portal afterwards.
+        $pp = row("SELECT * FROM promotion_payments WHERE id = ? AND provider = 'payfast' AND status = 'pending'", [$a['id']]);
+        if (!$pp) throw conflict('This payment is no longer open.', 'payment_closed');
+        $promo = row('SELECT * FROM event_promotions WHERE id = ?', [$pp['promotion_id']]);
+        if ($promo['status'] !== 'pending_payment') throw conflict('This promotion is not waiting for payment.', 'order_not_pending');
+        $buyer = row('SELECT full_name, email FROM users WHERE id = ?', [$pp['created_by']]);
+        return payfast_form($pp, ['buyer_name' => $buyer['full_name'] ?? 'TicketRoom organiser', 'buyer_email' => $buyer['email'] ?? null, 'reference' => $promo['reference'],
+            'item_name' => "TicketRoom Promote {$promo['reference']}"], promo_return_url($promo));
+    }
     if (!$p) throw conflict('This payment is no longer open.', 'payment_closed');
     if ($p['purpose'] === 'topup') { $t = topup_pay_details($p); return payfast_form($p, $t, topup_return_url($t['event_id'])); }
     $o = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
@@ -240,6 +291,12 @@ route('GET', '/api/public/payments/:id/payfast', function ($a) {
 route('GET', '/api/public/payments/:id/sandbox', function ($a) {
     limit('payform', 30, 600);
     $p = sandbox_payment($a['id'], qs('k'));
+    if (isset($p['promotion_id'])) {
+        $o = row('SELECT p.reference, u.full_name AS buyer_name, u.email AS buyer_email, p.price_cents AS total_cents, e.title, p.event_id FROM event_promotions p
+                   JOIN events e ON e.id = p.event_id JOIN users u ON u.id = p.created_by WHERE p.id = ?', [$p['promotion_id']]);
+        return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']], 'purpose' => 'promotion', 'order' => $o,
+            'returnUrl' => promo_return_url($o)];
+    }
     if ($p['purpose'] === 'topup') {
         $t = topup_pay_details($p);
         return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']],
@@ -255,6 +312,7 @@ route('POST', '/api/public/payments/:id/sandbox', function ($a) {
     $b = check(body(), ['k' => R::str(['max' => 600]), 'outcome' => R::oneOf(['paid', 'failed', 'cancelled'])]);
     $p = sandbox_payment($a['id'], $b['k']);
     $r = sandbox_answer($p, $b['outcome']);
+    if (isset($p['promotion_id'])) return $r + ['returnUrl' => promo_return_url(row('SELECT event_id FROM event_promotions WHERE id = ?', [$p['promotion_id']]))];
     if ($p['purpose'] === 'topup') return $r + ['returnUrl' => topup_return_url((string) val('SELECT event_id FROM wallet_topups WHERE id = ?', [$p['topup_id']]))];
     $ref = val('SELECT reference FROM orders WHERE id = ?', [$p['order_id']]);
     return $r + ['returnUrl' => '/orders/' . $ref . '?k=' . rawurlencode(order_key($p['order_id'])) . ($b['outcome'] === 'cancelled' ? '&cancelled=1' : '')];
