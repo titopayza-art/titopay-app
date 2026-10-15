@@ -251,6 +251,10 @@ const UPGRADES = [
         "UPDATE orders SET test = 1 WHERE id IN (SELECT order_id FROM payments WHERE environment <> 'live')",
         'UPDATE tickets SET test = 1 WHERE order_id IN (SELECT id FROM orders WHERE test = 1)',
     ],
+    // Line-up on the event page (and Trending Artists on the home page).
+    10 => [
+        'ALTER TABLE events ADD COLUMN lineup TEXT',
+    ],
     // Cashless: wristbands and tags, event wallets topped up by card, vendors
     // and their POS tills, spending PINs. Touches only its own tables and
     // columns (see tr_upgrade_cashless), so it works whether or not other

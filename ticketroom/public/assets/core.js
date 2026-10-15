@@ -40,9 +40,10 @@ export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[
 // /api/config says so and feature-specific UI marked data-feature="…" hides.
 const ALL_FEATURES = { payments: true, cashless: true, pos: true, finance: true, sms: true, tags: true };
 let featurePromise;
+let configPromise;
+export const appConfig = () => (configPromise ||= fetch("/api/config", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
 export function features() {
-  featurePromise ||= fetch("/api/config", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
-    .then((c) => ({ ...ALL_FEATURES, ...(c.features || {}) }));
+  featurePromise ||= appConfig().then((c) => ({ ...ALL_FEATURES, ...(c.features || {}) }));
   return featurePromise;
 }
 features().then((f) => { for (const [k, on] of Object.entries(f)) document.documentElement.classList.toggle(`no-${k}`, !on); });
@@ -304,6 +305,13 @@ export async function header(el, { portal, active, box: signInBox } = {}) {
   // The app is open in this tab: a later visit to /account is on purpose (see account.js).
   try { sessionStorage.setItem("tr-launched", "1"); } catch { /* storage blocked */ }
   const [u, site] = await Promise.all([me(), siteInfo()]);
+  // Back from Google with a problem: say what happened, once.
+  const gq = new URLSearchParams(location.search);
+  if (gq.get("google")) {
+    toast(GOOGLE_ERRORS[gq.get("google")] || GOOGLE_ERRORS.unavailable, "bad");
+    gq.delete("google");
+    history.replaceState(history.state, "", location.pathname + (gq.toString() ? `?${gq}` : "") + location.hash);
+  }
   const here = PORTALS[portal];
   const mine = portalsFor(u);
   // On the public website: Events, Sell tickets, Help, then the person's main
@@ -415,12 +423,67 @@ export function footer(el) {
     <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p>
       <a class="footer-social" href="${INSTAGRAM}" target="_blank" rel="noopener">${svgIcon("instagram", 20)} @ticketroom_za on Instagram</a></div>
-    <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
+    <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Contact us</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
-    <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
+    <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li><li><button type="button" class="btn-link footer-link" data-cookie-settings>Cookie settings</button></li></ul></div>
   </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
   $("[data-sub]", el).append(subscribeForm("footer"));
+  $("[data-cookie-settings]", el).addEventListener("click", () => cookiePreferences());
+  cookieBanner();
   siteExtras().catch(() => {});
+}
+
+// ---------- cookie consent ----------
+// Necessary cookies (sign-in, security, your basket) are always on. Optional
+// ones are used only after you say yes: functional (remembering choices such
+// as the organiser link that brought you here) and analytics (counting visits
+// to improve the site; TicketRoom uses no third-party trackers or ads).
+const CONSENT_KEY = "tr_consent";
+const CONSENT_GROUPS = [
+  ["necessary", "Necessary", "Keep you signed in, protect forms against misuse and hold your tickets while you check out. The site can't work without these.", true],
+  ["functional", "Functional", "Remember choices you make, such as the organisation you last worked in, or the organiser link that brought you to an event so they're credited for the sale."],
+  ["analytics", "Analytics", "Count visits and page views so we can see what works and fix what doesn't. Counted on TicketRoom's own servers, never shared with ad networks."],
+];
+const readConsent = () => { try { return JSON.parse(localStorage.getItem(CONSENT_KEY) || "null"); } catch { return null; } };
+export const consent = (group) => group === "necessary" || !!readConsent()?.[group];
+function saveConsent(choice) {
+  const c = { v: 1, at: new Date().toISOString(), functional: !!choice.functional, analytics: !!choice.analytics };
+  try { localStorage.setItem(CONSENT_KEY, JSON.stringify(c)); } catch { /* private mode: asked again next visit */ }
+  // Saying no later removes what was kept under that group.
+  if (!c.functional) { try { localStorage.removeItem("tr_org"); for (const k of Object.keys(sessionStorage)) if (k.startsWith("tr_ref_")) sessionStorage.removeItem(k); } catch { /* ignore */ } }
+  document.cookie = `${CONSENT_KEY}=${c.functional ? "f" : ""}${c.analytics ? "a" : ""}-;path=/;max-age=${180 * 86400};samesite=lax${location.protocol === "https:" ? ";secure" : ""}`;
+  document.querySelector(".cookie-banner")?.remove();
+}
+export function cookieBanner() {
+  if (readConsent() || document.querySelector(".cookie-banner")) return;
+  const b = document.createElement("section");
+  b.className = "cookie-banner";
+  b.setAttribute("aria-label", "Cookie consent");
+  render(b, html`<div><strong>We value your privacy</strong><p class="small mb-0">We use necessary cookies to run TicketRoom. With your permission we also use functional and analytics cookies. You can change your mind any time under Cookie settings. <a href="/legal/cookies">Cookie Policy</a></p></div>
+    <div class="row"><button type="button" class="btn btn-ghost btn-sm" data-c="custom">Customise</button><button type="button" class="btn btn-ghost btn-sm" data-c="reject">Reject all</button><button type="button" class="btn btn-primary btn-sm" data-c="accept">Accept all</button></div>`);
+  document.body.append(b);
+  b.addEventListener("click", (e) => {
+    const k = e.target.closest("[data-c]")?.dataset.c;
+    if (k === "accept") saveConsent({ functional: true, analytics: true });
+    else if (k === "reject") saveConsent({});
+    else if (k === "custom") cookiePreferences();
+  });
+}
+export function cookiePreferences() {
+  const cur = readConsent() || {};
+  const d = dialog("Customise consent preferences", html`<form class="stack">
+    <p class="small mb-0">Choose which cookies TicketRoom may use. Necessary cookies are always active because the site doesn't work without them.</p>
+    ${CONSENT_GROUPS.map(([k, l, about, always]) => html`<div class="consent-row"><div><strong>${l}</strong><p class="small muted mb-0">${about}</p></div>
+      ${always ? html`<span class="badge good">Always active</span>` : html`<label class="switch"><input type="checkbox" name="${k}" ${raw(cur[k] ? "checked" : "")}><span class="sr-only">${l}</span><span class="track" aria-hidden="true"></span></label>`}</div>`)}
+    <div class="row end"><button type="button" class="btn btn-ghost" data-c="reject">Reject all</button><button type="button" class="btn btn-ghost" data-c="save">Save my preferences</button><button type="button" class="btn btn-primary" data-c="accept">Accept all</button></div></form>`);
+  d.addEventListener("click", (e) => {
+    const k = e.target.closest("[data-c]")?.dataset.c;
+    if (!k) return;
+    const f = $("form", d);
+    saveConsent(k === "accept" ? { functional: true, analytics: true } : k === "reject" ? {} : { functional: f.elements.functional.checked, analytics: f.elements.analytics.checked });
+    d.close();
+    toast("Your cookie preferences are saved.", "good");
+  });
 }
 
 // ---------- site information: banner, hours, assistant, callback ----------
@@ -599,6 +662,7 @@ export function authDialog(mode = "signin", { onDone, reason, portal = "site" } 
   const canSignUp = !staffBox && portal !== "scanner";
   const d = dialog(signup ? "Create your TicketRoom account" : "Sign in", html`
     ${reason ? html`<p class="callout">${reason}</p>` : ""}
+    ${staffBox || portal === "scanner" ? "" : html`<div class="stack mb" data-google hidden></div>`}
     <form class="stack" novalidate>
       ${signup ? html`<div class="field"><label for="a-name">Full name</label><input id="a-name" name="fullName" autocomplete="name" required></div>` : ""}
       <div class="field"><label for="a-email">Email</label><input id="a-email" name="email" type="email" autocomplete="email" required></div>
@@ -612,6 +676,7 @@ export function authDialog(mode = "signin", { onDone, reason, portal = "site" } 
         : html`<div class="row between small">${signup ? html`<span>Already have an account? <button type="button" class="btn-link" data-switch>Sign in</button></span>`
         : html`<button type="button" class="btn-link" data-forgot>Forgot password?</button>${canSignUp ? html`<span>New here? <button type="button" class="btn-link" data-switch>${portal === "organiser" ? "Start selling" : "Create account"}</button></span>` : ""}`}</div>`}
     </form>`);
+  wireGoogle(d, portal);
   const form = $("form", d);
   onSubmit(form, async (v) => {
     if (signup) {
@@ -652,9 +717,39 @@ export function authDialog(mode = "signin", { onDone, reason, portal = "site" } 
 }
 
 // Becoming an organiser in one go: your account and your organisation.
+// ---------- sign in with Google ----------
+// Shown only when an admin has switched it on under Integrations, and only on
+// the customer and organiser sign-in boxes: staff never sign in this way.
+const GOOGLE_G = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+export const GOOGLE_ERRORS = {
+  off: "Sign in with Google isn't switched on. Use your email and password instead.",
+  expired: "That Google sign-in took too long or was opened in another browser. Please try again.",
+  cancelled: "Google sign-in was cancelled.",
+  unavailable: "We couldn't reach Google just now. Please try again, or use your email and password.",
+  unverified: "Google hasn't confirmed that email address, so we can't use it to sign you in.",
+  suspended: "This account is suspended. Contact hello@ticketroom.co.za.",
+  not_allowed: "This account can't sign in with Google. Use your email and password.",
+  organiser_account: "This email belongs to an organiser account. Continue with Google on the organiser portal.",
+  customer_account: "This email belongs to a customer account. Continue with Google on the customer portal, or start selling with another email.",
+  maintenance: "TicketRoom is down for maintenance. Please try again shortly.",
+};
+function wireGoogle(root, portal) {
+  const box = $("[data-google]", root);
+  if (!box || !["site", "customer", "organiser"].includes(portal)) return;
+  appConfig().then((c) => {
+    if (!c.googleSignIn) return;
+    const next = location.pathname + location.search + location.hash;
+    render(box, html`<a class="btn btn-google btn-block" href="/api/auth/google/start?portal=${portal}&next=${encodeURIComponent(next)}">${raw(GOOGLE_G)}<span>Continue with Google</span></a>
+      <p class="tiny muted mb-0 center">New to TicketRoom? Continuing with Google creates your ${portal === "organiser" ? "organiser" : ""} account and means you accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a>, <a href="/legal/terms" target="_blank">Terms and Conditions</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</p>
+      <div class="or-line"><span>or</span></div>`);
+    box.hidden = false;
+  });
+}
+
 export function organiserSignupDialog() {
   const d = dialog("Start selling on TicketRoom", html`<form class="stack" novalidate>
     <p class="muted mb-0">One form, two minutes. TicketRoom checks every organiser before their first event goes live, usually within one working day. You can build your events while you wait.</p>
+    <div class="stack" data-google hidden></div>
     <div class="field"><label for="os-org">Organisation or trading name</label><input id="os-org" name="organisation" required maxlength="120" autocomplete="organization"></div>
     <div class="grid-2"><div class="field"><label for="os-name">Your full name</label><input id="os-name" name="fullName" required autocomplete="name"></div>
       <div class="field"><label for="os-phone">Mobile number <span class="muted">(optional)</span></label><input id="os-phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567"></div></div>
@@ -664,6 +759,7 @@ export function organiserSignupDialog() {
     <label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
     <button class="btn btn-primary btn-block">Create my organiser account</button>
     <p class="small mb-0">Already have a TicketRoom account? <a href="/organisers">Sign in</a> and set up your organisation there.</p></form>`, { wide: true });
+  wireGoogle(d, "organiser");
   onSubmit($("form", d), async (v) => {
     matchPasswords(v, "password", "passwordConfirm");
     const r = await post("/api/organiser/signup", v);

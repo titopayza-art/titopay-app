@@ -149,7 +149,26 @@ function org_event_shape(bool $partial = false): array
         'refundPolicy' => R::text(['optional' => true, 'max' => 2000]), 'accessibilityInfo' => R::text(['optional' => true, 'max' => 2000]), 'ageRestriction' => R::str(['optional' => true, 'max' => 60]),
         'transfersEnabled' => org_bool(), 'cashlessEnabled' => org_bool(), 'imageUploadId' => R::uuid(['optional' => true]),
         'isFree' => org_bool(), 'ageGroups' => R::arr(R::oneOf(array_keys(AGE_GROUPS)), ['optional' => true, 'max' => 8]),
+        'lineup' => R::text(['optional' => true, 'max' => 4000]),
     ];
+}
+// The line-up is typed one act per line, optionally starting with a time:
+// "20:00 Black Coffee". Stored as JSON: [{"name":"Black Coffee","time":"20:00"}].
+function org_lineup(array $b): array
+{
+    if (!array_key_exists('lineup', $b)) return $b;
+    $acts = [];
+    foreach (preg_split('/\R/', (string) $b['lineup']) as $line) {
+        $line = trim(preg_replace('/\s+/', ' ', $line));
+        if ($line === '') continue;
+        $time = null;
+        if (preg_match('/^([01]?\d|2[0-3])[:h.]([0-5]\d)\s*[-,|]?\s*(.+)$/u', $line, $m)) { $time = sprintf('%02d:%s', (int) $m[1], $m[2]); $line = $m[3]; }
+        $name = mb_substr(trim($line, " -,|"), 0, 80);
+        if ($name !== '') $acts[] = ['name' => $name, 'time' => $time];
+    }
+    if (count($acts) > 60) throw bad('A line-up can list up to 60 acts.', ['lineup' => 'Up to 60 lines.']);
+    $b['lineup'] = $acts ? json_encode($acts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
+    return $b;
 }
 // Target age groups are stored as "18_24,25_34". An 18+ event cannot be aimed
 // at children, which would only confuse buyers.
@@ -168,7 +187,7 @@ const ORG_EVENT_COLS = ['title' => 'title', 'summary' => 'summary', 'description
     'city' => 'city', 'province' => 'province', 'startsAt' => 'starts_at', 'endsAt' => 'ends_at', 'doorsOpenAt' => 'doors_open_at', 'capacity' => 'capacity',
     'salesStartAt' => 'sales_start_at', 'salesEndAt' => 'sales_end_at', 'refundPolicy' => 'refund_policy', 'accessibilityInfo' => 'accessibility_info',
     'ageRestriction' => 'age_restriction', 'transfersEnabled' => 'transfers_enabled', 'cashlessEnabled' => 'cashless_enabled', 'imageUploadId' => 'image_upload_id', 'isFree' => 'is_free',
-    'ageGroups' => 'age_groups'];
+    'ageGroups' => 'age_groups', 'lineup' => 'lineup'];
 
 function org_assert_upload(string $orgId, ?string $uploadId): void
 {
@@ -478,7 +497,7 @@ route('POST', '/api/organiser/:orgId/events', function ($a) {
     ['organiser' => $org] = organiser_access($u, $a['orgId'], ORG_EDIT);
     $b = check(body(), org_event_shape());
     cashless_guard_switch(null, $b);
-    $b = org_age_groups($b, $b['ageRestriction'] ?? null);
+    $b = org_lineup(org_age_groups($b, $b['ageRestriction'] ?? null));
     if ($b['endsAt'] <= $b['startsAt']) throw bad('The event must end after it starts.', ['endsAt' => 'Must be after the start.']);
     org_assert_upload($org['id'], $b['imageUploadId'] ?? null);
     // The same event twice (same name, same start) is almost always a double
@@ -519,7 +538,7 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId', function ($a) {
     ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
     $b = check(body(), org_event_shape(true));
     if (array_key_exists('ageGroups', body()) && !isset($b['ageGroups'])) $b['ageGroups'] = [];
-    $b = org_age_groups($b, array_key_exists('ageRestriction', $b) ? $b['ageRestriction'] : $event['age_restriction']);
+    $b = org_lineup(org_age_groups($b, array_key_exists('ageRestriction', $b) ? $b['ageRestriction'] : $event['age_restriction']));
     // An empty list clears the age groups; other empty values are left alone.
     $b = array_filter($b, fn($v, $k) => $v !== null || $k === 'ageGroups', ARRAY_FILTER_USE_BOTH);
     if (in_array($event['status'], ['cancelled', 'completed'], true)) throw conflict('This event can no longer be edited.', 'event_locked');
@@ -569,6 +588,14 @@ route('POST', '/api/organiser/:orgId/events/:eventId/submit', function ($a) {
     q("UPDATE events SET status = 'pending_approval', updated_at = ? WHERE id = ?", [now_iso(), $event['id']]);
     audit('event.submitted', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id']]);
     return ['status' => 'pending_approval'];
+});
+
+// Preview: a private link to the event page as buyers will see it, for the
+// organiser's team (and anyone they share it with) while it is not yet live.
+route('GET', '/api/organiser/:orgId/events/:eventId/preview-link', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+    $url = '/events/' . $event['slug'] . ($event['status'] === 'published' ? '' : '?preview=' . rawurlencode(sign_link(['pv' => $event['id']], 14 * 86400)));
+    return ['url' => $url, 'expiresInDays' => $event['status'] === 'published' ? null : 14];
 });
 
 route('POST', '/api/organiser/:orgId/events/:eventId/request-cancellation', function ($a) {

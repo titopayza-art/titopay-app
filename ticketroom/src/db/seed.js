@@ -17,10 +17,11 @@ const PASSWORD = process.env.SEED_PASSWORD || "TicketRoom!2026";
 const day = 864e5;
 const at = (days, hour = 18) => { const d = new Date(Date.now() + days * day); d.setUTCHours(hour - 2, 0, 0, 0); return d.toISOString(); };
 
-async function user(email, name, phone, roles = []) {
+// One account, one portal: staff (roles), organiser or customer.
+async function user(email, name, phone, roles = [], type = roles.length ? "staff" : "customer") {
   const { rows } = await db.query(
-    `INSERT INTO users (email, full_name, phone, password_hash, email_verified_at) VALUES ($1,$2,$3,$4, now())
-     ON CONFLICT (lower(email)) DO UPDATE SET full_name = EXCLUDED.full_name RETURNING *`, [email, name, phone, hashSecret(PASSWORD)]);
+    `INSERT INTO users (email, full_name, phone, password_hash, email_verified_at, account_type) VALUES ($1,$2,$3,$4, now(), $5)
+     ON CONFLICT (lower(email)) DO UPDATE SET full_name = EXCLUDED.full_name, account_type = EXCLUDED.account_type RETURNING *`, [email, name, phone, hashSecret(PASSWORD), type]);
   for (const role of roles) await db.query("INSERT INTO platform_roles (user_id, role) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].id, role]);
   return rows[0];
 }
@@ -41,9 +42,11 @@ async function main() {
   if (existing[0]) { console.log("Seed data already present."); return db.close(); }
 
   const admin = await user("admin@ticketroom.test", "Ayanda Admin", "+27820000001", ["admin"]);
+  // The first admin is the platform owner.
+  await db.query("INSERT INTO platform_meta (key, value) VALUES ('owner_user_id', $1) ON CONFLICT (key) DO NOTHING", [admin.id]);
   const finance = await user("finance@ticketroom.test", "Fatima Finance", "+27820000002", ["finance"]);
   await user("support@ticketroom.test", "Sipho Support", "+27820000003", ["support"]);
-  const owner = await user("organiser@ticketroom.test", "Olwethu Organiser", "+27820000004");
+  const owner = await user("organiser@ticketroom.test", "Olwethu Organiser", "+27820000004", [], "organiser");
   const staff = await user("staff@ticketroom.test", "Sam Scanner", "+27820000005");
   const cashier = await user("vendor@ticketroom.test", "Vusi Vendor", "+27820000006");
   const fan = await user("fan@ticketroom.test", "Thandi Fan", "+27820000007");

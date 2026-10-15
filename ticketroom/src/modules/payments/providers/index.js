@@ -12,12 +12,15 @@
 //   health() -> { ok, detail }
 //
 // Card gateways: simulated | yoco | payfast   (PAYMENT_PROVIDER)
+// Practice:      sandbox (TicketRoom's own practice payment page; always test,
+//                switched on from Admin portal → Integrations)
 // Wallet:        titopay                       (TITOPAY_WALLET_ENABLED)
 const config = require("../../../config");
 
 const registry = {
   none: () => require("./none"),
   simulated: () => require("./simulated"),
+  sandbox: () => require("./sandbox"),
   yoco: () => require("./yoco"),
   payfast: () => require("./payfast"),
   titopay: () => require("./titopay"),
@@ -38,4 +41,15 @@ const installed = () => Object.keys(registry);
 
 const cardPaymentsEnabled = () => config.payments.provider !== "none";
 
-module.exports = { getProvider, providerForMethod, installed, cardPaymentsEnabled };
+// Test mode: a provider's sandbox or test keys, or the TicketRoom sandbox.
+// Orders paid in test mode are test orders (tickets refused at the gate, money
+// in "test:" ledger accounts). "mock" (the built-in simulator and the local
+// provider mocks) stands in for a live provider in development and tests.
+const isTestEnvironment = (env) => env === "sandbox" || env === "test";
+// Is the card provider in test mode right now?
+function paymentsTest() {
+  if (!cardPaymentsEnabled()) return false;
+  try { return isTestEnvironment(getProvider(config.payments.provider).environment); } catch { return false; }
+}
+
+module.exports = { getProvider, providerForMethod, installed, cardPaymentsEnabled, isTestEnvironment, paymentsTest };

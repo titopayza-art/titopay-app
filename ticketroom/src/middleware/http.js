@@ -57,7 +57,7 @@ async function loadSession(req, _res, next) {
     const token = req.cookies[SESSION_COOKIE];
     if (!token || token.length > 100) return next();
     const { rows } = await db.query(
-      `SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at,
+      `SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at, u.account_type,
               (u.spending_pin_hash IS NOT NULL) AS has_pin,
               COALESCE(array_agg(pr.role) FILTER (WHERE pr.role IS NOT NULL), '{}') AS platform_roles
          FROM sessions s JOIN users u ON u.id = s.user_id
@@ -76,7 +76,10 @@ async function loadSession(req, _res, next) {
         phone: row.phone,
         emailVerified: !!row.email_verified_at,
         hasPin: row.has_pin,
-        platformRoles: new Set(row.platform_roles),
+        accountType: row.account_type,
+        // Staff powers belong to staff accounts only: a role row on a customer
+        // or organiser account, however it got there, counts for nothing.
+        platformRoles: new Set(row.account_type === "staff" ? row.platform_roles : []),
       };
       req.user.primaryRole = ["admin", "finance", "support"].find((r) => req.user.platformRoles.has(r)) || "user";
     }

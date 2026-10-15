@@ -74,7 +74,7 @@ test("unconfirmed accounts can't sign in; the link signs in once", async () => {
   const token = verifyToken(await lastMail(email));
   const first = await c.post("/api/auth/verify-email", { token });
   assert.equal(first.status, 200);
-  assert.deepEqual(first.body, { ok: true, signedIn: true, firstName: "Thabo", tickets: 0, organiser: false });
+  assert.deepEqual(first.body, { ok: true, signedIn: true, accountType: "customer", firstName: "Thabo", tickets: 0, organiser: false });
   assert.equal((await c.get("/api/auth/me")).body.user.email, email, "signed in by the link");
   const again = await anon().post("/api/auth/verify-email", { token });
   assert.equal(again.body.signedIn, false, "an old link is not a way back in");
@@ -142,9 +142,10 @@ test("guest checkout: private links only, and the tickets follow into a real acc
   const finish = await lastMail("guest.one@test.local");
   assert.equal(finish.subject, "Finish creating your TicketRoom account");
   assert.match(finish.body, /You've booked with us before, so your tickets are already waiting/);
-  // Organiser sign-up with a guest's email creates nothing until the inbox owner acts.
+  // Organiser sign-up with a guest's email: one email, one account, so it is taken.
   const os = await anon().post("/api/organiser/signup", { fullName: "Someone Else", email: "guest.one@test.local", password: "attacker-pass-123", organisation: "Not Theirs Events", acceptTerms: true });
-  assert.equal(os.status, 201);
+  assert.equal(os.status, 409);
+  assert.equal(os.body.error.code, "email_taken");
   assert.equal((await h.one("SELECT count(*)::int AS n FROM organisers WHERE name = 'Not Theirs Events'")).n, 0, "no organiser for a guest email");
   // "Didn't get the email?" for a guest sends the same kind of link, not a confirmation link.
   await anon().post("/api/auth/verify-email/resend", { email: "guest.one@test.local" });
@@ -153,7 +154,7 @@ test("guest checkout: private links only, and the tickets follow into a real acc
   const fc = anon();
   const done = await fc.post("/api/auth/password/reset", { token: resetToken(finish2), password: "guest-new-pass-1" });
   assert.equal(done.status, 200);
-  assert.deepEqual(done.body, { ok: true, signedIn: true, tickets: 3, staff: false, organiser: false });
+  assert.deepEqual(done.body, { ok: true, signedIn: true, tickets: 3, accountType: "customer", staff: false, organiser: false });
   await fc.refreshCsrf();
   assert.equal((await fc.get("/api/auth/me")).body.user.email, "guest.one@test.local", "the reset signs them straight in");
   const u = await h.one("SELECT guest, email_verified_at FROM users WHERE email = 'guest.one@test.local'");
@@ -218,7 +219,8 @@ test("one-step organiser sign-up: unconfirmed account, pending organiser, owner 
 test("guests are treated like new people by team and scanner invites", async () => {
   await guestOrder(anon(), ev.event, ev.ticketTypes[0], { fullName: "Sipho Scanner", email: "sipho.scan@test.local" });
   const add = await owner.post(`/api/organiser/${ev.organiser.id}/members`, { email: "sipho.scan@test.local", role: "viewer" });
-  assert.equal(add.status, 404, "a guest has no account to add to the team yet");
+  assert.equal(add.status, 409, "a guest's email belongs to a customer account, not an organiser account");
+  assert.equal(add.body.error.code, "not_organiser_account");
   const staff = await owner.post(`/api/organiser/${ev.organiser.id}/events/${ev.event.id}/staff`, { email: "sipho.scan@test.local", canScan: true });
   assert.equal(staff.status, 201);
   assert.equal(staff.body.invited, true);
@@ -234,9 +236,8 @@ test("guests are treated like new people by team and scanner invites", async () 
 
   await guestOrder(anon(), ev.event, ev.ticketTypes[0], { fullName: "Team Guest", email: "team.guest@test.local" });
   const t2 = await admin.post("/api/admin/staff", { email: "team.guest@test.local", fullName: "Team Guest", roles: ["support"] });
-  assert.equal(t2.status, 201);
-  assert.equal(t2.body.invited, true);
-  assert.match((await lastMail("team.guest@test.local")).body, /#\/reset\//);
+  assert.equal(t2.status, 409, "staff need their own work email");
+  assert.equal(t2.body.error.code, "not_staff_account");
 });
 
 test("customer care passes a question to the organiser, who answers the customer", async () => {
@@ -295,11 +296,14 @@ test("customer care passes a question to the organiser, who answers the customer
   assert.deepEqual(mine.body.messages.map((x) => x.from), ["ticketroom", "organiser"]);
   assert.match(mine.body.messages[1].body, /secure parking/);
   assert.ok(!mine.body.messages.some((x) => /Customer asks about parking/.test(x.body)), "internal notes stay internal");
-  assert.equal((await owner.get(`/api/me/support/${c.reference}`)).status, 404, "only the customer's own cases");
+  assert.equal((await owner.get(`/api/me/support/${c.reference}`)).status, 403, "the customer portal API is for customer accounts");
 
   // TicketRoom takes it back; the organiser can no longer answer, and can't hand back what isn't theirs.
   assert.equal((await admin.post(`/api/admin/support/${c.id}/take-back`)).body.case.handled_by, "ticketroom");
-  assert.equal((await owner.post(`/api/organiser/${ev.organiser.id}/queries/${c.id}/reply`, { message: "One more thing" })).body.error.code, "not_yours");
+  // Taken back: the case is no longer the organiser's at all.
+  assert.equal((await owner.post(`/api/organiser/${ev.organiser.id}/queries/${c.id}/reply`, { message: "One more thing" })).status, 404);
+  const back = await h.one("SELECT organiser_id, event_id FROM support_cases WHERE id = $1", [c.id]);
+  assert.deepEqual(back, { organiser_id: null, event_id: null });
   const r2 = await admin.post(`/api/admin/support/${c.id}/reply`, { message: "Anything else we can help with?" });
   assert.equal(r2.status, 200);
   assert.match((await lastMail(fan.user.email)).body, /Ayanda, TicketRoom customer care/);

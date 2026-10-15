@@ -68,7 +68,10 @@ function compare(r, p) {
 
 // Ledger-wide integrity checks independent of any provider.
 async function ledgerIntegrity() {
-  const { rows: total } = await db.query("SELECT COALESCE(SUM(amount_cents),0)::bigint AS s, COUNT(*)::int AS n FROM ledger_entries");
+  // Real money only: test-mode payments are booked to "test:" accounts.
+  const { rows: total } = await db.query(
+    `SELECT COALESCE(SUM(e.amount_cents),0)::bigint AS s, COUNT(*) FILTER (WHERE a.code NOT LIKE 'test:%')::int AS n, COUNT(*) FILTER (WHERE a.code LIKE 'test:%')::int AS t
+       FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id`);
   const { rows: unbalanced } = await db.query("SELECT journal_id FROM ledger_entries GROUP BY journal_id HAVING SUM(amount_cents) <> 0 LIMIT 10");
   const { rows: clearing } = await db.query(
     `SELECT a.code, COALESCE(SUM(e.amount_cents),0)::bigint AS ledger_cents FROM ledger_accounts a LEFT JOIN ledger_entries e ON e.account_id = a.id
@@ -76,14 +79,14 @@ async function ledgerIntegrity() {
   const out = [];
   for (const c of clearing) {
     const provider = c.code.split(":")[1];
-    const { rows } = await db.query("SELECT COALESCE(SUM(amount_cents - refunded_cents),0)::bigint AS s FROM payments WHERE provider = $1 AND status IN ('confirmed','refunded','partially_refunded')", [provider]);
+    const { rows } = await db.query("SELECT COALESCE(SUM(amount_cents - refunded_cents),0)::bigint AS s FROM payments WHERE provider = $1 AND environment NOT IN ('sandbox','test') AND status IN ('confirmed','refunded','partially_refunded')", [provider]);
     // Provider clearing should equal net captured, less what the provider has already settled to our bank.
     const { rows: settled } = await db.query(
       `SELECT COALESCE(SUM(e.amount_cents),0)::bigint AS s FROM ledger_entries e JOIN journals j ON j.id = e.journal_id JOIN ledger_accounts a ON a.id = e.account_id
         WHERE j.kind = 'provider_settlement' AND a.code = $1`, [c.code]);
     out.push({ account: c.code, ledgerCents: c.ledger_cents, expectedCents: rows[0].s + settled[0].s, ok: c.ledger_cents === rows[0].s + settled[0].s });
   }
-  return { entries: total[0].n, sumCents: total[0].s, balanced: total[0].s === 0 && unbalanced.length === 0, unbalancedJournals: unbalanced.map((r) => r.journal_id), clearing: out };
+  return { entries: total[0].n, testEntries: total[0].t, sumCents: total[0].s, balanced: total[0].s === 0 && unbalanced.length === 0, unbalancedJournals: unbalanced.map((r) => r.journal_id), clearing: out };
 }
 
 module.exports = { run, ledgerIntegrity, parseCsv };

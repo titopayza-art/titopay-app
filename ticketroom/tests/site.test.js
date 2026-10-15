@@ -72,7 +72,7 @@ test("maintenance mode: visitors blocked, staff and webhooks still work", async 
   assert.equal((await admin.put("/api/admin/settings/maintenance", { enabled: true, message: "Upgrading <tonight>" })).status, 200);
   const page = await anon.get("/");
   assert.equal(page.status, 503);
-  assert.match(page.body, /Upgrading &#60;tonight&#62;/);
+  assert.match(page.body, /Upgrading &lt;tonight&gt;/);
   assert.doesNotMatch(page.body, /TitoPay/);
   assert.equal((await anon.get("/api/public/events")).status, 503);
   assert.equal((await anon.get("/api/health")).status, 200);
@@ -173,7 +173,7 @@ test("organisers invite scanner staff by email and see a live check-in count", a
   assert.equal(inv.status, 201);
   assert.equal(inv.body.invited, true);
   const mail = await h.one("SELECT subject, body FROM message_outbox WHERE to_address = 'gate1@test.local'");
-  assert.match(mail.body, /account#\/reset\//);
+  assert.match(mail.body, /\/scan#\/reset\//, "scanner invites open the scanner");
   const existing = await h.user({ name: "Existing Staff" });
   const add = await owner.post(`${A}/events/${ev.event.id}/staff`, { email: existing.user.email });
   assert.equal(add.body.invited, false);

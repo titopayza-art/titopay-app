@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog, dialog, consent } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -47,6 +47,7 @@ async function home() {
         <label class="sr-only" for="age">Age group</label><select id="age" class="chip-select"><option value="">Any age group</option>${Object.entries(AGE_GROUPS).filter(([k]) => k !== "all").map(([k, l]) => html`<option value="${k}" ${raw(state.age === k ? "selected" : "")}>${l}</option>`)}</select></div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
+    <section class="section pt-0 hidden" id="trending"><div class="wrap"><h2>Trending artists</h2><div class="artist-rail mt" id="artist-rail"></div></div></section>
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
       <div><span class="cat-label">For organisers</span><h2>Putting on an event? List it with us.</h2>
@@ -86,43 +87,89 @@ async function home() {
       <div class="meta"><h3>${a.title}</h3>${a.subtitle ? html`<span>${a.subtitle}</span>` : ""}</div></a>`)}`);
     $$("[data-ad]").forEach((a) => a.addEventListener("click", () => { navigator.sendBeacon?.(`/api/site/posters/${a.dataset.ad}/click`) || post(`/api/site/posters/${a.dataset.ad}/click`).catch(() => {}); }));
   };
+  // Trending artists: acts on upcoming events, ranked by recent sales and likes.
+  get("/api/public/artists/trending").then(({ artists }) => {
+    if (!artists.length) return;
+    $("#trending").classList.remove("hidden");
+    const initials = (n) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+    render($("#artist-rail"), html`${artists.map((a) => html`<button type="button" class="artist" data-artist="${a.name}">
+      <span class="artist-pic">${a.next.image_upload_id ? html`<img src="/media/${a.next.image_upload_id}" alt="" loading="lazy">` : html`<span>${initials(a.name)}</span>`}</span>
+      <strong>${a.name}</strong><span class="small muted">${a.eventCount > 1 ? `${a.eventCount} events` : `${fmtDate(a.next.starts_at, { day: "numeric", month: "short" })}, ${a.next.city}`}</span></button>`)}`);
+    $$("[data-artist]").forEach((b) => b.addEventListener("click", () => { state.q = b.dataset.artist; $("#q").value = state.q; load(); $("#grid").scrollIntoView({ behavior: "smooth", block: "start" }); }));
+  }).catch(() => {});
   showAds(await siteInfo());
   await load();
 }
 
 // ---------------- event page + checkout ----------------
 async function eventPage(slug) {
-  const [{ event: e, ticketTypes }, cfg] = await Promise.all([get(`/api/public/events/${encodeURIComponent(slug)}`), get("/api/config")]);
+  const pv = new URLSearchParams(location.search).get("preview");
+  const [{ event: e, ticketTypes }, cfg] = await Promise.all([get(`/api/public/events/${encodeURIComponent(slug)}${pv ? `?preview=${encodeURIComponent(pv)}` : ""}`), get("/api/config")]);
+  // Previews are private: keep them out of search engines.
+  if (e.preview) { const m = document.createElement("meta"); m.name = "robots"; m.content = "noindex"; document.head.append(m); }
   document.title = `${e.title} | TicketRoom`;
   const ref = new URLSearchParams(location.search).get("ref");
-  if (ref) { sessionStorage.setItem(`tr_ref_${slug}`, ref); post(`/api/public/events/${slug}/click`, { ref }).catch(() => {}); }
+  // The organiser link that brought the buyer here: kept for later visits only with functional consent.
+  if (ref) { if (consent("functional")) { try { sessionStorage.setItem(`tr_ref_${slug}`, ref); } catch { /* private mode */ } } post(`/api/public/events/${slug}/click`, { ref }).catch(() => {}); }
   const qty = Object.fromEntries(ticketTypes.map((t) => [t.id, 0]));
   const closed = !e.salesOpen;
+  const lineup = Array.isArray(e.lineup) ? e.lineup : [];
+  const place = [e.venue_name, e.address, e.city, e.province].filter(Boolean).join(", ");
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`;
+  const day = (d) => fmtDate(d, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  const tabs = [["info", "Info"], ...(lineup.length ? [["lineup", "Line up"]] : []), ["venue", "Venue"]];
   render(main, html`
+    ${e.preview ? html`<div class="preview-bar" role="note"><div class="wrap row between"><span><strong>Preview.</strong> Only people with this link can see this page. Tickets go on sale once it is published.</span>
+      ${e.previewOrganiserId ? html`<a class="btn btn-sm btn-primary" href="/organisers#/events/${e.id}">Back to publish</a>` : ""}</div></div>` : ""}
     <section class="event-hero">${poster(e)}<span class="shade"></span><div class="wrap">
-      <div class="crumbs"><a href="/">Events</a> › <span class="muted">${e.category}</span></div>
-      <span class="cat-label">${e.category}</span><h1>${e.title}</h1>
+      <div class="crumbs"><a href="/">Events</a> › <a href="/?category=${e.category}">${e.category}</a></div>
+      <span class="cat-badge">${e.category}</span><h1>${e.title}</h1>
       ${e.summary ? html`<p class="lead">${e.summary}</p>` : ""}
-      <div class="event-facts"><span>${icon("calendar")}${fmtDate(e.starts_at, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><span>${icon("clock")}${fmtTime(e.starts_at)} to ${fmtTime(e.ends_at)}</span><span>${icon("pin")}${e.venue_name}, ${e.city}</span></div>
-      <div class="event-actions" data-actions></div>
+      <div class="event-facts"><span>${icon("calendar")}${day(e.starts_at)}${dayNum(e.starts_at) === dayNum(e.ends_at) && monShort(e.starts_at) === monShort(e.ends_at) ? "" : ` to ${day(e.ends_at)}`}</span>
+        <span>${icon("clock")}${fmtTime(e.starts_at)} to ${fmtTime(e.ends_at)} SAST${e.doors_open_at ? ` · doors ${fmtTime(e.doors_open_at)}` : ""}</span>
+        <a class="event-place" href="${mapUrl}" target="_blank" rel="noopener">${icon("pin")}${place}</a></div>
+      <div class="row mt"><a class="btn btn-primary" href="#box" data-buy>${e.is_free ? "Get free tickets" : "Buy tickets"}</a><div class="event-actions" data-actions></div></div>
+      ${e.cashless_enabled ? html`<p class="cashless-note"><strong>This event is cashless!</strong> Pay for food and drinks with your wristband. <button type="button" class="btn-link" data-cashless>More info</button></p>` : ""}
       ${e.status === "cancelled" ? html`<p class="callout bad mt"><strong>This event has been cancelled.</strong> Ticket holders are refunded automatically.</p>` : ""}
     </div></section>
     <div class="wrap event-layout">
       <div class="stack-lg">
-        <section class="card"><h2>About this event</h2><div class="prose">${e.description || e.summary || ""}</div></section>
-        <section class="card"><h2>Venue</h2><p class="mb-0"><strong>${e.venue_name}</strong><br>${e.address ? html`${e.address}<br>` : ""}${e.city}${e.province ? `, ${e.province}` : ""}</p></section>
-        ${e.accessibility_info ? html`<section class="card"><h2>Accessibility</h2><p class="prose mb-0">${e.accessibility_info}</p></section>` : ""}
-        <section class="card"><h2>Good to know</h2><dl class="dl">
-          <dt>Organiser</dt><dd>${e.organiser_name}${e.organiser_ref ? html` <span class="small muted mono nowrap">${e.organiser_ref}</span>` : ""}</dd>
-          ${e.ref ? html`<dt>Event ID</dt><dd class="mono">${e.ref}</dd>` : ""}
-          ${e.age_groups ? html`<dt>Made for</dt><dd>${ageGroupText(e.age_groups)}</dd>` : ""}
-          ${e.age_restriction ? html`<dt>Age</dt><dd>${e.age_restriction}</dd>` : ""}
-          <dt>Transfers</dt><dd>${e.transfers_enabled ? "Free ticket transfers until the event starts" : "Tickets are not transferable"}</dd>
-          ${e.cashless_enabled ? html`<dt>Cashless</dt><dd>This is a cashless event. Link a wristband and top up in your account.</dd>` : ""}
-          <dt>Refunds</dt><dd>${e.refund_policy}</dd></dl></section>
+        <div class="tabs event-tabs" role="tablist">${tabs.map(([k, l], i) => html`<button type="button" role="tab" id="tab-${k}" aria-controls="panel-${k}" aria-selected="${i === 0}" data-tab="${k}">${l}</button>`)}</div>
+        <div role="tabpanel" id="panel-info" aria-labelledby="tab-info" class="stack-lg">
+          <section class="card"><h2>About this event</h2><div class="prose">${e.description || e.summary || ""}</div></section>
+          ${e.accessibility_info ? html`<section class="card"><h2>Accessibility</h2><p class="prose mb-0">${e.accessibility_info}</p></section>` : ""}
+          <section class="card"><h2>Good to know</h2><dl class="dl">
+            <dt>Organiser</dt><dd>${e.organiser_name}${e.organiser_ref ? html` <span class="small muted mono nowrap">${e.organiser_ref}</span>` : ""}</dd>
+            ${e.ref ? html`<dt>Event ID</dt><dd class="mono">${e.ref}</dd>` : ""}
+            ${e.age_groups ? html`<dt>Made for</dt><dd>${ageGroupText(e.age_groups)}</dd>` : ""}
+            ${e.age_restriction ? html`<dt>Age</dt><dd>${e.age_restriction}</dd>` : ""}
+            <dt>Transfers</dt><dd>${e.transfers_enabled ? "Free ticket transfers until the event starts" : "Tickets are not transferable"}</dd>
+            ${e.cashless_enabled ? html`<dt>Cashless</dt><dd>This is a cashless event. Link a wristband and top up in your account.</dd>` : ""}
+            <dt>Refunds</dt><dd>${e.refund_policy}</dd></dl></section>
+        </div>
+        ${lineup.length ? html`<div role="tabpanel" id="panel-lineup" aria-labelledby="tab-lineup" hidden><section class="card"><h2>Line up</h2>
+          <ol class="lineup">${lineup.map((a, i) => html`<li class="${i === 0 ? "headliner" : ""}">${a.time ? html`<span class="lineup-time">${a.time}</span>` : ""}<a href="/?q=${encodeURIComponent(a.name)}">${a.name}</a></li>`)}</ol></section></div>` : ""}
+        <div role="tabpanel" id="panel-venue" aria-labelledby="tab-venue" hidden><section class="card stack"><h2>Venue</h2>
+          <p class="mb-0"><strong>${e.venue_name}</strong><br>${e.address ? html`${e.address}<br>` : ""}${e.city}${e.province ? `, ${e.province}` : ""}</p>
+          ${e.doors_open_at ? html`<p class="mb-0">Doors open at <strong>${fmtTime(e.doors_open_at)}</strong> SAST.</p>` : ""}
+          <div class="row"><a class="btn btn-ghost btn-sm" href="${mapUrl}" target="_blank" rel="noopener">Open in Maps</a><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(place)}" target="_blank" rel="noopener">Directions</a></div></section></div>
       </div>
       <aside class="card ticket-box" id="box" aria-labelledby="tix-h"></aside>
     </div>`);
+  // Info / Line up / Venue tabs, keyboard friendly.
+  const tabBtns = $$("[data-tab]");
+  const showTab = (k) => tabBtns.forEach((b) => { const on = b.dataset.tab === k; b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1; $(`#panel-${b.dataset.tab}`).hidden = !on; });
+  tabBtns.forEach((b, i) => {
+    b.addEventListener("click", () => showTab(b.dataset.tab));
+    b.addEventListener("keydown", (ev) => { const d = ev.key === "ArrowRight" ? 1 : ev.key === "ArrowLeft" ? -1 : 0; if (!d) return; const n = tabBtns[(i + d + tabBtns.length) % tabBtns.length]; n.focus(); showTab(n.dataset.tab); });
+  });
+  showTab("info");
+  $("[data-buy]").addEventListener("click", (ev) => { ev.preventDefault(); $("#box").scrollIntoView({ behavior: "smooth", block: "start" }); });
+  $("[data-cashless]")?.addEventListener("click", () => {
+    dialog(`Cashless at ${e.title}`, html`<div class="stack"><p>No cash or cards at the bars and food stalls. You pay with your wristband instead.</p>
+      <ol class="stack small"><li>Buy your ticket, then link your wristband in your TicketRoom account (the code is printed on the band).</li><li>Top up by card before or during the event. Your balance is safe in your account.</li><li>Tap to pay at any stall. Purchases above a set amount need your PIN.</li><li>Lost your wristband? Block it in your account straight away and move your balance to a new one.</li><li>Money left over after the event can be refunded from your account.</li></ol>
+      <div class="row end"><button class="btn btn-primary" data-close>Got it</button></div></div>`);
+  });
 
   const eventUrl = `${location.origin}/events/${e.slug}`;
   const cal = document.createElement("button");
@@ -136,7 +183,7 @@ async function eventPage(slug) {
     const sub = ticketTypes.reduce((s, t) => s + t.price_cents * qty[t.id], 0);
     const fee = ticketTypes.reduce((s, t) => s + t.fee_cents * qty[t.id], 0);
     render(box, html`<h2 id="tix-h">Tickets</h2>
-      ${closed ? html`<p class="callout warn">${e.status === "cancelled" ? "Sales are closed." : "Ticket sales are not open right now."}</p>` : ""}
+      ${closed ? html`<p class="callout warn">${e.preview ? "Preview only. Tickets go on sale once the event is published." : e.status === "cancelled" ? "Sales are closed." : "Ticket sales are not open right now."}</p>` : ""}
       ${ticketTypes.length ? ticketTypes.map((t) => html`<div class="tt"><div class="info"><div class="name">${t.name}</div>
           <div class="meta">${t.price_cents === 0 ? "Free" : html`${moneyExact(t.price_cents)} <span>+ ${moneyExact(t.fee_cents)} booking fee</span>`}${t.remaining === 0 ? " · Sold out" : t.remaining < 25 ? ` · Only ${t.remaining} left` : ""}</div>
           ${t.admits > 1 || TICKET_KINDS[t.kind]?.note ? html`<div class="meta">${[t.admits > 1 ? `Admits ${t.admits} people` : "", TICKET_KINDS[t.kind]?.note || ""].filter(Boolean).join(" · ")}</div>` : ""}
@@ -202,7 +249,7 @@ async function eventPage(slug) {
         throw Object.assign(new Error("The two email addresses don't match."), { details: { gEmail2: "Must match the email above." } });
       }
       const body = {
-        eventSlug: slug, items: selection(), promoCode: quote.promoCode || undefined, ref: sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
+        eventSlug: slug, items: selection(), promoCode: quote.promoCode || undefined, ref: ref || sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
         buyerPhone: v.buyerPhone, marketingOptIn: { email: !!v.mEmail, sms: !!v.mSms }, idempotencyKey: key, paymentMethod: v.paymentMethod || "card",
         ...(u ? {} : { guest: { fullName: v.gName, email: v.gEmail, ...(v.buyerPhone ? { phone: v.buyerPhone } : {}) } }),
       };
@@ -480,12 +527,54 @@ async function advertisePage() {
   wireSupport(main);
 }
 
+const CONTACT_TYPES = {
+  customer: [["tickets", "My tickets"], ["order", "Payment or order problem"], ["refund", "Refund"], ["transfer", "Transfer a ticket"], ["cashless", "Cashless or wristband"], ["account", "My account"], ["event", "Question about an event"], ["other", "Something else"]],
+  organiser: [["selling", "Selling tickets"], ["setup", "Setting up an event"], ["payouts", "Payouts"], ["verification", "Verification documents"], ["promote", "Promoting my event"], ["cashless", "Cashless and vendors"], ["account", "My organiser account"], ["other", "Something else"]],
+};
 async function contact() {
   document.title = "Contact us | TicketRoom";
-  const site = await siteInfo();
-  const topic = new URLSearchParams(location.search).get("topic") || "callback";
-  render(main, html`<div class="wrap section stack-lg"><div><h1>Contact TicketRoom</h1><p class="lead mb-0">Leave your details and we'll get back to you within ${site?.support?.responseTime || "24–48 hours"}.</p></div>
-    ${await supportPanel(site, { topic })}</div>`);
+  const params = new URLSearchParams(location.search);
+  const [site, u, list] = await Promise.all([siteInfo(), me(), get("/api/public/events").catch(() => ({ events: [] }))]);
+  const resp = site?.support?.responseTime || "24–48 hours";
+  let audience = params.get("as") === "organiser" || params.get("topic") === "organiser" || u?.account_type === "organiser" ? "organiser" : "customer";
+  render(main, html`<div class="wrap section stack-lg"><div><h1>Contact us</h1><p class="lead mb-0">Tell us what you need and we'll reply within ${resp}.</p></div>
+    <div class="grid-2 contact-grid"><section class="card stack">
+      <div class="tabs" role="tablist" aria-label="I am a">${[["customer", "Customer"], ["organiser", "Event organiser"]].map(([k, l]) => html`<button type="button" role="tab" data-aud="${k}" aria-selected="${audience === k}">${l}</button>`)}</div>
+      <form class="stack" id="ctf" novalidate>
+        <div class="grid-2"><div class="field"><label for="ct-name">Name</label><input id="ct-name" name="fullName" autocomplete="name" required maxlength="120" value="${u?.full_name || ""}"></div>
+          <div class="field"><label for="ct-email">Email</label><input id="ct-email" name="email" type="email" autocomplete="email" required value="${u?.email || ""}"></div></div>
+        <div class="grid-2"><div class="field"><label for="ct-event">Event <span class="muted" data-ev-opt>(optional)</span></label><input id="ct-event" name="eventName" list="ct-events" maxlength="160" autocomplete="off" placeholder="Start typing the event name">
+            <datalist id="ct-events">${list.events.map((e) => html`<option value="${e.title}">${fmtDate(e.starts_at, { day: "numeric", month: "short" })}, ${e.city}</option>`)}</datalist></div>
+          <div class="field"><label for="ct-type">Type of query</label><select id="ct-type" name="queryType" required></select></div></div>
+        <div class="field" data-ref-field><label for="ct-ref">Order reference or wristband number <span class="muted">(if you have one)</span></label><input id="ct-ref" name="reference" maxlength="40" autocapitalize="characters" placeholder="TR-ABCD1234"><span class="hint">Your order reference is in your confirmation email. The wristband number is printed on the band.</span></div>
+        <div class="field"><label for="ct-phone">Mobile number <span class="muted">(optional)</span></label><input id="ct-phone" name="phone" type="tel" autocomplete="tel" maxlength="30"></div>
+        <div class="field"><label for="ct-msg">Your query</label><textarea id="ct-msg" name="message" required maxlength="4000" rows="5"></textarea></div>
+        <button class="btn btn-primary">Send</button>
+        <p class="tiny muted mb-0">We use these details only to answer you. See our <a href="/legal/privacy">Privacy Policy</a>.</p></form></section>
+      <section class="card stack"><h2>Other ways to reach us</h2>
+        ${site ? html`<p class="callout ${site.hours.openNow ? "good" : "warn"} mb-0"><strong>${hoursText(site.hours)}.</strong></p>` : ""}
+        <p class="mb-0">Email <a href="mailto:${site?.support?.email || "hello@ticketroom.co.za"}">${site?.support?.email || "hello@ticketroom.co.za"}</a></p>
+        <p class="mb-0"><a class="row" style="gap:6px;display:inline-flex" href="${INSTAGRAM}" target="_blank" rel="noopener">${svgIcon("instagram", 18)} Instagram: @ticketroom_za</a></p>
+        <button type="button" class="btn btn-ghost" data-callback>Rather have us call you?</button>
+        ${site?.chatbot?.enabled ? html`<button class="btn btn-ghost" data-open-chat>Ask the assistant now</button>` : ""}
+        <h3>Office hours</h3>${site ? weekTable(site.hours) : html`<p>Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.</p>`}
+        <p class="small muted mb-0">Messages received after hours, on weekends or public holidays are answered on the next working day.</p></section></div></div>`);
+  const f = $("#ctf");
+  const setAudience = (a) => {
+    audience = a;
+    $$("[data-aud]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.aud === a)));
+    render($("#ct-type"), html`<option value="">Choose one</option>${CONTACT_TYPES[a].map(([v, l]) => html`<option value="${v}">${l}</option>`)}`);
+    $("[data-ref-field]").hidden = a !== "customer";
+  };
+  $$("[data-aud]").forEach((b) => b.addEventListener("click", () => setAudience(b.dataset.aud)));
+  setAudience(audience);
+  $("[data-callback]").addEventListener("click", () => callbackDialog({ topic: audience === "organiser" ? "organiser" : "callback" }));
+  onSubmit(f, async (v) => {
+    const ev = list.events.find((e) => e.title === v.eventName);
+    const r = await post("/api/site/contact", { audience, fullName: v.fullName, email: v.email, phone: v.phone || undefined, queryType: v.queryType,
+      eventSlug: ev?.slug, eventName: v.eventName || undefined, reference: audience === "customer" && v.reference ? v.reference : undefined, message: v.message });
+    render(f, html`<div class="callout good"><strong>Thanks, we've got it.</strong> Your reference is <strong>${r.reference}</strong>. We'll reply within ${r.responseTime}. A copy is on its way to your email.</div>`);
+  });
   wireSupport(main);
 }
 

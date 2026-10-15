@@ -5,7 +5,7 @@ const config = require("../config");
 const db = require("../lib/db");
 const audit = require("../lib/audit");
 const { r, check } = require("../lib/validate");
-const { limit, hit } = require("../lib/ratelimit");
+const { limit } = require("../lib/ratelimit");
 const { randomCode, encrypt } = require("../lib/crypto");
 const { AppError, conflict, bad, notFound } = require("../lib/errors");
 const { wrap, requireAuth } = require("../middleware/http");
@@ -22,7 +22,7 @@ const passes = require("../modules/tickets/passes");
 const { TICKET_KINDS, AGE_GROUPS } = require("../modules/tickets/kinds");
 const { newRef } = require("../lib/refs");
 const { signLink } = require("../lib/crypto");
-const { userByEmail, phoneTaken } = require("../lib/accounts");
+const { userByEmail, phoneTaken, accountType, portalLink } = require("../lib/accounts");
 const support = require("../modules/support/service");
 
 const router = express.Router();
@@ -34,42 +34,29 @@ const MKT = ["owner", "manager", "marketing"];
 
 const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "event";
 
-// One step for someone new: their account and their organisation together.
-// Same rules as any sign-up: one account per email, confirmed before use. An
-// email that has only bought as a guest chooses its password from the inbox.
+// One step for someone new: their organiser account and their organisation
+// together. One email, one account: an email already used by any account
+// (a customer, even one who only bought as a guest, an organiser or staff) is taken.
 router.post("/signup", limit("register", 60, 60 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, {
     fullName: r.str({ min: 2, max: 120 }), email: r.email(), phone: r.phone({ optional: true }), password: r.password(),
     organisation: r.str({ min: 2, max: 120 }), description: r.text({ optional: true, max: 2000 }), acceptTerms: r.bool(),
   });
   if (!b.acceptTerms) throw bad("Please accept the Terms and Privacy Notice.", { acceptTerms: "Required." });
-  const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
+  const { hashSecret } = require("../lib/crypto");
   await db.withTx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtext('signup:' || tr.email_key($1)))", [b.email]);
-    const existing = await userByEmail(c, b.email);
-    if (existing && !existing.guest) {
-      throw conflict("You already have a TicketRoom account with this email. Sign in, then set up your organisation from the organiser portal.", "email_taken", { email: "Already has an account." });
+    if (await userByEmail(c, b.email)) {
+      throw conflict("An account with this email already exists. Use a different email for your organiser account, or sign in on the organiser portal if it is already one.", "email_taken", { email: "Already has an account." });
     }
-    if (await phoneTaken(c, b.phone, existing?.id)) throw conflict("This mobile number is already on another TicketRoom account.", "phone_taken", { phone: "Already on another account." });
-    // An email that has only bought as a guest: nothing is created for it
-    // until the inbox owner acts. They choose a password from the email, then
-    // set up the organisation signed in.
-    if (existing) {
-      if (hit(`finishsend:${existing.id}`, 3, 60 * 60e3)) {
-        const token = randomToken(32);
-        await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '24 hours')", [sha256(token), existing.id]);
-        await outbox.enqueue(c, { to: existing.email, userId: existing.id, ...templates.finishAccount({ name: existing.full_name, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
-      }
-      await audit.record(c, { actor: { id: existing.id }, action: "user.finish_account_sent", entityType: "user", entityId: existing.id, ip: req.ip, details: { from: "organiser_signup" } });
-      return;
-    }
-    const { rows: [u] } = await c.query("INSERT INTO users (email, phone, full_name, password_hash) VALUES ($1,$2,$3,$4) RETURNING *",
+    if (await phoneTaken(c, b.phone)) throw conflict("This mobile number is already on another TicketRoom account.", "phone_taken", { phone: "Already on another account." });
+    const { rows: [u] } = await c.query("INSERT INTO users (email, phone, full_name, password_hash, account_type) VALUES ($1,$2,$3,$4,'organiser') RETURNING *",
       [b.email, b.phone || null, b.fullName, hashSecret(b.password)]);
     const { rows: [o] } = await c.query(
       "INSERT INTO organisers (ref, name, slug, contact_email, contact_phone, description) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
       [await newRef(c, "organisers"), b.organisation, `${slugify(b.organisation)}-${randomCode(4).toLowerCase()}`, b.email, b.phone || null, b.description || null]);
     await c.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'owner')", [o.id, u.id]);
-    const url = `${config.publicBaseUrl}/account#/verify/${signLink({ v: u.id, e: u.email }, 7 * 86400)}`;
+    const url = portalLink(u, `verify/${signLink({ v: u.id, e: u.email }, 7 * 86400)}`);
     await outbox.enqueue(c, { to: u.email, userId: u.id, ...templates.verifyEmail({ name: u.full_name, url }) });
     await audit.record(c, { actor: { id: u.id }, action: "organiser.applied", entityType: "organiser", entityId: o.id, organiserId: o.id, ip: req.ip, details: { withAccount: true } });
   });
@@ -80,8 +67,8 @@ router.use(requireAuth);
 
 // ---- organiser account -------------------------------------------------------
 router.post("/apply", limit("orgapply", 5, 24 * 3600e3, (q) => q.user.id), wrap(async (req, res) => {
-  // Staff accounts run the admin portal; they never become organisers.
-  if (["admin", "finance", "support"].some((x) => req.user.platformRoles.has(x))) throw new AppError(403, "staff_account", "This is a TicketRoom staff account. Organisers need their own account: sign out, then create one with the organiser's own email.");
+  // Only organiser accounts run organisations. Customers and staff never become organisers.
+  if (accountType(req.user) !== "organiser") throw new AppError(403, "not_organiser_account", "Organisations are run from an organiser account. Sign out, then create an organiser account with a different email.");
   const b = check(req.body, { name: r.str({ min: 2, max: 120 }), contactEmail: r.email(), contactPhone: r.phone({ optional: true }), description: r.text({ optional: true, max: 2000 }) });
   const org = await db.withTx(async (c) => {
     const { rows } = await c.query(
@@ -103,7 +90,7 @@ router.get("/orgs", wrap(async (req, res) => {
 const orgView = (o, role) => ({
   id: o.id, ref: o.ref, name: o.name, slug: o.slug, status: o.status, contactEmail: o.contact_email, contactPhone: o.contact_phone, description: o.description,
   payoutHoldDays: o.payout_hold_days, role,
-  bank: MONEY.includes(role) || role === "admin" ? { bankName: o.bank_name, accountHolder: o.bank_account_holder, last4: o.bank_account_last4, branchCode: o.bank_branch_code } : null,
+  bank: MONEY.includes(role) ? { bankName: o.bank_name, accountHolder: o.bank_account_holder, last4: o.bank_account_last4, branchCode: o.bank_branch_code } : null,
 });
 
 router.get("/:orgId", wrap(async (req, res) => {
@@ -152,14 +139,29 @@ function requireApproved(org) {
 }
 
 router.post("/:orgId/members", limit("orgmember", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
-  requireApproved((await organiserAccess(req.user, req.params.orgId, ["owner"])).organiser);
+  const { organiser } = await organiserAccess(req.user, req.params.orgId, ["owner"]);
+  requireApproved(organiser);
   const b = check(req.body, { email: r.email(), role: r.oneOf(["manager", "marketing", "finance", "viewer"]) });
   const f = await userByEmail(db, b.email);
-  if (!f || f.status !== "active" || f.guest) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
-  const rows = [f];
-  await db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT (organiser_id, user_id) DO UPDATE SET role = EXCLUDED.role", [req.params.orgId, rows[0].id, b.role]);
-  await audit.record(null, { actor: req.user, action: "organiser.member_set", entityType: "user", entityId: rows[0].id, organiserId: req.params.orgId, details: { role: b.role } });
-  res.status(201).json({ ok: true });
+  // Team members are organiser accounts. Someone new gets one, with an email
+  // to set their password; a customer's or TicketRoom staff email is refused
+  // (they need a separate work email for the team).
+  if (f && accountType(f) !== "organiser") throw conflict("That email belongs to a TicketRoom account that isn't an organiser account. Ask them for a separate work email for your team.", "not_organiser_account", { email: "Not an organiser account." });
+  if (f && f.status !== "active") throw conflict("That account is suspended or closed.", "account_inactive");
+  const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
+  await db.withTx(async (c) => {
+    let uid = f?.id;
+    if (!uid) {
+      ({ rows: [{ id: uid }] } = await c.query("INSERT INTO users (email, full_name, password_hash, account_type) VALUES ($1,$2,$3,'organiser') RETURNING id",
+        [b.email, b.email.split("@")[0], hashSecret(randomToken(24))]));
+      const token = randomToken(32);
+      await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), uid]);
+      await outbox.enqueue(c, { to: b.email, userId: uid, ...templates.orgMemberInvite({ by: req.user.fullName, organiser: organiser.name, role: b.role, url: `${config.publicBaseUrl}/organisers#/reset/${token}` }) });
+    }
+    await c.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT (organiser_id, user_id) DO UPDATE SET role = EXCLUDED.role", [req.params.orgId, uid, b.role]);
+    await audit.record(c, { actor: req.user, action: "organiser.member_set", entityType: "user", entityId: uid, organiserId: req.params.orgId, details: { role: b.role, invited: !f } });
+  });
+  res.status(201).json({ ok: true, invited: !f });
 }));
 
 router.delete("/:orgId/members/:userId", wrap(async (req, res) => {
@@ -506,7 +508,8 @@ router.post("/:orgId/queries/:id/return", wrap(async (req, res) => {
   const b = check(req.body, { note: r.text({ min: 3, max: 1000 }) });
   const c = await support.organiserCase(organiser.id, req.params.id);
   await db.withTx(async (q) => {
-    await q.query("UPDATE support_cases SET handled_by = 'ticketroom', status = 'open', updated_at = now() WHERE id = $1", [c.id]);
+    // Sent back: the organiser no longer sees the case or anything said after.
+    await q.query("UPDATE support_cases SET handled_by = 'ticketroom', organiser_id = NULL, event_id = NULL, status = 'open', updated_at = now() WHERE id = $1", [c.id]);
     await support.note(q, c.id, req.user.id, "system", `Sent back by ${organiser.name}: ${b.note}`);
     await audit.record(q, { actor: req.user, action: "support.returned", entityType: "support_case", entityId: c.id, organiserId: organiser.id });
   });
@@ -531,6 +534,7 @@ router.post("/:orgId/events/:eventId/staff", limit("staffadd", 30, 3600e3, (q) =
   const b = check(req.body, { email: r.email(), fullName: r.str({ optional: true, min: 2, max: 120 }), canScan: r.bool({ fallback: true }), canManageTags: r.bool() });
   const found = await userByEmail(db, b.email);
   if (found && found.status !== "active") throw conflict("That account is suspended or closed, so it cannot scan tickets.", "account_inactive");
+  if (found && accountType(found) === "staff") throw conflict("That email belongs to a TicketRoom staff account. Scanners need their own email.", "staff_account", { email: "Use a different email." });
   let rows = found ? [found] : [];
   let invited = false;
   // Someone new, or someone who has only bought tickets as a guest, gets an email to set a password.
@@ -539,9 +543,9 @@ router.post("/:orgId/events/:eventId/staff", limit("staffadd", 30, 3600e3, (q) =
     const token = randomToken(32);
     const name = b.fullName || found?.full_name || b.email.split("@")[0];
     rows = await db.withTx(async (c) => {
-      const id = found?.id || (await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, name, hashSecret(randomToken(24))])).rows[0].id;
+      const id = found?.id || (await c.query("INSERT INTO users (email, full_name, password_hash, account_type) VALUES ($1,$2,$3,'customer') RETURNING id", [b.email, name, hashSecret(randomToken(24))])).rows[0].id;
       await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), id]);
-      await outbox.enqueue(c, { to: b.email, userId: id, ...templates.staffInvite({ name, organiser: organiser.name, event: event.title, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+      await outbox.enqueue(c, { to: b.email, userId: id, ...templates.staffInvite({ name, organiser: organiser.name, event: event.title, url: `${config.publicBaseUrl}/scan#/reset/${token}` }) });
       await audit.record(c, { actor: req.user, action: "staff.invited", entityType: "user", entityId: id, organiserId: event.organiser_id, details: { eventId: event.id } });
       return [{ id }];
     });

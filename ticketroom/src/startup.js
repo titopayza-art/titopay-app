@@ -22,10 +22,12 @@ async function bootstrapAdmin(log = console.log) {
   if (password.length < 10) throw new Error("ADMIN_PASSWORD must be at least 10 characters");
   return db.withTx(async (c) => {
     const { rows } = await c.query(
-      `INSERT INTO users (email, full_name, password_hash, email_verified_at) VALUES (lower($1), $2, $3, now())
-       ON CONFLICT (lower(email)) DO UPDATE SET password_hash = EXCLUDED.password_hash, status = 'active' RETURNING id`,
+      `INSERT INTO users (email, full_name, password_hash, email_verified_at, account_type) VALUES (lower($1), $2, $3, now(), 'staff')
+       ON CONFLICT (lower(email)) DO UPDATE SET password_hash = EXCLUDED.password_hash, status = 'active', account_type = 'staff' RETURNING id`,
       [email, name, hashSecret(password)]);
     for (const role of ["admin", "finance"]) await c.query("INSERT INTO platform_roles (user_id, role) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].id, role]);
+    // The first admin is the platform owner.
+    await c.query("INSERT INTO platform_meta (key, value) VALUES ('owner_user_id', $1) ON CONFLICT (key) DO NOTHING", [rows[0].id]);
     await require("./lib/audit").record(c, { action: "admin.bootstrapped", entityType: "user", entityId: rows[0].id, details: { email } });
     log(`Created first admin account ${email}. Sign in, change the password, then remove ADMIN_PASSWORD from the configuration.`);
     return rows[0].id;
@@ -37,6 +39,9 @@ async function run({ migrate = process.env.MIGRATE_ON_START === "true", log = co
   log(`Database OK (PostgreSQL ${version})`);
   if (migrate) await require("./db/migrate").up({ log });
   await bootstrapAdmin(log);
+  // Test payments switched on from the admin portal (the sandbox) survive a restart.
+  const sandbox = await require("./modules/payments/mode").load();
+  if (sandbox) log(`Payments are in TEST mode (${sandbox.kind === "payfast" ? "PayFast's shared test account" : "the TicketRoom sandbox"}): tickets bought now are marked TEST and refused at the gate.`);
   await require("./modules/site/assistant").ensureDefaults();
   if (config.isProd && config.publicBaseUrl.startsWith("http://")) log("WARNING: PUBLIC_BASE_URL is http://. Enable SSL (cPanel → SSL/TLS Status → Run AutoSSL) — sign-in cookies require HTTPS.");
   const m = config.messaging;

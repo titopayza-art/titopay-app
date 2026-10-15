@@ -7,7 +7,7 @@ route('GET', '/api/health', function () {
     return ['ok' => true, 'service' => 'ticketroom', 'edition' => 'php', 'version' => TR_VERSION, 'provider' => 'none'];
 });
 route('GET', '/api/config', fn() => [
-    'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'titopayWallet' => false,
+    'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'googleSignIn' => google_ready(), 'titopayWallet' => false,
     // Cashless (event wallets, wristbands and the vendor till) switches on
     // with card payments, because top-ups are card payments. Each event then
     // opts in with its own "cashless event" setting. tagRegistry: organisers
@@ -79,7 +79,11 @@ route('POST', '/api/auth/login', function () {
     $ok = verify_secret($b['password'], $u['password_hash'] ?? '$2y$10$WPT59Gnb/QYXeEjTyv1sp.pD4KgnvD5SRlQY9iG6ybrv4y.LW5AXy') && $u;
     // The same answer for an unknown email, a wrong password and a locked
     // account, so the sign-in box never reveals who has an account.
-    $generic = new AppError(401, 'bad_credentials', 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
+    // The staff sign-in says "access denied" and nothing more, for an unknown
+    // email, a wrong password and a customer or organiser account alike.
+    $generic = $portal === 'admin'
+        ? new AppError(401, 'bad_credentials', 'Access denied. This sign-in is for TicketRoom staff only. Check your email and password, or ask the platform owner for a new password link.')
+        : new AppError(401, 'bad_credentials', 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
     if (!$u || $u['status'] === 'deleted') throw $generic;
     // 5 wrong passwords per email from one connection every 15 minutes, and a
     // pause for the whole account only after 30 failures from anywhere, which

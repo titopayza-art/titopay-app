@@ -69,14 +69,16 @@ class HttpClient {
 
 const PASSWORD = "correct-horse-battery";
 let n = 0;
-async function user({ roles = [], email, name = "Test User", phone = null, verified = true } = {}) {
+// One account, one portal: an account with staff roles is a staff account
+// and signs in on the admin portal; otherwise a customer unless told otherwise.
+async function user({ roles = [], email, name = "Test User", phone = null, verified = true, type = roles.length ? "staff" : "customer" } = {}) {
   n += 1;
   const e = email || `user${n}-${randomCode(5).toLowerCase()}@test.local`;
-  const { rows } = await db.query("INSERT INTO users (email, full_name, phone, password_hash, email_verified_at) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-    [e, name, phone, hashSecret(PASSWORD), verified ? new Date() : null]);
+  const { rows } = await db.query("INSERT INTO users (email, full_name, phone, password_hash, email_verified_at, account_type) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+    [e, name, phone, hashSecret(PASSWORD), verified ? new Date() : null, type]);
   for (const r of roles) await db.query("INSERT INTO platform_roles (user_id, role) VALUES ($1,$2)", [rows[0].id, r]);
   const c = new HttpClient();
-  const login = await c.post("/api/auth/login", { email: e, password: PASSWORD });
+  const login = await c.post("/api/auth/login", { email: e, password: PASSWORD, ...(type === "staff" ? { portal: "admin" } : {}) });
   if (login.status !== 200) throw new Error(`login failed: ${JSON.stringify(login.body)}`);
   await c.refreshCsrf();
   c.user = rows[0];
@@ -89,6 +91,9 @@ async function organiserWithEvent(owner, { capacity = 100, types = [["General", 
     "INSERT INTO organisers (name, slug, contact_email, status, approved_at) VALUES ($1,$2,'org@test.local','approved', now()) RETURNING *",
     [`Org ${randomCode(4)}`, `org-${randomCode(6).toLowerCase()}`]);
   await db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'owner')", [o[0].id, owner.user.id]);
+  // Organisations are run from organiser accounts.
+  await db.query("UPDATE users SET account_type = 'organiser' WHERE id = $1 AND account_type = 'customer'", [owner.user.id]);
+  owner.user.account_type = "organiser";
   const event = await addEvent(o[0].id, { capacity, types, startsInDays, cashless, durationHours, startsAt });
   return { organiser: o[0], ...event };
 }
