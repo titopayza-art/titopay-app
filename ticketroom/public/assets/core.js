@@ -770,7 +770,8 @@ export function organiserSignupDialog() {
       <div class="row"><button class="btn btn-ghost btn-sm" data-resend>Send it again</button><button class="btn btn-primary btn-sm" data-close>Done</button></div></div>`);
     $("[data-resend]", d).addEventListener("click", async (e) => { try { const x = await post("/api/auth/verify-email/resend", { email: r.email }); toast(x.message, "good"); e.target.disabled = true; } catch (err) { toast(err.message, "bad"); } });
   });
-  setTimeout(() => $("#os-org", d)?.focus(), 50);
+  // Start in the first box, unless the person has already started typing elsewhere.
+  setTimeout(() => { const f = document.activeElement; if (!f || f === d || f === document.body || !d.contains(f)) $("#os-org", d)?.focus(); }, 50);
   return d;
 }
 

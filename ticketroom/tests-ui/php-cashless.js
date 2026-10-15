@@ -14,6 +14,7 @@ const path = require("path");
 const assert = require("assert/strict");
 const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
+const { verifyOrganiser } = require("./kyc-helper");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3] || "/srv/trtest/public_html";
@@ -335,6 +336,8 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     assert.deepEqual([vf.gross_cents, vf.commission_cents, vf.payable_cents], [13000, 650, 12350], "vendor figures count real money only");
     const an = (await o.get(`/api/organiser/${orgId}/events/${ev.id}/analytics`)).body;
     assert.deepEqual([an.cashless.topups_cents, an.vendors[0].gross_cents], [20000, 13000]);
+    // Payouts need a verified bank account (organiser verification).
+    await verifyOrganiser(org.request, adm.request, BASE, orgId, { paid: true });
     const settle = await o.post(`/api/organiser/${orgId}/events/${ev.id}/vendors/${vendor.id}/payout`);
     assert.equal(settle.status, 201, JSON.stringify(settle.body));
     assert.equal(settle.body.payout.amount_cents, 12350);

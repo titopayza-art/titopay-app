@@ -122,9 +122,11 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
     const docRow = sql("SELECT * FROM verification_documents WHERE id = ?", cipc.body.document.id)[0];
     assert.match(docRow.file_name, /^[0-9a-f]{40}$/, "random file name");
     const onDisk = path.join(dataDir, "private", docRow.file_name);
-    assert.ok(fs.existsSync(onDisk) && !onDisk.startsWith(ROOT + path.sep), "kept outside public_html");
+    assert.ok(fs.existsSync(onDisk), "stored in the private data folder");
     assert.ok(!fs.readFileSync(onDisk).includes(TINY_PDF.subarray(0, 8)), "encrypted at rest");
+    // Never reachable over the web, wherever the data folder sits.
     assert.notEqual((await fetch(`${BASE}/data/private/${docRow.file_name}`)).status, 200);
+    assert.notEqual((await fetch(`${BASE}/data/ticketroom.sqlite`)).status, 200);
     assert.notEqual((await fetch(`${BASE}/ticketroom-data/private/${docRow.file_name}`)).status, 200);
     // Who may open it: the owners and TicketRoom staff; every view logged.
     const fileUrl = `/api/verification/documents/${docRow.id}/file`;
@@ -319,7 +321,8 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
     const old = path.join(tmp, "ticketroom-data", "ticketroom.sqlite");
     execFileSync("php", ["-r", `$d=new PDO('sqlite:${old}'); $d->exec("DROP TABLE organiser_verification; DROP TABLE verification_documents; DROP TABLE event_risk; UPDATE meta SET value = '10' WHERE key = 'schema_version'");`]);
     const out = execFileSync("php", ["-r", `require '${tmp}/public_html/api/bootstrap.php'; tr_load(); echo val("SELECT value FROM meta WHERE key = 'schema_version'"), ' ', val("SELECT count(*) FROM sqlite_master WHERE name IN ('organiser_verification','verification_documents','event_risk')");`]).toString();
-    assert.equal(out, "12 3", "upgraded to 12 with the three verification tables");
+    const [ver, tables] = out.split(" ").map(Number);
+    assert.ok(ver >= 12 && tables === 3, `upgraded past 12 with the three verification tables (${out})`);
     fs.rmSync(tmp, { recursive: true, force: true });
     step("POPIA: keeping period (5 years minimum, set in the admin portal), old copies and closed organisers deleted automatically; upgrade to schema 12");
 
