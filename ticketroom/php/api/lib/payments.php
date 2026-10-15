@@ -481,9 +481,14 @@ function organiser_money(array $org): array
     $releasable = 0;
     $total = 0;
     foreach (rows('SELECT id, title, status, ends_at FROM events WHERE organiser_id = ? ORDER BY ends_at', [$org['id']]) as $e) {
-        $bal = -ledger_balance("organiser:{$org['id']}:event:{$e['id']}");
+        // Cashless top-ups taken at the event's own desks (cash or the event's
+        // card machine) are already in the organiser's hands: they come off.
+        $deskCash = ledger_balance("organiser:{$org['id']}:event:{$e['id']}:desk_cash");
+        $deskCard = ledger_balance("organiser:{$org['id']}:event:{$e['id']}:desk_card");
+        $bal = -ledger_balance("organiser:{$org['id']}:event:{$e['id']}") - $deskCash - $deskCard;
         $ok = !in_array($e['status'], ['cancelled', 'suspended'], true) && to_unix($e['ends_at']) + $hold * 86400 < $now;
-        $events[] = ['event_id' => $e['id'], 'title' => $e['title'], 'status' => $e['status'], 'ends_at' => $e['ends_at'], 'payout_hold_days' => $hold, 'balance_cents' => $bal, 'releasable' => $ok, 'code' => null];
+        $events[] = ['event_id' => $e['id'], 'title' => $e['title'], 'status' => $e['status'], 'ends_at' => $e['ends_at'], 'payout_hold_days' => $hold, 'balance_cents' => $bal, 'releasable' => $ok, 'code' => null,
+            'desk_cash_cents' => $deskCash, 'desk_card_cents' => $deskCard];
         $total += $bal;
         if ($ok) $releasable += $bal;
     }

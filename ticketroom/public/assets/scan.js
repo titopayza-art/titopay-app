@@ -1,9 +1,12 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { html, render, $, $$, get, post, header, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType } from "/assets/core.js";
+import { html, render, $, $$, get, post, header, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features } from "/assets/core.js";
+import { deskApp } from "/assets/cashdesk.js";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
 import * as offline from "/assets/scan-offline.js";
 
 const main = $("#main");
+// The top-up desk is offered only where the server has it (features.cashDesk).
+let DESK = false;
 let EVENT = null, cam = null, nfcAbort = null, mode = "gate", deskTicket = null;
 
 const VERDICT = {
@@ -27,7 +30,7 @@ function start(ev) {
   EVENT = ev;
   offline.forgetOthers(ev.id);
   render(main, html`<div class="row between"><div><div class="small muted">Scanning for</div><h1 class="mb-0">${ev.title}</h1></div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
-    <div class="tabs mt" role="tablist"><button role="tab" aria-selected="true" data-mode="gate">Gate</button>${ev.can_manage_tags ? html`<button role="tab" aria-selected="false" data-mode="desk">Tag desk</button>` : ""}</div>
+    <div class="tabs mt" role="tablist"><button role="tab" aria-selected="true" data-mode="gate">Gate</button>${ev.can_manage_tags ? html`<button role="tab" aria-selected="false" data-mode="desk">Tag desk</button>` : ""}${DESK && ev.can_manage_tags && ev.cashless_enabled ? html`<button role="tab" aria-selected="false" data-topup>Top-up desk</button>` : ""}</div>
     <div class="row between"><span id="stats" class="small muted"></span><span class="netbar on" id="net">● Online</span></div>
     <p class="small muted mb-0" id="offline-state" aria-live="polite"></p>
     <div class="camera mt" id="cam"></div>
@@ -47,6 +50,8 @@ function start(ev) {
     try { await readNfc((v) => handle(v, true), nfcAbort.signal); toast("Hold the tag to the back of the phone."); } catch (err) { toast(`NFC: ${err.message}`, "bad"); }
   });
   $("#manual").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#mc").value.trim(); if (v) handle(v); $("#mc").value = ""; });
+  // The top-up and cash-out desk takes the whole screen; "Back to scanning" returns here.
+  $("[data-topup]")?.addEventListener("click", () => { cam?.stop(); nfcAbort?.abort(); offline.stop(); deskApp(main, ev.id, { onBack: () => start(ev), backLabel: "Back to scanning" }); });
   $$("[data-mode]").forEach((b) => b.addEventListener("click", () => { mode = b.dataset.mode; $$("[data-mode]").forEach((x) => x.setAttribute("aria-selected", String(x === b))); deskTicket = null; drawDesk(); idle(); }));
   offline.start(ev, drawOffline);
   refresh(true);
@@ -166,5 +171,6 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   if (accountType(u) === "staff") return wrongAccountPage(u, "scanner");
   await header($("#header"), { portal: "scanner" });
   render(main, spinner());
+  DESK = !!(await features()).cashDesk;
   pickEvent();
 })();

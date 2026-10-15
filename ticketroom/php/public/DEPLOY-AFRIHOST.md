@@ -231,11 +231,21 @@ payments work (the sandbox too, for practice). Nothing else to set up.
 - The organiser adds vendors, invites their staff by email and registers
   a till for each phone (ticketroom.co.za/pos). TicketRoom's commission is
   the percentage set per vendor; top-ups and refunds carry no fee.
-- After the event: unused balances go back to the card (asked for from the
-  account, or automatically two days later), approved by finance under
-  **Refunds**. Vendor takings are settled to the organiser under **Payouts**.
+- **Top-up desk**: guests can also top up in person with cash or on the
+  event's own card machine (gate scanner → Top-up desk, the organiser's
+  Vendors & POS tab, or Admin → Wristbands & wallets). Each desk has a
+  cash-up (print or CSV). Desk money is already in the organiser's hands, so
+  it comes off what TicketRoom pays them for that event.
+- **Cash-outs**: after the event (or while the organiser has the venue's
+  cash-out desk open) guests cash out from their wallet: back to the card
+  for money topped up online, by EFT (finance approves under **Refunds**;
+  two people for large amounts), or as cash at the cash-out desk with a
+  code. Everyone with money left gets one email with a link; money topped up
+  online by card goes back to the card automatically after 14 days.
+  Vendor takings are settled to the organiser under **Payouts**.
 - Limits can be changed in `ticketroom-data/config.php`:
-  `'cashless' => ['minTopupCents' => 5000, 'maxTopupCents' => 300000, 'maxBalanceCents' => 500000, 'pinThresholdCents' => 20000]`,
+  `'cashless' => ['minTopupCents' => 5000, 'maxTopupCents' => 300000, 'maxBalanceCents' => 500000, 'pinThresholdCents' => 20000,`
+  `'deskDailyCapCents' => 2000000, 'cashoutFeeCents' => 0, 'dualApprovalCents' => 200000, 'autoRefundAfterDays' => 14]`,
   or `'cashless' => ['enabled' => false]` to switch it off for the whole site.
 
 ---

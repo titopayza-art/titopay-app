@@ -380,7 +380,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     assert.equal(num(one("SELECT COALESCE(SUM(amount_cents),0) AS s FROM ledger_entries WHERE account = ?", `wallet:${fanId}:${ev.id}`).s), 0, "real-money wallet empty in the ledger");
     // Nobody has to remember: leftover balances are put up for refund automatically.
     assert.equal(balanceOf(FAN2.email, ev.id), 1000);
-    php(`q('UPDATE events SET starts_at = ?, ends_at = ? WHERE id = ?', [iso_in(-4 * 86400), iso_in(-3 * 86400), '${ev.id}']); echo cashless_auto_refunds();`);
+    php(`q('UPDATE events SET starts_at = ?, ends_at = ? WHERE id = ?', [iso_in(-16 * 86400), iso_in(-15 * 86400), '${ev.id}']); echo cashless_auto_refunds();`);
     assert.equal(balanceOf(FAN2.email, ev.id), 0);
     assert.ok(sql("SELECT 1 FROM refunds r JOIN users u ON u.id = r.user_id WHERE u.email = ? AND r.reason LIKE '%automatic%'", FAN2.email).length, "automatic leftover refund request");
     testWalletsOk("after the automatic refund");

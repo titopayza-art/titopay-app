@@ -1,6 +1,7 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
 import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog } from "/assets/core.js";
+import { deskApp } from "/assets/cashdesk.js";
 
 const main = $("#main");
 let ORG = null;
@@ -520,8 +521,9 @@ async function vendorsTab(el, d, reload) {
           ${edit ? html`<form class="row" data-term="${v.id}"><input name="label" required placeholder="e.g. Till 1" class="grow" aria-label="Terminal name"><button class="btn btn-ghost btn-sm">Register terminal</button></form>` : ""}</div></div></section>`)}</div>` : empty("No vendors yet.")}
     ${edit ? html`<section class="card mt"><h3>Add vendor</h3><form class="stack" id="vf"><div class="grid-2"><div class="field"><label for="vn">Vendor name</label><input id="vn" name="name" required></div><div class="field"><label for="vc">Commission (%)</label><input id="vc" name="commission" inputmode="decimal" value="0"></div></div>
       <div class="field"><label for="vd">What they sell</label><input id="vd" name="description" maxlength="240"></div><button class="btn btn-dark">Add vendor</button></form></section>` : ""}
-    <div id="bands"></div>`);
+    <div id="bands"></div><div id="cdesk"></div>`);
   if (FEATURES.tagRegistry) wristbands($("#bands", el), d, edit);
+  if (FEATURES.cashDesk && d.event.cashless_enabled && can("owner", "manager", "finance")) cashDeskCard($("#cdesk", el), el, d, reload);
   if ($("#vf")) onSubmit($("#vf"), async (v) => { await post(`${base()}/events/${d.event.id}/vendors`, { name: v.name, description: v.description, commissionBps: Math.round(Number(v.commission || 0) * 100) }); toast("Vendor added.", "good"); reload(); });
   $$("[data-member]", el).forEach((f) => onSubmit(f, async (v) => { await post(`${base()}/events/${d.event.id}/vendors/${f.dataset.member}/members`, v); toast("Vendor staff added.", "good"); reload(); }));
   $$("[data-term]", el).forEach((f) => onSubmit(f, async (v) => {
@@ -551,6 +553,25 @@ async function wristbands(el, d, edit) {
     toast(`${r.tags.length} wristbands registered. Keep the downloaded list safe: it is the only copy of the activation codes.`, "good");
     wristbands(el, d, edit);
   });
+}
+
+// Top-ups in person and the cash-out desk. Money taken at your desks is
+// yours already, so it comes off what TicketRoom pays you for this event.
+async function cashDeskCard(box, tab, d, reload) {
+  const ctx = await get(`/api/cashdesk/events/${d.event.id}`);
+  const s = ctx.settings;
+  const edit = can("owner", "manager");
+  render(box, html`<section class="card mt stack"><h3 class="mb-0">Top-up desk and cash-out</h3>
+    <p class="small muted mb-0">Guests can top up their wristband at your desk with cash or on your card machine, and get what is left back in cash at the end. Your gate staff who manage wristbands can run the desk from the gate scanner (Top-up desk). Money taken at your desks comes off what TicketRoom pays you for this event.</p>
+    <div class="row"><button class="btn btn-primary" data-desk>Open the top-up desk</button>
+      ${edit ? html`<button class="btn ${s.cashoutDeskOpen ? "btn-danger" : "btn-dark"}" data-co="${s.cashoutDeskOpen ? "" : "1"}">${s.cashoutDeskOpen ? "Close the cash-out desk" : "Open the cash-out desk"}</button>` : ""}</div>
+    <p class="small mb-0">Cash-out desk: <strong>${s.cashoutDeskOpen ? "open" : "closed"}</strong>. While it is open, guests can ask for their balance in cash and show a code at the desk.</p>
+    ${edit ? html`<form class="row" id="capf"><label class="grow small" for="cap">Most one desk person can take in a day (R)</label><input id="cap" name="cap" inputmode="decimal" value="${s.deskDailyCapCents / 100}" style="max-width:9rem"><button class="btn btn-ghost btn-sm">Save</button></form>` : ""}</section>`);
+  $("[data-desk]", box).addEventListener("click", () => deskApp(tab, d.event.id, { onBack: reload, backLabel: "Back to Vendors & POS" }));
+  $("[data-co]", box)?.addEventListener("click", async (e) => {
+    try { await put(`${base()}/events/${d.event.id}/cashdesk`, { cashoutDeskOpen: !!e.target.dataset.co }); toast(e.target.dataset.co ? "Cash-out desk open." : "Cash-out desk closed.", "good"); cashDeskCard(box, tab, d, reload); } catch (err) { toast(err.message, "bad"); }
+  });
+  if ($("#capf", box)) onSubmit($("#capf", box), async (v) => { await put(`${base()}/events/${d.event.id}/cashdesk`, { deskDailyCapCents: parseRand(v.cap) }); toast("Desk limit saved.", "good"); });
 }
 
 async function detailsTab(el, d, reload) {
@@ -807,7 +828,7 @@ async function finance() {
       ${VERIF && !VERIF.gates.payouts.ok ? html`<p class="callout warn small">Payouts are blocked until your bank account is verified. Still needed: ${VERIF.gates.payouts.missing.join(", ")}. <a href="#/verification">Go to Verification</a></p>` : ""}
       ${can("owner", "finance") ? html`<form class="stack" id="po"><div class="field"><label for="pa">Amount (R)</label><input id="pa" name="amount" inputmode="decimal" required value="${f.availableCents ? (f.availableCents / 100).toFixed(2) : ""}"><span class="hint">Minimum R100.</span></div><button class="btn btn-primary" ${raw(!f.availableCents || !ORG.bank?.last4 ? "disabled" : "")}>Request payout</button></form>` : html`<p class="muted">Only owners and finance members can request payouts.</p>`}</section>
       <section class="card"><h2>By event</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Ends</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>
-        ${f.events.map((e) => html`<tr><td>${e.title}</td><td>${fmtDate(e.ends_at)}</td><td class="num">${moneyExact(e.balance_cents)}</td><td>${e.releasable ? badge("available") : e.status === "cancelled" ? badge("cancelled") : html`<span class="badge plain">on hold</span>`}</td></tr>`)}</tbody></table></div></section></div>
+        ${f.events.map((e) => html`<tr><td>${e.title}${e.desk_cash_cents || e.desk_card_cents ? html`<div class="tiny muted">Wristband top-ups you took at your desks (already yours): ${moneyExact(e.desk_cash_cents)} cash, ${moneyExact(e.desk_card_cents)} card. Taken off the balance.</div>` : ""}</td><td>${fmtDate(e.ends_at)}</td><td class="num">${moneyExact(e.balance_cents)}</td><td>${e.releasable ? badge("available") : e.status === "cancelled" ? badge("cancelled") : html`<span class="badge plain">on hold</span>`}</td></tr>`)}</tbody></table></div></section></div>
     <section class="card mt"><h2>Payout history</h2>${f.payouts.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>For</th><th class="num">Amount</th><th>Status</th><th>Requested</th><th>Bank ref</th></tr></thead><tbody>
       ${f.payouts.map((p) => html`<tr><td class="mono">${p.reference}</td><td>${p.vendor_name ? `Vendor: ${p.vendor_name}` : "You"}</td><td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td><td>${fmtDate(p.created_at)}</td><td class="mono">${p.bank_reference || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No payouts yet.</p>`}</section>`);
   if ($("#po")) onSubmit($("#po"), async (v) => { const c = parseRand(v.amount); const r = await post(`${base()}/payouts`, { amountCents: c }); toast(`Payout ${r.payout.reference} requested.`, "good"); finance(); });

@@ -193,16 +193,18 @@ async function wallet({ eventId }) {
   const ended = new Date(w.event.endsAt) < new Date();
   render(main, html`<div class="crumbs"><a href="#/wallet">Wallets</a></div>${head(w.event.title, `${fmtDate(w.event.startsAt)}`)}
     <div class="grid-2"><div class="balance-card"><div class="small">Available balance</div><div class="amt">${moneyExact(w.balanceCents)}</div><div class="small">Spend by tapping your linked tag at any vendor.</div></div>
-      <section class="card">${ended ? html`<h2>Event finished</h2><p class="muted">Request a refund of any unused balance to the card you topped up with.</p>`
+      <section class="card">${ended ? html`<h2>Event finished</h2><p class="muted">${w.cashout ? "Cash out what is left below: to your card, your bank account or in cash." : "Request a refund of any unused balance to the card you topped up with."}</p>`
         : html`<h2>Top up</h2><form class="stack" id="tu"><div class="row">${[10000, 20000, 50000].map((c) => html`<button type="button" class="chip" data-amt="${c}">${money(c)}</button>`)}</div>
           <div class="field"><label for="amt">Amount (R)</label><input id="amt" name="amount" inputmode="decimal" required placeholder="e.g. 150"><span class="hint">Between ${money(w.limits.minTopupCents)} and ${money(w.limits.maxTopupCents)}. Max balance ${money(w.limits.maxBalanceCents)}.</span></div>
           <button class="btn btn-primary">Top up</button></form>`}
-        ${w.balanceCents > 0 ? html`<button class="btn btn-link" id="rf">Request refund of unused balance</button>` : ""}</section></div>
+        ${w.cashout ? "" : w.balanceCents > 0 ? html`<button class="btn btn-link" id="rf">Request refund of unused balance</button>` : ""}</section></div>
+    ${w.cashout ? cashoutSection(w) : ""}
     ${!u.has_pin ? html`<p class="callout warn mt">Purchases of ${money(w.limits.pinThresholdCents || 20000)} or more need a spending PIN. <a href="#/settings">Set your PIN</a>.</p>` : ""}
     <h2 class="mt-lg">Activity</h2>
     ${w.history.length ? html`<ul class="activity card flat">${w.history.map((h) => {
       const out = h.amount_cents < 0;
-      const what = h.kind === "purchase" ? h.vendor || "Purchase" : h.kind === "topup" ? "Top-up" : out ? "Refund of unused balance" : "Purchase refunded";
+      const what = h.kind === "purchase" ? h.vendor || "Purchase" : h.kind === "topup" ? "Top-up" : h.kind === "desk_topup" ? `Top-up at the desk (${h.vendor === "cash" ? "cash" : "card"})`
+        : h.kind === "cashout" ? (h.vendor === "eft" ? "Cash-out by EFT" : "Cash-out at the venue") : out ? "Refund to your card" : "Purchase refunded";
       return html`<li><div class="grow"><strong>${what}</strong>${h.test ? html` <span class="badge warn">test</span>` : ""}
         <div class="small muted">${fmtDate(h.created_at, { day: "numeric", month: "short" })}, ${fmtTime(h.created_at)} · <span class="mono">${h.reference}</span></div></div>
         <div class="right"><div class="amt ${out ? "out" : "in"}">${out ? "−" : "+"}${moneyExact(Math.abs(h.amount_cents))}</div>${h.status === "confirmed" ? "" : badge(h.status)}</div></li>`; })}</ul>` : empty("No activity yet.")}`);
@@ -213,9 +215,58 @@ async function wallet({ eventId }) {
     const r = await post(`/api/me/wallets/${eventId}/topups`, { amountCents: cents, idempotencyKey: idem() });
     if (r.payment.redirectUrl) location.href = r.payment.redirectUrl;
   });
+  $("[data-cashout]")?.addEventListener("click", () => cashoutDialog(w, eventId));
+  $$("[data-cocancel]").forEach((b) => b.addEventListener("click", async () => {
+    if (!(await confirmDialog("Cancel this cash-out?", "The money goes back on your balance.", { confirm: "Cancel cash-out" }))) return;
+    try { await post(`/api/me/cashouts/${b.dataset.cocancel}/cancel`); toast("Cash-out cancelled. The money is back on your balance.", "good"); wallet({ eventId }); } catch (err) { toast(err.message, "bad"); }
+  }));
   $("#rf")?.addEventListener("click", async () => {
     if (!(await confirmDialog("Refund unused balance?", "We'll send your unused balance back to the card(s) you topped up with, once approved. You won't be able to spend it meanwhile.", { confirm: "Request refund" }))) return;
     const r = await post(`/api/me/wallets/${eventId}/refund`); toast(`Refund ${r.refund.reference} requested.`, "good"); wallet({ eventId });
+  });
+}
+
+// Cashing out what is left: back to the card, to a bank account by EFT, or
+// as cash at the venue's cash-out desk (shows a code to scan).
+function cashoutSection(w) {
+  const c = w.cashout;
+  return html`<section class="card mt stack cashout-box"><h2 class="mb-0">Cash out</h2>
+    ${c.pending.length ? c.pending.map((p) => html`<div class="stack">${p.method === "cash"
+      ? html`<p class="mb-0"><strong>${moneyExact(p.amountCents)} in cash at the venue.</strong> Show this code at the cash-out desk.</p><div class="cashout-code mono">${p.code}</div>
+        <div class="center cashout-qr"><img src="/api/me/cashouts/${p.reference}/qr.svg" alt="Cash-out code ${p.code}" width="220" height="220"></div>`
+      : html`<p class="mb-0"><strong>${moneyExact(p.amountCents)} by EFT</strong> to ${p.bank}. ${p.status === "approved" ? "Approved: finance is paying it." : "Waiting for TicketRoom finance to approve it."}</p>`}
+      ${p.feeCents ? html`<p class="small muted mb-0">Cash-out fee ${moneyExact(p.feeCents)}.</p>` : ""}
+      ${["requested", "approved_once"].includes(p.status) ? html`<button class="btn btn-ghost btn-sm" data-cocancel="${p.reference}">Cancel this cash-out</button>` : ""}</div>`)
+    : !c.open ? html`<p class="muted mb-0">You can cash out what is left once the event is over (or at the venue's cash-out desk near the end).</p>`
+    : w.balanceCents > 0 ? html`<p class="mb-0">You have ${moneyExact(w.balanceCents)} left. Choose how you would like it back.</p><button class="btn btn-primary btn-lg" data-cashout>Cash out my balance</button>
+      <p class="small muted mb-0">${c.feeCents ? `There is a ${moneyExact(c.feeCents)} fee for EFT and cash.` : "No fees."}${c.refundPolicy ? ` The organiser's refund policy: ${c.refundPolicy}` : ""}</p>`
+    : html`<p class="muted mb-0">Nothing left to cash out.</p>`}</section>`;
+}
+function cashoutDialog(w, eventId) {
+  const c = w.cashout;
+  let pick = c.card.maxCents ? "card" : "eft";
+  const opts = [
+    ["card", "Back to my card", c.card.maxCents ? `Up to ${moneyExact(c.card.maxCents)} goes back to the card you topped up with online. No fee.` : "Only money you topped up online by card can go back to a card.", !c.card.maxCents],
+    ["eft", "To my bank account (EFT)", `${moneyExact(c.eft.maxCents)}${c.feeCents ? ` after the ${moneyExact(c.feeCents)} fee` : ""}, paid by TicketRoom finance within a few working days.`, !c.eft.maxCents],
+    ["cash", "Cash at the venue", c.cash.open ? `${moneyExact(c.cash.maxCents)} in cash at the cash-out desk. You get a code to show there.` : "The venue's cash-out desk is closed.", !c.cash.open || !c.cash.maxCents],
+  ];
+  const d = dialog("Cash out my balance", html`<div class="stack"><div class="cashout-pick" role="radiogroup">${opts.map(([k, t, s, off]) => html`<button type="button" role="radio" data-pick="${k}" aria-pressed="${pick === k}" ${off ? "disabled" : ""}><strong>${t}</strong><div class="small muted">${s}</div></button>`)}</div>
+    <form class="stack" id="cof"><div id="bank"></div><button class="btn btn-primary btn-block btn-lg" id="cogo">Confirm</button></form></div>`);
+  const drawBank = () => {
+    $$("[data-pick]", d).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.pick === pick)));
+    render($("#bank", d), pick === "eft" ? html`<div class="field"><label for="bh">Account holder</label><input id="bh" name="accountHolder" required autocomplete="name"></div>
+      <div class="field"><label for="bn">Bank</label><input id="bn" name="bankName" required placeholder="e.g. FNB"></div>
+      <div class="grid-2"><div class="field"><label for="bb">Branch code</label><input id="bb" name="branchCode" required inputmode="numeric"></div><div class="field"><label for="ba">Account number</label><input id="ba" name="accountNumber" required inputmode="numeric" autocomplete="off"></div></div>
+      <p class="tiny muted mb-0">Stored encrypted. Only TicketRoom finance sees the full number, to pay you.</p>` : "");
+    $("#cogo", d).textContent = pick === "card" ? `Refund ${moneyExact(c.card.maxCents)} to my card` : pick === "eft" ? `Pay ${moneyExact(c.eft.maxCents)} to my bank account` : `Get a code for ${moneyExact(c.cash.maxCents)} in cash`;
+  };
+  $$("[data-pick]", d).forEach((b) => b.addEventListener("click", () => { pick = b.dataset.pick; drawBank(); }));
+  drawBank();
+  onSubmit($("#cof", d), async (v) => {
+    const r = await post(`/api/me/wallets/${eventId}/cashout`, pick === "eft" ? { method: "eft", bank: v } : { method: pick });
+    d.close();
+    toast(pick === "card" ? `Refund ${r.cashout.reference} asked for. Finance approves it, then it goes back to your card.` : pick === "eft" ? `Cash-out ${r.cashout.reference} asked for. We'll email you when it is paid.` : "Show the code at the cash-out desk.", "good");
+    wallet({ eventId });
   });
 }
 
