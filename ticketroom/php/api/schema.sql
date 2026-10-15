@@ -1,6 +1,7 @@
 -- TicketRoom (PHP edition) — SQLite schema.
--- Same tables and column names as the Node/PostgreSQL edition, minus the
--- payment, cashless, vendor and finance tables (switched off in this edition).
+-- Same tables and column names as the Node/PostgreSQL edition where they
+-- overlap. Payments, refunds, payouts, the ledger and cashless (wristbands,
+-- event wallets, vendors and POS) are at the end.
 -- Conventions: ids are UUID text; timestamps are ISO-8601 UTC text
 -- ("2026-10-09T12:00:00.000Z"), so text order = time order; booleans are 0/1;
 -- JSON values are text.
@@ -22,7 +23,10 @@ CREATE TABLE users (
   deleted_at        TEXT,
   email_key         TEXT,
   guest             INTEGER NOT NULL DEFAULT 0,
-  account_type      TEXT NOT NULL DEFAULT 'customer' CHECK (account_type IN ('customer','organiser','staff'))
+  account_type      TEXT NOT NULL DEFAULT 'customer' CHECK (account_type IN ('customer','organiser','staff')),
+  spending_pin_hash   TEXT,
+  pin_failed_attempts INTEGER NOT NULL DEFAULT 0,
+  pin_locked_until    TEXT
 );
 CREATE UNIQUE INDEX users_email_uq ON users (lower(email));
 CREATE INDEX users_type_idx ON users (account_type, created_at);
@@ -536,7 +540,7 @@ CREATE INDEX IF NOT EXISTS event_likes_event_idx ON event_likes (event_id);
 -- settings entered in the admin portal, and support conversations.
 CREATE TABLE IF NOT EXISTS payments (
   id                 TEXT PRIMARY KEY,
-  order_id           TEXT NOT NULL REFERENCES orders(id),
+  order_id           TEXT REFERENCES orders(id),
   provider           TEXT NOT NULL,
   environment        TEXT NOT NULL,
   provider_reference TEXT,
@@ -546,7 +550,9 @@ CREATE TABLE IF NOT EXISTS payments (
   failure_reason     TEXT,
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,
-  confirmed_at       TEXT
+  confirmed_at       TEXT,
+  purpose            TEXT NOT NULL DEFAULT 'order' CHECK (purpose IN ('order','topup')),
+  topup_id           TEXT REFERENCES wallet_topups(id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payments_provider_ref_uq ON payments (provider, provider_reference);
 CREATE INDEX IF NOT EXISTS payments_order_idx ON payments (order_id);
@@ -566,11 +572,11 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 CREATE TABLE IF NOT EXISTS refunds (
   id                 TEXT PRIMARY KEY,
   reference          TEXT NOT NULL UNIQUE,
-  order_id           TEXT NOT NULL REFERENCES orders(id),
+  order_id           TEXT REFERENCES orders(id),
   payment_id         TEXT REFERENCES payments(id),
   amount_cents       INTEGER NOT NULL CHECK (amount_cents >= 0),
   fee_refund_cents   INTEGER NOT NULL DEFAULT 0 CHECK (fee_refund_cents >= 0),
-  kind               TEXT NOT NULL CHECK (kind IN ('customer','event_cancelled','unfulfilled','goodwill')),
+  kind               TEXT NOT NULL CHECK (kind IN ('customer','event_cancelled','unfulfilled','goodwill','wallet_balance','pos_sale')),
   reason             TEXT NOT NULL,
   ticket_ids         TEXT,
   status             TEXT NOT NULL CHECK (status IN ('requested','processing','manual_pending','completed','rejected','failed')),
@@ -582,6 +588,9 @@ CREATE TABLE IF NOT EXISTS refunds (
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,
   completed_at       TEXT,
+  event_id           TEXT REFERENCES events(id),
+  user_id            TEXT REFERENCES users(id),
+  pos_sale_id        TEXT REFERENCES pos_sales(id),
   CHECK (amount_cents + fee_refund_cents > 0)
 );
 CREATE INDEX IF NOT EXISTS refunds_status_idx ON refunds (status, created_at);
@@ -603,7 +612,8 @@ CREATE TABLE IF NOT EXISTS payouts (
   paid_by             TEXT REFERENCES users(id),
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL,
-  paid_at             TEXT
+  paid_at             TEXT,
+  vendor_id           TEXT REFERENCES vendors(id)
 );
 CREATE INDEX IF NOT EXISTS payouts_org_idx ON payouts (organiser_id, status);
 CREATE TABLE IF NOT EXISTS integration_settings (
@@ -664,3 +674,167 @@ CREATE TABLE IF NOT EXISTS recon_items (
   resolved_at           TEXT
 );
 CREATE INDEX IF NOT EXISTS recon_items_run_idx ON recon_items (run_id);
+
+-- cashless:begin
+-- Wristbands and tags, event wallets, vendors and POS. Upgrade 11 runs this
+-- same block on older sites, so every statement here must be safe to repeat.
+-- A tag stores only an HMAC of its chip UID or token, never the value itself.
+-- Balances live on the attendee's account per event (never on the tag);
+-- cashless_wallets holds them for fast, never-negative spending, and every
+-- change is also booked to the ledger (wallet:<user>:<event>).
+CREATE TABLE IF NOT EXISTS tag_batches (
+  id           TEXT PRIMARY KEY,
+  tag_type     TEXT NOT NULL CHECK (tag_type IN ('nfc_wristband','nfc_card','qr_tag')),
+  mode         TEXT NOT NULL CHECK (mode IN ('generate','import','desk')),
+  event_id     TEXT REFERENCES events(id),
+  organiser_id TEXT REFERENCES organisers(id),
+  quantity     INTEGER NOT NULL CHECK (quantity BETWEEN 1 AND 10000),
+  notes        TEXT,
+  created_by   TEXT NOT NULL REFERENCES users(id),
+  created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tags (
+  id                   TEXT PRIMARY KEY,
+  tag_type             TEXT NOT NULL CHECK (tag_type IN ('nfc_wristband','nfc_card','qr_tag')),
+  token_hash           TEXT NOT NULL UNIQUE,
+  display_code         TEXT NOT NULL UNIQUE,
+  activation_code_hash TEXT,
+  security_level       TEXT NOT NULL CHECK (security_level IN ('uid_only','random_token')),
+  batch_id             TEXT REFERENCES tag_batches(id),
+  event_id             TEXT REFERENCES events(id),
+  user_id              TEXT REFERENCES users(id),
+  ticket_id            TEXT REFERENCES tickets(id),
+  status               TEXT NOT NULL DEFAULT 'unassigned' CHECK (status IN ('unassigned','assigned','active','blocked','lost','revoked','replaced')),
+  linked_at            TEXT,
+  last_used_at         TEXT,
+  status_reason        TEXT,
+  replaced_by_tag_id   TEXT REFERENCES tags(id),
+  created_at           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL,
+  CHECK (status <> 'active' OR (user_id IS NOT NULL AND event_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS tags_one_active_per_user_event ON tags (event_id, user_id) WHERE status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS tags_one_active_per_ticket ON tags (ticket_id) WHERE status = 'active' AND ticket_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS tags_user_idx ON tags (user_id);
+CREATE INDEX IF NOT EXISTS tags_event_idx ON tags (event_id, status);
+CREATE TABLE IF NOT EXISTS tag_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  tag_id      TEXT NOT NULL REFERENCES tags(id),
+  action      TEXT NOT NULL,
+  actor_id    TEXT REFERENCES users(id),
+  details     TEXT NOT NULL DEFAULT '{}',
+  occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tag_events_tag_idx ON tag_events (tag_id, occurred_at);
+CREATE TRIGGER IF NOT EXISTS tag_events_no_update BEFORE UPDATE ON tag_events BEGIN SELECT RAISE(ABORT, 'tag_events is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS tag_events_no_delete BEFORE DELETE ON tag_events BEGIN SELECT RAISE(ABORT, 'tag_events is append-only'); END;
+
+CREATE TABLE IF NOT EXISTS cashless_wallets (
+  user_id            TEXT NOT NULL REFERENCES users(id),
+  event_id           TEXT NOT NULL REFERENCES events(id),
+  balance_cents      INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+  test_balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (test_balance_cents >= 0),
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  PRIMARY KEY (user_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS cashless_wallets_event_idx ON cashless_wallets (event_id);
+CREATE TABLE IF NOT EXISTS wallet_topups (
+  id              TEXT PRIMARY KEY,
+  reference       TEXT NOT NULL UNIQUE,
+  user_id         TEXT NOT NULL REFERENCES users(id),
+  event_id        TEXT NOT NULL REFERENCES events(id),
+  amount_cents    INTEGER NOT NULL CHECK (amount_cents > 0),
+  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','failed','cancelled')),
+  idempotency_key TEXT NOT NULL,
+  test            INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL,
+  confirmed_at    TEXT,
+  UNIQUE (user_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS wallet_topups_wallet_idx ON wallet_topups (user_id, event_id, status);
+CREATE INDEX IF NOT EXISTS wallet_topups_event_idx ON wallet_topups (event_id, status);
+
+CREATE TABLE IF NOT EXISTS vendors (
+  id             TEXT PRIMARY KEY,
+  event_id       TEXT NOT NULL REFERENCES events(id),
+  organiser_id   TEXT NOT NULL REFERENCES organisers(id),
+  name           TEXT NOT NULL,
+  description    TEXT,
+  status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended')),
+  commission_bps INTEGER NOT NULL DEFAULT 0 CHECK (commission_bps BETWEEN 0 AND 5000),
+  created_by     TEXT REFERENCES users(id),
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS vendors_event_idx ON vendors (event_id);
+CREATE TABLE IF NOT EXISTS vendor_members (
+  vendor_id  TEXT NOT NULL REFERENCES vendors(id),
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  role       TEXT NOT NULL CHECK (role IN ('manager','cashier')),
+  added_by   TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (vendor_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS vendor_members_user_idx ON vendor_members (user_id);
+CREATE TABLE IF NOT EXISTS products (
+  id          TEXT PRIMARY KEY,
+  vendor_id   TEXT NOT NULL REFERENCES vendors(id),
+  name        TEXT NOT NULL,
+  price_cents INTEGER NOT NULL CHECK (price_cents > 0),
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS products_vendor_idx ON products (vendor_id, active);
+-- A terminal key is shown once when the till is registered; only its hash is kept.
+CREATE TABLE IF NOT EXISTS terminals (
+  id            TEXT PRIMARY KEY,
+  vendor_id     TEXT NOT NULL REFERENCES vendors(id),
+  event_id      TEXT NOT NULL REFERENCES events(id),
+  label         TEXT NOT NULL,
+  key_hash      TEXT NOT NULL UNIQUE,
+  status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','retired')),
+  registered_by TEXT NOT NULL REFERENCES users(id),
+  last_seen_at  TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS terminals_vendor_idx ON terminals (vendor_id);
+CREATE TABLE IF NOT EXISTS pos_sales (
+  id               TEXT PRIMARY KEY,
+  reference        TEXT NOT NULL UNIQUE,
+  event_id         TEXT NOT NULL REFERENCES events(id),
+  vendor_id        TEXT NOT NULL REFERENCES vendors(id),
+  terminal_id      TEXT NOT NULL REFERENCES terminals(id),
+  cashier_id       TEXT NOT NULL REFERENCES users(id),
+  tag_id           TEXT REFERENCES tags(id),
+  user_id          TEXT REFERENCES users(id),
+  total_cents      INTEGER NOT NULL CHECK (total_cents > 0),
+  commission_cents INTEGER NOT NULL DEFAULT 0 CHECK (commission_cents >= 0),
+  status           TEXT NOT NULL CHECK (status IN ('confirmed','declined','reversed')),
+  decline_reason   TEXT,
+  idempotency_key  TEXT NOT NULL,
+  request_hash     TEXT NOT NULL,
+  test             INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL,
+  reversed_at      TEXT,
+  UNIQUE (terminal_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS pos_sales_vendor_idx ON pos_sales (vendor_id, created_at);
+CREATE INDEX IF NOT EXISTS pos_sales_user_idx ON pos_sales (user_id, event_id);
+CREATE TABLE IF NOT EXISTS pos_sale_items (
+  sale_id          TEXT NOT NULL REFERENCES pos_sales(id),
+  product_id       TEXT NOT NULL REFERENCES products(id),
+  name             TEXT NOT NULL,
+  unit_price_cents INTEGER NOT NULL,
+  quantity         INTEGER NOT NULL CHECK (quantity BETWEEN 1 AND 99),
+  PRIMARY KEY (sale_id, product_id)
+);
+CREATE INDEX IF NOT EXISTS payments_topup_idx ON payments (topup_id);
+CREATE INDEX IF NOT EXISTS refunds_event_idx ON refunds (event_id, status);
+CREATE INDEX IF NOT EXISTS refunds_user_idx ON refunds (user_id);
+-- One open (or completed) refund per POS sale.
+CREATE UNIQUE INDEX IF NOT EXISTS refunds_one_pos_sale ON refunds (pos_sale_id) WHERE kind = 'pos_sale' AND status IN ('requested','processing','completed');
+CREATE INDEX IF NOT EXISTS payouts_vendor_idx ON payouts (vendor_id, status);
+-- cashless:end

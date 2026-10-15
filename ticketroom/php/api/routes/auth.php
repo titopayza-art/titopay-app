@@ -8,10 +8,14 @@ route('GET', '/api/health', function () {
 });
 route('GET', '/api/config', fn() => [
     'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'titopayWallet' => false,
-    'features' => ['payments' => false, 'cashless' => false, 'pos' => false, 'finance' => true, 'sms' => sms_ready(), 'tags' => false,
+    // Cashless (event wallets, wristbands and the vendor till) switches on
+    // with card payments, because top-ups are card payments. Each event then
+    // opts in with its own "cashless event" setting. tagRegistry: organisers
+    // register their own wristbands (this edition's organiser portal).
+    'features' => ['payments' => false, 'cashless' => cashless_ready(), 'pos' => cashless_ready(), 'finance' => true, 'sms' => sms_ready(), 'tags' => cashless_ready(), 'tagRegistry' => cashless_ready(),
         'walletApple' => wallet_apple_ready(), 'walletGoogle' => wallet_google_ready()],
     'messaging' => ['email' => mail_mode(), 'sms' => sms_provider()],
-    'cashless' => ['pinThresholdCents' => 20000, 'minTopupCents' => 5000, 'maxTopupCents' => 300000, 'maxBalanceCents' => 500000],
+    'cashless' => cashless_limits(),
     'fees' => cfg('fees'), 'holdMinutes' => HOLD_MINUTES,
 ]);
 
@@ -150,7 +154,15 @@ route('POST', '/api/auth/me/password', function () {
     return ['ok' => true];
 });
 
-route('POST', '/api/auth/me/pin', function () { require_auth(); throw not_available(); });
+// Spending PIN for cashless purchases at or above the PIN threshold. Stored
+// only as a password hash; five wrong tries at a till lock it for 15 minutes.
+route('POST', '/api/auth/me/pin', function () {
+    $u = require_auth();
+    limit('pin', 10, 900, $u['id']);
+    $b = check(body(), ['pin' => R::str(['min' => 4, 'max' => 6, 'pattern' => '/^\d{4,6}$/', 'message' => 'Use 4 to 6 digits.']), 'password' => R::str(['max' => 200])]);
+    pin_set($u, $b['pin'], $b['password']);
+    return ['ok' => true];
+});
 
 // The link in the confirmation email. The first time it is used it confirms
 // the address and signs the person in (proof enough: only the inbox's owner
@@ -265,8 +277,12 @@ route('POST', '/api/auth/me/delete', function () {
         if (val("SELECT 1 FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = ? AND t.status = 'valid' AND e.ends_at > ? LIMIT 1", [$u['id'], now_iso()])) {
             throw conflict('You have tickets for upcoming events. Transfer or use them before deleting your account.', 'has_live_tickets');
         }
+        if ((int) val('SELECT COALESCE(SUM(balance_cents),0) FROM cashless_wallets WHERE user_id = ?', [$u['id']]) > 0) {
+            throw conflict('You have an unused cashless balance. Ask for it back (Wallets) before deleting your account.', 'has_balance');
+        }
         $now = now_iso();
-        q("UPDATE users SET email = 'deleted+' || id || '@invalid.ticketroom', full_name = 'Deleted user', phone = NULL, status = 'deleted', password_hash = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?", [$now, $now, $u['id']]);
+        q("UPDATE users SET email = 'deleted+' || id || '@invalid.ticketroom', full_name = 'Deleted user', phone = NULL, status = 'deleted', password_hash = 'deleted', spending_pin_hash = NULL, deleted_at = ?, updated_at = ? WHERE id = ?", [$now, $now, $u['id']]);
+        q("UPDATE tags SET status = 'revoked', status_reason = 'account deleted', updated_at = ? WHERE user_id = ? AND status = 'active'", [$now, $u['id']]);
         q("UPDATE orders SET buyer_name = 'Deleted user', buyer_email = 'deleted@invalid.ticketroom', buyer_phone = NULL WHERE user_id = ?", [$u['id']]);
         q('UPDATE tickets SET holder_name = NULL WHERE owner_user_id = ?', [$u['id']]);
         q('UPDATE marketing_consents SET granted = 0, updated_at = ? WHERE user_id = ?', [$now, $u['id']]);

@@ -10,7 +10,8 @@ declare(strict_types=1);
 const ACCOUNT_PORTALS = ['customer' => '/account', 'organiser' => '/organisers', 'staff' => '/admin'];
 const ACCOUNT_NAMES = ['customer' => 'customer', 'organiser' => 'organiser', 'staff' => 'TicketRoom staff'];
 // Which accounts each sign-in box accepts ('site' is the public website).
-const PORTAL_ACCEPTS = ['site' => ['customer', 'organiser'], 'customer' => ['customer'], 'organiser' => ['organiser'], 'admin' => ['staff'], 'scanner' => ['customer', 'organiser']];
+// The vendor till ('pos') is for vendor staff (customer accounts) and the organiser's own team.
+const PORTAL_ACCEPTS = ['site' => ['customer', 'organiser'], 'customer' => ['customer'], 'organiser' => ['organiser'], 'admin' => ['staff'], 'scanner' => ['customer', 'organiser'], 'pos' => ['customer', 'organiser']];
 function account_type(?array $u): string { return (string) ($u['account_type'] ?? $u['accountType'] ?? 'customer'); }
 // Where an emailed link for this account opens: its own portal.
 function portal_link(array $u, string $hash): string { return base_url() . ACCOUNT_PORTALS[account_type($u)] . "#/$hash"; }
@@ -75,12 +76,12 @@ function user_by_email(string $email): ?array
 
 function profile(string $userId): array
 {
-    $u = row('SELECT id, email, full_name, phone, email_verified_at, created_at, account_type FROM users WHERE id = ?', [$userId]);
-    $u['has_pin'] = false;
+    $u = row('SELECT id, email, full_name, phone, email_verified_at, created_at, account_type, spending_pin_hash IS NOT NULL AS has_pin FROM users WHERE id = ?', [$userId]);
     $u['platform_roles'] = $u['account_type'] === 'staff' ? array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$userId]), 'role') : [];
     $u['organisers'] = array_map(fn($r) => ['id' => $r['id'], 'name' => $r['name'], 'status' => $r['status'], 'role' => $r['role']],
         rows('SELECT o.id, o.name, o.status, m.role FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = ? ORDER BY m.created_at', [$userId]));
-    $u['vendors'] = [];
+    $u['vendors'] = array_map(fn($r) => ['id' => $r['id'], 'name' => $r['name'], 'role' => $r['role'], 'eventId' => $r['event_id'], 'eventTitle' => $r['title']],
+        rows('SELECT v.id, v.name, vm.role, v.event_id, e.title FROM vendor_members vm JOIN vendors v ON v.id = vm.vendor_id JOIN events e ON e.id = v.event_id WHERE vm.user_id = ? ORDER BY e.starts_at DESC', [$userId]));
     $u['staff_events'] = array_map(fn($r) => ['eventId' => $r['id'], 'title' => $r['title'], 'canScan' => (bool) $r['can_scan'], 'canManageTags' => (bool) $r['can_manage_tags']],
         rows('SELECT e.id, e.title, s.can_scan, s.can_manage_tags FROM event_staff s JOIN events e ON e.id = s.event_id WHERE s.user_id = ?', [$userId]));
     return $u;
@@ -457,15 +458,26 @@ function admit(array $staff, array $b): array
             $typed = qr_parse($b['payload'] ?? '');
             if (!$typed || $typed['signed'] || !val('SELECT 1 FROM gate_passes WHERE code = ?', [$typed['code']])) return $notLive();
         }
-        if (empty($b['payload'])) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Wristbands and tags are not available yet. Scan the ticket QR code.']; }
-        if ($isPass) return admit_pass($staff, $b, $ev);
-        $p = qr_parse($b['payload']);
-        if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom ticket, or the code has been altered.']; }
-        $t = row('SELECT * FROM tickets WHERE code = ?', [$p['code']]);
-        // A typed code may belong to a gate pass.
-        if (!$t && !$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev);
-        if (!$t) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Ticket not found.']; }
-        if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) { $log('invalid', $t['id']); return ['outcome' => 'invalid', 'message' => 'This QR code was replaced (ticket transferred or reissued). Ask for the current ticket.']; }
+        if (empty($b['payload'])) {
+            // A wristband or tag: it opens the gate through the ticket it is
+            // linked to. The answer never says whose band an unknown one is.
+            $tag = tag_resolve($b['tagInput'] ?? '');
+            if (!$tag || $tag['event_id'] !== $eventId || in_array($tag['status'], TAG_STATUS_OPEN, true)) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'This tag is not linked to a ticket for this event.']; }
+            if ($tag['status'] !== 'active') { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'This tag was blocked (lost, stolen or replaced). Send the guest to the registration desk.']; }
+            $t = $tag['ticket_id'] ? row('SELECT * FROM tickets WHERE id = ?', [$tag['ticket_id']]) : null;
+            // The ticket was sent to someone else after the band was linked.
+            if (!$t || $t['owner_user_id'] !== $tag['user_id']) { $log('invalid', $t['id'] ?? null); return ['outcome' => 'invalid', 'message' => 'This tag no longer matches its ticket. Send the guest to the registration desk.']; }
+            q('UPDATE tags SET last_used_at = ? WHERE id = ?', [now_iso(), $tag['id']]);
+        } else {
+            if ($isPass) return admit_pass($staff, $b, $ev);
+            $p = qr_parse($b['payload']);
+            if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom ticket, or the code has been altered.']; }
+            $t = row('SELECT * FROM tickets WHERE code = ?', [$p['code']]);
+            // A typed code may belong to a gate pass.
+            if (!$t && !$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev);
+            if (!$t) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Ticket not found.']; }
+            if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) { $log('invalid', $t['id']); return ['outcome' => 'invalid', 'message' => 'This QR code was replaced (ticket transferred or reissued). Ask for the current ticket.']; }
+        }
         if ($t['event_id'] !== $eventId) { $log('wrong_event', $t['id']); return ['outcome' => 'wrong_event', 'message' => 'This ticket is for a different event.']; }
         if (in_array($t['status'], ['revoked', 'refunded'], true)) { $log($t['status'], $t['id']); return ['outcome' => $t['status'], 'message' => "This ticket was {$t['status']}."]; }
         // Bought in test mode (sandbox): never valid for entry.

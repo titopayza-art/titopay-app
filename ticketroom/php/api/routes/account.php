@@ -1,6 +1,7 @@
 <?php
-// /api/me/* — tickets, QR codes, transfers, orders, support. Cashless,
-// wristbands and payment methods are not available in this edition.
+// /api/me/* — tickets, QR codes, transfers, orders, support. Wristbands and
+// cashless wallets are in routes/cashless.php; linked payment methods
+// (TitoPay wallet) are not available in this edition.
 declare(strict_types=1);
 
 route('GET', '/api/me/tickets', fn() => ['tickets' => tickets_for_user(require_auth()['id'])]);
@@ -60,10 +61,7 @@ route('GET', '/api/me/support', fn() => ['cases' => rows('SELECT reference, cate
 
 // Not in this edition: answer consistently so pages can show "coming soon".
 route('GET', '/api/me/payment-methods', function () { require_auth(); return ['links' => [], 'titopayAvailable' => false, 'titopayEnvironment' => null]; });
-route('GET', '/api/me/wallets', function () { require_auth(); return ['wallets' => []]; });
-route('GET', '/api/me/tags', function () { require_auth(); return ['tags' => []]; });
-foreach (['POST /api/me/payment-methods/titopay/link', 'POST /api/me/payment-methods/titopay/confirm', 'DELETE /api/me/payment-methods/:id', 'POST /api/me/tags/link',
-    'POST /api/me/tags/:id/lost', 'GET /api/me/wallets/:eventId', 'POST /api/me/wallets/:eventId/topups', 'POST /api/me/wallets/:eventId/refund'] as $r) {
+foreach (['POST /api/me/payment-methods/titopay/link', 'POST /api/me/payment-methods/titopay/confirm', 'DELETE /api/me/payment-methods/:id'] as $r) {
     [$m, $p] = explode(' ', $r);
     route($m, $p, function () { require_auth(); throw not_available(); });
 }

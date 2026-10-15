@@ -1,5 +1,6 @@
 <?php
-// /api/staff/* — gate scanning on phones, with live counts.
+// /api/staff/* — gate scanning on phones, with live counts. The tag desk
+// (linking and replacing wristbands) is in routes/cashless.php.
 declare(strict_types=1);
 
 route('GET', '/api/staff/events', function () {
@@ -7,13 +8,14 @@ route('GET', '/api/staff/events', function () {
     $all = 0; // only the events this person was added to, or their organisation's
     $list = rows("SELECT DISTINCT e.id, e.title, e.venue_name, e.city, e.starts_at, e.ends_at, e.status, e.cashless_enabled,
                          COALESCE(s.can_scan, CASE WHEN m.role IN ('owner','manager') THEN 1 END, ?) AS can_scan,
-                         0 AS can_manage_tags
+                         COALESCE(s.can_manage_tags, CASE WHEN m.role IN ('owner','manager') THEN 1 END, 0) AS can_manage_tags
                     FROM events e
                     LEFT JOIN event_staff s ON s.event_id = e.id AND s.user_id = ?
                     LEFT JOIN organiser_members m ON m.organiser_id = e.organiser_id AND m.user_id = ? AND m.role IN ('owner','manager')
                    WHERE e.status = 'published' AND e.ends_at > ? AND (? = 1 OR s.user_id IS NOT NULL OR m.user_id IS NOT NULL)
                    ORDER BY e.starts_at", [$all, $u['id'], $u['id'], iso_in(-86400), $all]);
-    foreach ($list as &$e) $e['cashless_enabled'] = false;
+    // The tag desk is there only while wristbands can be used at all.
+    foreach ($list as &$e) { $e['cashless_enabled'] = cashless_open_event($e); $e['can_manage_tags'] = $e['can_manage_tags'] && cashless_ready(); }
     return ['events' => $list];
 });
 
@@ -110,13 +112,3 @@ route('POST', '/api/staff/scan/sync', function () {
     return ['results' => $out];
 });
 
-foreach (['POST /api/staff/tags/link', 'POST /api/staff/tags/lookup', 'POST /api/staff/tags/replace', 'POST /api/staff/tags/:tagId/block'] as $r) {
-    [$m, $p] = explode(' ', $r);
-    route($m, $p, function () { require_auth(); throw not_available(); });
-}
-// Vendor point of sale is not part of this edition.
-foreach (['GET /api/pos/context', 'GET /api/pos/vendors', 'GET /api/pos/sales', 'GET /api/pos/summary', 'POST /api/pos/sales', 'GET /api/pos/sales/by-key/:key',
-    'POST /api/pos/sales/:id/refund', 'POST /api/pos/vendors/:id/products'] as $r) {
-    [$m, $p] = explode(' ', $r);
-    route($m, $p, function () { throw not_available(); });
-}
