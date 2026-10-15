@@ -200,8 +200,12 @@ async function wallet({ eventId }) {
         ${w.balanceCents > 0 ? html`<button class="btn btn-link" id="rf">Request refund of unused balance</button>` : ""}</section></div>
     ${!u.has_pin ? html`<p class="callout warn mt">Purchases of ${money(w.limits.pinThresholdCents || 20000)} or more need a spending PIN. <a href="#/settings">Set your PIN</a>.</p>` : ""}
     <h2 class="mt-lg">Activity</h2>
-    ${w.history.length ? html`<div class="table-wrap"><table><thead><tr><th>When</th><th>What</th><th>Reference</th><th>Status</th><th class="num">Amount</th></tr></thead><tbody>
-      ${w.history.map((h) => html`<tr><td>${fmtDateTime(h.created_at)}</td><td>${h.kind === "purchase" ? `Purchase · ${h.vendor}` : h.kind === "topup" ? "Top-up" : "Refund"}</td><td class="mono">${h.reference}</td><td>${badge(h.status)}</td><td class="num">${moneyExact(h.amount_cents)}</td></tr>`)}</tbody></table></div>` : empty("No activity yet.")}`);
+    ${w.history.length ? html`<ul class="activity card flat">${w.history.map((h) => {
+      const out = h.amount_cents < 0;
+      const what = h.kind === "purchase" ? h.vendor || "Purchase" : h.kind === "topup" ? "Top-up" : out ? "Refund of unused balance" : "Purchase refunded";
+      return html`<li><div class="grow"><strong>${what}</strong>${h.test ? html` <span class="badge warn">test</span>` : ""}
+        <div class="small muted">${fmtDate(h.created_at, { day: "numeric", month: "short" })}, ${fmtTime(h.created_at)} · <span class="mono">${h.reference}</span></div></div>
+        <div class="right"><div class="amt ${out ? "out" : "in"}">${out ? "−" : "+"}${moneyExact(Math.abs(h.amount_cents))}</div>${h.status === "confirmed" ? "" : badge(h.status)}</div></li>`; })}</ul>` : empty("No activity yet.")}`);
   $$("[data-amt]").forEach((b) => b.addEventListener("click", () => { $("#amt").value = String(Number(b.dataset.amt) / 100); }));
   if ($("#tu")) onSubmit($("#tu"), async (v) => {
     const cents = parseRand(v.amount);

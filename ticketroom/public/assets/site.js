@@ -129,7 +129,9 @@ async function eventPage(slug) {
         <span>${icon("clock")}${fmtTime(e.starts_at)} to ${fmtTime(e.ends_at)} SAST${e.doors_open_at ? ` · doors ${fmtTime(e.doors_open_at)}` : ""}</span>
         <a class="event-place" href="${mapUrl}" target="_blank" rel="noopener">${icon("pin")}${place}</a></div>
       <div class="row mt"><a class="btn btn-primary" href="#box" data-buy>${e.is_free ? "Get free tickets" : "Buy tickets"}</a><div class="event-actions" data-actions></div></div>
-      ${e.cashless_enabled ? html`<p class="cashless-note"><strong>This event is cashless!</strong> Pay for food and drinks with your wristband. <button type="button" class="btn-link" data-cashless>More info</button></p>` : ""}
+      ${e.cashless_enabled ? html`<div class="cashless-note" role="note"><div class="cl-head"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 7.5a6.5 6.5 0 0 1 0 9M12.5 5a10 10 0 0 1 0 14M5.5 10a2.8 2.8 0 0 1 0 4"/></svg>
+        <strong>This event is cashless!</strong></div><p class="mb-0">No cash at the bars and food stalls. Tap your wristband to pay and top up on your phone.</p>
+        <button type="button" class="btn cl-more" data-cashless>More info</button></div>` : ""}
       ${e.status === "cancelled" ? html`<p class="callout bad mt"><strong>This event has been cancelled.</strong> Ticket holders are refunded automatically.</p>` : ""}
     </div></section>
     <div class="wrap event-layout">
