@@ -142,8 +142,8 @@ function showResult(kind, r) {
     pending: html`<div class="verdict idle"><div class="big">CHARGING…</div><div>Waiting for TicketRoom. Don't hand over goods yet.</div></div>`,
     uncertain: html`<div class="verdict warn"><div class="big">CHECKING</div><div>${typeof r === "string" ? r : "Connection dropped. Checking whether this sale went through. It will NOT be charged twice."}</div></div>`,
     not_charged: html`<div class="verdict no"><div class="big">NOT CHARGED</div><div>The sale did not reach TicketRoom. Nothing was taken. You can try again.</div></div>`,
-    approved: html`<div class="verdict ok"><div class="big">APPROVED</div><div>${r?.totalCents ? moneyExact(r.totalCents) : ""} · ${r?.reference || ""}</div></div>`,
-    declined: html`<div class="verdict no"><div class="big">DECLINED</div><div>${r?.message || ""}</div></div>`,
+    approved: html`<div class="verdict ok"><div class="big">APPROVED</div><div>${r?.totalCents ? moneyExact(r.totalCents) : ""} · ${r?.reference || ""}</div>${r?.balanceCents != null ? html`<div class="small">Left on the band: ${moneyExact(r.balanceCents)}</div>` : ""}</div>`,
+    declined: html`<div class="verdict no"><div class="big">DECLINED</div><div>${r?.message || ""}</div>${r?.balanceCents != null ? html`<div class="small">On the band: ${moneyExact(r.balanceCents)}</div>` : ""}</div>`,
     error: html`<div class="verdict no"><div class="big">NOT CHARGED</div><div>${r || ""}</div></div>`,
   }[kind];
   render(main, html`${nav()}<div role="status" aria-live="assertive">${box}</div>
@@ -179,8 +179,8 @@ async function summary() {
 (async () => {
   await header($("#header"), { portal: "pos" });
   if (!(await features()).pos) {
-    return render(main, html`<div class="card pad-lg stack"><h1>Vendor point of sale is coming soon</h1>
-      <p>Cashless payments and the vendor till arrive together with paid ticket sales. Until then, vendors at your events can take payment the way they usually do.</p>
+    return render(main, html`<div class="card pad-lg stack"><h1>The vendor till isn't switched on yet</h1>
+      <p>The till works with cashless wristbands, which switch on as soon as TicketRoom's card payments are set up. Until then, vendors can take payment the way they usually do.</p>
       <div class="row"><a class="btn btn-primary" href="/organisers">Back to the organiser portal</a><a class="btn btn-ghost" href="/contact?topic=organiser">Ask us about it</a></div></div>`);
   }
   const u = await requireUser("Vendor staff sign in.");

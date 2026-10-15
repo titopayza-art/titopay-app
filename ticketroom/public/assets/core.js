@@ -52,11 +52,11 @@ features().then((f) => { for (const [k, on] of Object.entries(f)) document.docum
 // Wraps a portal route so it shows a friendly "coming soon" page when the
 // feature is off in this edition (e.g. someone opens an old link).
 const SOON = {
-  cashless: ["Cashless wristbands are coming soon", "Wristbands, top-ups and tapping to pay at events arrive together with paid ticket sales."],
-  payments: ["Payment methods are coming soon", "You'll be able to save a payment method here once paid ticket sales open."],
-  finance: ["Payouts and refunds are coming soon", "Free events don't involve any money. Payouts, settlements and refunds start when paid ticket sales open."],
-  tags: ["Wristbands and tags are coming soon", "Linking wristbands and tags to tickets arrives together with cashless payments."],
-  pos: ["Vendor point of sale is coming soon", "The vendor till arrives together with cashless payments and paid ticket sales."],
+  cashless: ["Cashless isn't switched on yet", "Wristbands, top-ups and tap-to-pay switch on as soon as TicketRoom's card payments are set up. Ask us at hello@ticketroom.co.za to plan a cashless event."],
+  payments: ["Saved payment methods aren't available", "Pay by card at checkout; nothing needs to be saved here."],
+  finance: ["Payouts aren't switched on yet", "Payouts, settlements and refunds start as soon as TicketRoom's card payments are set up. Free events don't involve any money."],
+  tags: ["Wristbands aren't switched on yet", "Linking wristbands to tickets switches on together with cashless payments."],
+  pos: ["The vendor till isn't switched on yet", "The vendor till switches on together with cashless payments."],
 };
 export function gate(feature, fn) {
   return async (params) => {
@@ -773,7 +773,8 @@ export function organiserSignupDialog() {
       <div class="row"><button class="btn btn-ghost btn-sm" data-resend>Send it again</button><button class="btn btn-primary btn-sm" data-close>Done</button></div></div>`);
     $("[data-resend]", d).addEventListener("click", async (e) => { try { const x = await post("/api/auth/verify-email/resend", { email: r.email }); toast(x.message, "good"); e.target.disabled = true; } catch (err) { toast(err.message, "bad"); } });
   });
-  setTimeout(() => $("#os-org", d)?.focus(), 50);
+  // Start in the first box, unless the person has already started typing elsewhere.
+  setTimeout(() => { const f = document.activeElement; if (!f || f === d || f === document.body || !d.contains(f)) $("#os-org", d)?.focus(); }, 50);
   return d;
 }
 

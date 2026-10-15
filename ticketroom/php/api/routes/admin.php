@@ -245,13 +245,14 @@ route('GET', '/api/admin/users/:id', function ($a) {
     adm_admin_or_support();
     $user = row("SELECT id, email, full_name, phone, status, account_type, guest, created_at, email_verified_at FROM users WHERE id = ? AND account_type <> 'staff'", [$a['id']]);
     if (!$user) throw not_found('User not found.');
-    $user['has_pin'] = false; // spending PINs belong to cashless, not in this edition
+    $user['has_pin'] = (bool) val('SELECT spending_pin_hash IS NOT NULL FROM users WHERE id = ?', [$a['id']]);
     return [
         'user' => $user,
         'organisations' => rows('SELECT o.id, o.name, o.ref, o.status, m.role FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = ? ORDER BY o.name', [$a['id']]),
         'orders' => rows('SELECT o.id, o.reference, o.status, o.total_cents, o.created_at, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = ? ORDER BY o.created_at DESC LIMIT 50', [$a['id']]),
         'tickets' => rows('SELECT t.id, t.code, t.status, e.title, t.admitted_at FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = ? ORDER BY t.created_at DESC LIMIT 100', [$a['id']]),
-        'tags' => [],
+        'tags' => array_map(fn($t) => ['display_code' => tag_display($t['display_code'])] + $t,
+            rows('SELECT t.id, t.display_code, t.tag_type, t.status, e.title FROM tags t LEFT JOIN events e ON e.id = t.event_id WHERE t.user_id = ?', [$a['id']])),
     ];
 });
 
@@ -412,13 +413,7 @@ route('POST', '/api/admin/tickets/:id/revoke', function ($a) {
 
 // Payments, webhooks, refunds, payouts, reconciliation and the ledger: routes/finance.php.
 
-// ---- tags & terminals (not in this edition) ----------------------------------------
-route('POST', '/api/admin/tag-batches', function () { adm_admin(); throw not_available(); });
-route('GET', '/api/admin/tags', function () { adm_any(); return ['tags' => []]; });
-route('GET', '/api/admin/tags/:id/history', function () { adm_any(); return ['history' => []]; });
-route('POST', '/api/admin/tags/:id/status', function () { adm_admin_or_support(); throw not_available(); });
-route('GET', '/api/admin/terminals', function () { adm_any(); return ['terminals' => []]; });
-route('POST', '/api/admin/terminals/:id/status', function () { adm_admin(); throw not_available(); });
+// Tags, terminals and cashless settlement figures: routes/cashless.php.
 
 // Integrations (email, card payments, SMS): routes/finance.php.
 

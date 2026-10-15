@@ -176,7 +176,6 @@ For Attendee information they receive, Organisers are separate responsible parti
 - To answer support requests and improve our help content: **legitimate interests**.`],
         ["5. Who we share it with", `- **Organisers** of Events you book or attend: your name, email, ticket and admission details, and your phone number if you provided it, so they can run the Event and contact you about it. Organisers may send you marketing only if you opted in for them.
 - **Service providers (operators)** who process information for us under written agreements: hosting, payment processing, email and SMS delivery, and, where our online assistant uses artificial intelligence, an AI service provider that processes the text of your question (do not include personal details in assistant questions).
-- **TitoPay**, our technology partner, where you choose TitoPay wallet payments.
 - **Authorities, regulators and professional advisers** where required by law or to protect rights, safety and property.
 - **A buyer or successor** of our business, subject to the same protections.
 

@@ -22,8 +22,10 @@ route('POST', '/api/webhooks/:provider', function ($a) {
 route('GET', '/api/admin/payments', function () {
     adm_any();
     $q = trim((string) qs('q', ''));
-    $list = rows("SELECT p.*, o.reference AS order_reference, u.email, 'order' AS purpose FROM payments p JOIN orders o ON o.id = p.order_id JOIN users u ON u.id = o.user_id
-                   WHERE ? = '' OR o.reference = upper(?) OR p.provider_reference = ? ORDER BY p.created_at DESC LIMIT 200", [$q, $q, $q]);
+    // Ticket orders and cashless top-ups.
+    $list = rows("SELECT p.*, COALESCE(o.reference, t.reference) AS order_reference, u.email FROM payments p
+                    LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN wallet_topups t ON t.id = p.topup_id JOIN users u ON u.id = COALESCE(o.user_id, t.user_id)
+                   WHERE ? = '' OR o.reference = upper(?) OR t.reference = upper(?) OR p.provider_reference = ? ORDER BY p.created_at DESC LIMIT 200", [$q, $q, $q, $q]);
     // Promote purchases by card (paid-from-balance ones move no provider money).
     $promo = rows("SELECT p.*, e.reference AS order_reference, u.email, 'promotion' AS purpose FROM promotion_payments p JOIN event_promotions e ON e.id = p.promotion_id
                     LEFT JOIN users u ON u.id = p.created_by WHERE p.provider <> 'balance' AND (? = '' OR e.reference = upper(?) OR p.provider_reference = ?) ORDER BY p.created_at DESC LIMIT 200", [$q, $q, $q]);
@@ -48,8 +50,11 @@ route('GET', '/api/admin/webhooks', function () {
 function fin_refund_rows(string $where, array $p): array
 {
     $me = user()['id'] ?? '';
-    $list = rows("SELECT r.*, o.reference AS order_reference, e.title AS event_title, e.id AS event_id, e.organiser_id, rq.full_name AS requested_by_name, dc.full_name AS decided_by_name, o.buyer_email
-                    FROM refunds r JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = o.event_id
+    // Ticket refunds have an order; cashless wallet and vendor sale refunds have an event and a person.
+    $list = rows("SELECT r.*, o.reference AS order_reference, e.title AS event_title, e.id AS event_id, e.organiser_id, rq.full_name AS requested_by_name, dc.full_name AS decided_by_name,
+                         COALESCE(o.buyer_email, ru.email) AS buyer_email, v.name AS vendor_name
+                    FROM refunds r LEFT JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = COALESCE(o.event_id, r.event_id)
+                    LEFT JOIN users ru ON ru.id = r.user_id LEFT JOIN pos_sales s ON s.id = r.pos_sale_id LEFT JOIN vendors v ON v.id = s.vendor_id
                     LEFT JOIN users rq ON rq.id = r.requested_by LEFT JOIN users dc ON dc.id = r.decided_by
                    WHERE $where ORDER BY r.created_at DESC LIMIT 300", $p);
     // "mine" tells the page to ask for a second person: only when there is one.
@@ -62,6 +67,8 @@ function fin_refund_rows(string $where, array $p): array
 function fin_can_decide(array $r, array $u): void
 {
     if ($r['requested_by'] !== $u['id']) return;
+    // A vendor sale refund asked for by an organiser: someone else on their team decides.
+    if ($r['kind'] === 'pos_sale' && !has_role($u, 'finance')) throw forbidden('You asked for this refund, so someone else must approve it.');
     $others = (int) val("SELECT count(*) FROM platform_roles pr JOIN users x ON x.id = pr.user_id WHERE pr.role = 'finance' AND x.status = 'active' AND x.id <> ?", [$u['id']]);
     if ($others > 0) throw forbidden('You asked for this refund, so someone else in finance must approve it.');
 }
@@ -72,9 +79,13 @@ function fin_decide_refund(array $u, string $id, bool $approve, ?string $note): 
     if ($r['status'] !== 'requested') throw conflict('This refund has already been decided.', 'bad_transition');
     fin_can_decide($r, $u);
     if (!$approve) {
-        q("UPDATE refunds SET status = 'rejected', note = ?, decided_by = ?, updated_at = ? WHERE id = ?", [$note, $u['id'], now_iso(), $r['id']]);
-        audit('refund.rejected', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $r['id'], 'details' => ['note' => $note]]);
-        return row('SELECT * FROM refunds WHERE id = ?', [$r['id']]);
+        return tx(function () use ($u, $r, $note) {
+            if (affected("UPDATE refunds SET status = 'rejected', note = ?, decided_by = ?, updated_at = ? WHERE id = ? AND status = 'requested'", [$note, $u['id'], now_iso(), $r['id']]) !== 1) throw conflict('This refund has already been decided.', 'bad_transition');
+            // Unused cashless balance that was waiting to be refunded goes back on the balance.
+            if ($r['kind'] === 'wallet_balance') wallet_refund_rejected($r);
+            audit('refund.rejected', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $r['id'], 'details' => ['note' => $note]]);
+            return row('SELECT * FROM refunds WHERE id = ?', [$r['id']]);
+        });
     }
     q('UPDATE refunds SET decided_by = ?, updated_at = ? WHERE id = ?', [$u['id'], now_iso(), $r['id']]);
     audit('refund.approved', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $r['id']]);
@@ -133,10 +144,11 @@ route('POST', '/api/admin/refunds/:id/complete-manually', function ($a) {
 function fin_payout_rows(string $where, array $p): array
 {
     $me = user()['id'] ?? '';
-    $list = rows("SELECT po.*, o.name AS organiser_name, rq.full_name AS requested_by_name, ap.full_name AS approved_by_name
+    $list = rows("SELECT po.*, o.name AS organiser_name, rq.full_name AS requested_by_name, ap.full_name AS approved_by_name, v.name AS vendor_name
                     FROM payouts po JOIN organisers o ON o.id = po.organiser_id LEFT JOIN users rq ON rq.id = po.requested_by LEFT JOIN users ap ON ap.id = po.approved_by
+                    LEFT JOIN vendors v ON v.id = po.vendor_id
                    WHERE $where ORDER BY po.created_at DESC LIMIT 300", $p);
-    foreach ($list as &$r) { $r['mine'] = $r['requested_by'] === $me; $r['vendor_name'] = null; }
+    foreach ($list as &$r) $r['mine'] = $r['requested_by'] === $me;
     return $list;
 }
 function fin_payout_mail(array $po, string $tpl, array $extra = []): void
@@ -178,7 +190,9 @@ route('POST', '/api/admin/payouts/:id/mark-paid', function ($a) {
         kyc_require_for_payout($po['organiser_id']);
         $now = now_iso();
         q("UPDATE payouts SET status = 'paid', bank_reference = ?, paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ?", [$b['bankReference'], $u['id'], $now, $now, $po['id']]);
-        ledger_post('payout', $po['reference'], [["organiser:{$po['organiser_id']}:payouts", (int) $po['amount_cents']], ['bank:payouts', -(int) $po['amount_cents']]]);
+        // A vendor settlement pays out what was owed for that vendor's cashless sales.
+        $from = $po['vendor_id'] ? vendor_account(row('SELECT id, event_id FROM vendors WHERE id = ?', [$po['vendor_id']])) : "organiser:{$po['organiser_id']}:payouts";
+        ledger_post('payout', $po['reference'], [[$from, (int) $po['amount_cents']], ['bank:payouts', -(int) $po['amount_cents']]]);
         fin_payout_mail($po, 'payoutPaid', ['bankReference' => $b['bankReference']]);
         audit('payout.paid', ['actor' => $u, 'entityType' => 'payout', 'entityId' => $po['id'], 'organiserId' => $po['organiser_id'], 'details' => ['amount' => (int) $po['amount_cents']]]);
         return ['payout' => row('SELECT * FROM payouts WHERE id = ?', [$po['id']])];
@@ -246,7 +260,7 @@ route('POST', '/api/admin/reconciliation/items/:id/resolve', function ($a) {
 });
 route('GET', '/api/admin/ledger/accounts', function () {
     adm_any();
-    $kind = fn($a) => match (true) { str_starts_with($a, 'provider:'), str_starts_with($a, 'bank:') => 'asset', str_starts_with($a, 'organiser:') => 'liability', default => 'revenue' };
+    $kind = fn($a) => match (true) { str_starts_with($a, 'provider:'), str_starts_with($a, 'bank:') => 'asset', str_starts_with($a, 'organiser:'), str_starts_with($a, 'wallet:'), str_starts_with($a, 'vendor:') => 'liability', default => 'revenue' };
     return ['accounts' => array_map(fn($r) => ['code' => $r['account'], 'kind' => $kind($r['account']), 'balance_cents' => (int) $r['b'], 'entries' => (int) $r['n']],
         rows('SELECT account, SUM(amount_cents) AS b, count(*) AS n FROM ledger_entries GROUP BY account ORDER BY account'))];
 });
@@ -287,9 +301,17 @@ route('GET', '/api/organiser/:orgId/refunds', function ($a) {
     organiser_access(require_auth(), $a['orgId'], ['owner', 'manager', 'finance']);
     return ['refunds' => fin_refund_rows('e.organiser_id = ?', [$a['orgId']])];
 });
+// Organisers decide refunds of vendor (POS) sales at their own events. Ticket
+// and wallet refunds are approved by TicketRoom finance.
 route('POST', '/api/organiser/:orgId/refunds/:refundId/decide', function ($a) {
-    organiser_access(require_auth(), $a['orgId'], ['owner', 'manager']);
-    throw conflict('Ticket refunds are approved by TicketRoom finance.', 'not_yours_to_decide');
+    $u = require_auth();
+    organiser_access($u, $a['orgId'], ['owner', 'manager']);
+    $b = check(body(), ['approve' => R::bool(), 'note' => R::str(['optional' => true, 'max' => 400])]);
+    $r = row('SELECT r.* FROM refunds r JOIN events e ON e.id = r.event_id WHERE r.id = ? AND e.organiser_id = ?', [$a['refundId'], $a['orgId']]);
+    if (!$r) throw not_found('Refund not found.');
+    if ($r['kind'] !== 'pos_sale') throw conflict('Ticket refunds are approved by TicketRoom finance.', 'not_yours_to_decide');
+    if (!$b['approve'] && empty($b['note'])) throw bad('Say why, so the vendor knows.', ['note' => 'Required when rejecting.']);
+    return ['refund' => fin_decide_refund($u, $r['id'], $b['approve'], $b['note'] ?? null)];
 });
 // An organiser asks for a refund on one of their orders; TicketRoom finance approves it.
 route('POST', '/api/organiser/:orgId/events/:eventId/orders/:orderId/refund', function ($a) {
@@ -310,7 +332,8 @@ route('GET', '/api/me/refunds', function () {
     $u = require_auth();
     return ['refunds' => array_map(fn($r) => ['reference' => $r['reference'], 'title' => $r['title'], 'kind' => $r['kind'], 'status' => $r['status'], 'created_at' => $r['created_at'],
         'amount_cents' => (int) $r['amount_cents'] + (int) $r['fee_refund_cents']],
-        rows("SELECT r.*, e.title FROM refunds r JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = o.event_id WHERE o.user_id = ? AND r.status <> 'rejected' ORDER BY r.created_at DESC", [$u['id']]))];
+        rows("SELECT r.*, e.title FROM refunds r LEFT JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = COALESCE(o.event_id, r.event_id)
+               WHERE COALESCE(o.user_id, r.user_id) = ? AND r.status <> 'rejected' ORDER BY r.created_at DESC", [$u['id']]))];
 });
 
 // ============================================================== integrations

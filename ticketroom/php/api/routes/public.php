@@ -56,6 +56,9 @@ route('GET', '/api/public/events/:slug', function ($a) {
                      FROM ticket_types WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, price_cents", [$ev['id']]);
     foreach ($types as &$t) $t['fee_cents'] = ticket_fee((int) $t['price_cents']);
     $ev['salesOpen'] = $ev['status'] === 'published' && sales_open($ev);
+    // "This event is cashless": pay at the stalls with a wristband, topped up in your account.
+    $ev['cashless'] = cashless_open_event($ev);
+    $ev['cashless_enabled'] = $ev['cashless'];
     $ev['liked'] = user() ? (bool) val('SELECT 1 FROM event_likes WHERE user_id = ? AND event_id = ?', [user()['id'], $ev['id']]) : false;
     return ['event' => $ev, 'ticketTypes' => $types];
 });
@@ -233,9 +236,11 @@ route('GET', '/api/public/payments/:id/payfast', function ($a) {
         $promo = row('SELECT * FROM event_promotions WHERE id = ?', [$pp['promotion_id']]);
         if ($promo['status'] !== 'pending_payment') throw conflict('This promotion is not waiting for payment.', 'order_not_pending');
         $buyer = row('SELECT full_name, email FROM users WHERE id = ?', [$pp['created_by']]);
-        return payfast_form($pp, ['buyer_name' => $buyer['full_name'] ?? 'TicketRoom organiser', 'buyer_email' => $buyer['email'] ?? null, 'reference' => $promo['reference']],
-            base_url() . promo_return_url($promo), "TicketRoom Promote {$promo['reference']}");
+        return payfast_form($pp, ['buyer_name' => $buyer['full_name'] ?? 'TicketRoom organiser', 'buyer_email' => $buyer['email'] ?? null, 'reference' => $promo['reference'],
+            'item_name' => "TicketRoom Promote {$promo['reference']}"], promo_return_url($promo));
     }
+    if (!$p) throw conflict('This payment is no longer open.', 'payment_closed');
+    if ($p['purpose'] === 'topup') { $t = topup_pay_details($p); return payfast_form($p, $t, topup_return_url($t['event_id'])); }
     $o = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
     if ($o['status'] !== 'pending_payment') throw conflict('This order is not waiting for payment.', 'order_not_pending');
     return payfast_form($p, $o);
@@ -251,6 +256,12 @@ route('GET', '/api/public/payments/:id/sandbox', function ($a) {
         return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']], 'purpose' => 'promotion', 'order' => $o,
             'returnUrl' => promo_return_url($o)];
     }
+    if ($p['purpose'] === 'topup') {
+        $t = topup_pay_details($p);
+        return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']],
+            'order' => ['reference' => $t['reference'], 'buyer_name' => $t['buyer_name'], 'buyer_email' => $t['buyer_email'], 'total_cents' => $t['total_cents'], 'title' => $t['title']],
+            'returnUrl' => topup_return_url($t['event_id'])];
+    }
     $o = row('SELECT o.reference, o.buyer_name, o.buyer_email, o.total_cents, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.id = ?', [$p['order_id']]);
     return ['payment' => ['id' => $p['id'], 'status' => $p['status'], 'amountCents' => (int) $p['amount_cents']], 'order' => $o,
         'returnUrl' => '/orders/' . $o['reference'] . '?k=' . rawurlencode(order_key($p['order_id']))];
@@ -261,6 +272,7 @@ route('POST', '/api/public/payments/:id/sandbox', function ($a) {
     $p = sandbox_payment($a['id'], $b['k']);
     $r = sandbox_answer($p, $b['outcome']);
     if (isset($p['promotion_id'])) return $r + ['returnUrl' => promo_return_url(row('SELECT event_id FROM event_promotions WHERE id = ?', [$p['promotion_id']]))];
+    if ($p['purpose'] === 'topup') return $r + ['returnUrl' => topup_return_url((string) val('SELECT event_id FROM wallet_topups WHERE id = ?', [$p['topup_id']]))];
     $ref = val('SELECT reference FROM orders WHERE id = ?', [$p['order_id']]);
     return $r + ['returnUrl' => '/orders/' . $ref . '?k=' . rawurlencode(order_key($p['order_id'])) . ($b['outcome'] === 'cancelled' ? '&cancelled=1' : '')];
 });

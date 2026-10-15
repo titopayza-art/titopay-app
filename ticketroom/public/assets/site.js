@@ -51,7 +51,7 @@ async function home() {
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
       <div><span class="cat-label">For organisers</span><h2>Putting on an event? List it with us.</h2>
-        <ul><li>QR tickets and a live view of who has booked</li><li>Your staff scan tickets at the gate on their own phones</li><li>Email the people who asked to hear from you</li><li data-feature="cashless">Cashless wristbands, vendor POS and transparent payouts</li><li data-feature-off="cashless">Free events cost nothing to list. Paid tickets are on the way.</li></ul></div>
+        <ul><li>QR tickets and a live view of who has booked</li><li>Your staff scan tickets at the gate on their own phones</li><li>Email the people who asked to hear from you</li><li>Cashless wristbands, vendor POS and transparent payouts</li><li>Free events cost nothing to list</li></ul></div>
       <div class="row"><a class="btn btn-primary" href="/sell">Start selling</a><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div>
     </div></div></section>
     <section class="section pt-0"><div class="wrap"><div class="ad-band">
@@ -362,25 +362,38 @@ function sellPage() {
       <p class="lead">List your event, sell or give away tickets, scan people in at the door and see who came. Built in South Africa, for South African events.</p>
       <div class="row"><button class="btn btn-primary" data-apply>Create an organiser account</button><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div></div></section>
     <section class="section"><div class="wrap stack-lg">
-      <div class="grid-2">
+      <div class="tiles">
         ${tile(ic('<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a3 3 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a3 3 0 0 0 0-6Z"/><path d="M12 9v1M12 14v1"/>'), "Tickets", "Free or paid tickets, early-bird releases, promo codes, and a limit on how many each person can book.")}
-        ${tile(ic('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>'), "Your event page", "Poster, venue, times and refund policy on one page you can share on WhatsApp and socials.")}
-        ${tile(ic('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/>'), "At the door", "Your team scans tickets on their own phones. Each ticket gets in once, and you watch the count go up live.")}
-        ${tile(ic('<path d="M3 20h18M6 16v-3M10 16V9M14 16v-5M18 16V6M4 11l5-5 4 3 7-6"/>'), "After people book", "See who booked and which link they came from, and email the people who asked to hear from you.")}
+        ${tile(ic('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>'), "Your event page", "Poster, line-up, venue and times on one page you can share on WhatsApp and socials. Preview it before it goes live.")}
+        ${tile(ic('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/>'), "At the door", "Your team scans tickets on their own phones, even offline. Each ticket gets in once, and you watch the count go up live.")}
+        ${tile(ic('<rect x="2" y="8" width="20" height="8" rx="4"/><path d="M7 12h.01M17 12a5 5 0 0 0-1.5-3.5M19.5 12a7.5 7.5 0 0 0-2.2-5.3"/>'), "Cashless wristbands", "No cash, no card machines at the bar. Guests tap their wristband to pay and top up on their phones.")}
+        ${tile(ic('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>'), "Vendor POS", "Bars and food stalls sell from any phone. Each vendor sees their own sales; you see them all.")}
+        ${tile(ic('<path d="M3 20h18M6 16v-3M10 16V9M14 16v-5M18 16V6M4 11l5-5 4 3 7-6"/>'), "Get paid", "Live sales and analytics, then your money paid to your verified bank account after the event.")}
       </div>
+      <section class="card cashless-band" aria-labelledby="cl-h"><div class="grid-2">
+        <div class="stack"><span class="cat-label">Cashless events</span><h2 id="cl-h" class="mb-0">Faster bars, bigger spend, no cash to count</h2>
+          <p class="mb-0">Turn cashless on for your event and every guest pays with a wristband. Queues move quicker, nothing goes missing, and you see every sale as it happens.</p>
+          <ul class="tick-list"><li>Wristbands linked to each guest's ticket and account</li><li>Instant top-up by card before and during the event</li><li>A PIN for bigger purchases, so a found wristband is no use to anyone</li><li>Lost wristband? The guest blocks it in one tap and moves their balance to a new one</li><li>Unused money is refunded to guests after the event, automatically requested</li><li>Vendor sales, commission and settlement worked out for you</li></ul></div>
+        <div class="stack"><h3 class="mb-0">How it works</h3>
+          <ol class="cl-steps"><li><strong>You</strong> switch on cashless for the event and add your vendors and their menus.</li>
+            <li><strong>Guests</strong> collect a wristband at the gate and link it to their ticket by the code printed on it.</li>
+            <li><strong>They top up</strong> on their phone in seconds and see their balance and every purchase live.</li>
+            <li><strong>Vendors</strong> sell by tapping or scanning the wristband on any phone, no card machine needed.</li>
+            <li><strong>After the event</strong> vendors are settled and leftover balances go back to guests.</li></ol>
+          <button class="btn btn-primary" data-apply>Plan a cashless event</button></div></div></section>
       <div class="card"><h2>What you get</h2><div class="grid-2">
-        <ul><li>A live dashboard of bookings, day by day</li><li>Tracking links, so you know whether Instagram or WhatsApp brought people in</li><li>Email campaigns to people who opted in, with unsubscribe built in (POPIA)</li><li>Ticket transfers that cancel the old QR code, so one ticket can never get two people in</li></ul>
-        <ul><li data-feature="cashless">RFID/NFC wristbands and QR tags for cashless events</li><li data-feature="pos">Vendor POS on any phone, with per-vendor reporting</li><li data-feature="finance">Refunds with dual approval and a full audit trail</li><li data-feature="finance">Transparent settlements once your event has run</li><li data-feature-off="cashless">Coming soon: paid tickets, cashless wristbands, vendor POS and payouts</li></ul></div>
+        <ul><li>A live dashboard of bookings and sales, day by day</li><li>Tracking links, so you know whether Instagram or WhatsApp brought people in</li><li>Email campaigns to people who opted in, with unsubscribe built in (POPIA)</li><li>Ticket transfers that cancel the old QR code, so one ticket can never get two people in</li></ul>
+        <ul><li>RFID/NFC wristbands and QR tags for cashless events</li><li>Vendor POS on any phone, with per-vendor reporting</li><li>Refunds with dual approval and a full audit trail</li><li>Payouts to your verified bank account once your event has run</li></ul></div>
       </div>
       <div class="card" id="pricing"><h2>What it costs</h2><div class="grid-3">
         <div><div class="kpi"><div class="k">You pay</div><div class="v">5%</div><div class="s">of ticket sales, deducted from your payout</div></div></div>
         <div><div class="kpi"><div class="k">Your buyers pay</div><div class="v">R10</div><div class="s">booking fee per paid ticket</div></div></div>
         <div><div class="kpi"><div class="k">Free events</div><div class="v">R0</div><div class="s">no fees at all on free events</div></div></div></div>
-        <p class="callout mt">Right now TicketRoom is open for <strong>free event listings</strong>. Paid ticket sales are coming soon. Set your event up now and add paid tickets when they launch.</p>
+        <p class="callout mt">Cashless: no setup fee. A small commission on vendor sales, agreed per vendor and shown on every settlement. Talk to us about wristbands for your event.</p>
         <p class="muted small mt mb-0">Example: 100 tickets at R150 = R15 000 in sales. You receive R14 250; each buyer pays R160. Payouts are released after your event, less approved refunds.</p></div>
     </div></section>`);
   // New here: account and organisation in one step. Signed in: straight to the organiser portal.
-  $("[data-apply]").addEventListener("click", async () => { if (await me()) location.href = "/organisers"; else organiserSignupDialog(); });
+  $$("[data-apply]").forEach((b) => b.addEventListener("click", async () => { if (await me()) location.href = "/organisers"; else organiserSignupDialog(); }));
 }
 
 // ---------------- legal ----------------
@@ -430,7 +443,7 @@ const FAQ = [
   ["Where are my tickets?", "Sign in and open My tickets. Each ticket has its own QR code. Add the page to your home screen so it opens even with poor signal."],
   ["Can I send a ticket to a friend?", "Yes, if the organiser allows transfers. Open the ticket, choose Transfer and enter their email. Once they accept, your copy stops working."],
   ["I paid but have no tickets", "Payment is confirmed by the payment provider, which can take a minute. If nothing shows after 15 minutes, request a callback with your order reference. Please don't pay twice."],
-  ["Can I list my event on TicketRoom?", "Yes. We're open for free event listings. Create an organiser account, add your event and send it to us for review. Once we approve it, it goes live straight away. Paid tickets are coming soon."],
+  ["Can I list my event on TicketRoom?", "Yes. Create an organiser account, verify who you are, add your event and press Publish. We check every new event, usually within one working day, and it goes live straight away. Free and paid tickets, and cashless wristbands, are all available."],
   ["What does it cost?", "Free events cost nothing. For paid events, buyers pay a R10 booking fee per paid ticket and organisers pay 5% of ticket sales, deducted from their payout."],
   ["How do refunds work?", "If an event is cancelled you are refunded automatically. Other refunds follow the event's refund policy and our Terms and Conditions."],
   ["How do cashless wristbands work?", "Link your wristband in your account with the code and activation code on its card, then top up. Vendors scan it to charge. Lost it? Block it instantly from your account."],

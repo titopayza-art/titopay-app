@@ -2,7 +2,7 @@
 
 The PHP edition re-implements the Node API (`src/routes/*.js`) for shared hosting (Afrihost). The browser code in `public/assets/*.js` is shared and must keep working unchanged, so **JSON shapes, field names, status codes and error codes must match the Node routes exactly**.
 
-Scope: accounts, organisers, events, free and paid tickets (Yoco, PayFast, the TicketRoom sandbox), refunds, payouts, the ledger and reconciliation, payment webhooks, transfers, scanning, gate passes, email and SMS, marketing email, organiser verification (FICA), admin, site settings, assistant. **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): cashless wallets/top-ups, tags/wristbands, vendors, POS, terminals.
+Scope: accounts, organisers, events, free and paid tickets, transfers, scanning, marketing email and SMS, card payments (Yoco, PayFast, the practice sandbox), webhooks, refunds, payouts, the ledger and reconciliation, cashless (wristbands and tags, event wallets topped up by card, vendors, POS tills, spending PINs, wallet and sale refunds, vendor settlement), organiser verification (FICA), gate passes, admin, site settings, assistant. **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): linked TitoPay wallets (`/api/me/payment-methods`).
 
 ## Layout
 The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
@@ -13,6 +13,8 @@ The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
 - `api/lib/domain.php` access helpers, consent, orders, tickets, admission, uploads.
 - `api/lib/messaging.php` `outbox_enqueue`, delivery, `tpl($name, $args)`, `email_catalog()`, `email_html()`, reminders.
 - `api/lib/site.php` settings (`settings_all`, `setting`, `setting_set`, `hours_status`), assistant/KB.
+- `api/lib/payments.php` providers (`pay_ready()`, `payment_start`, `payment_apply`), refunds, the ledger (`ledger_post`, `test:` accounts for test mode), organiser money.
+- `api/lib/cashless.php` wristbands (`tag_*`), event wallets (`wallet_*`, never-negative `wallet_debit`), top-ups (payments with `purpose = 'topup'`), the till (`pos_charge`, idempotent by terminal + request key), wallet and sale refunds, vendor settlement, upgrade 14. Routes in `api/routes/cashless.php`. Ledger accounts: `wallet:<user>:<event>`, `vendor:<vendor>:event:<event>`, `revenue:cashless_commission`. Cashless is on when `cashless_ready()` (card payments ready and `cashless.enabled` not false) and the event has `cashless_enabled`.
 - `api/routes/*.php` route files; every file in this folder is loaded for each API request.
 - `api/schema.sql` SQLite schema, same table/column names as PostgreSQL.
 - `deploy-check.php` and `set-password.php` open only while `data/unlock-check` / `data/unlock-reset` exist.

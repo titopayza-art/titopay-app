@@ -659,3 +659,16 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
   .promote-offer { grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr); padding: 32px; align-items: start; }
   .promote-includes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Organiser landing: feature tiles and the cashless band */
+.tiles { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 960px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
+.cashless-band { background: linear-gradient(135deg, #0B1A33 0%, #23406E 100%); color: #fff; border: 0; }
+.cashless-band h2, .cashless-band h3 { color: #fff; }
+.cashless-band p, .cashless-band li { color: #D4DEEF; }
+.cashless-band .cat-label { color: var(--amber-500); }
+.tick-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.tick-list li { position: relative; padding-left: 26px; }
+.tick-list li::before { content: ""; position: absolute; left: 0; top: .45em; width: 14px; height: 8px; border-left: 2.5px solid var(--amber-500); border-bottom: 2.5px solid var(--amber-500); transform: rotate(-45deg); }
+.cl-steps { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; }
+.cl-steps strong { color: #fff; }

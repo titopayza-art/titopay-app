@@ -117,19 +117,17 @@ function payfast_string(array $fields, bool $withPass = true): string
     if ($withPass && $pass !== '') $parts[] = 'passphrase=' . urlencode(trim($pass));
     return implode('&', $parts);
 }
-// $back: where PayFast sends the buyer afterwards (a Promote purchase goes
-// back to the organiser portal); by default the order page.
-function payfast_form(array $payment, array $order, ?string $back = null, ?string $item = null): array
+function payfast_form(array $payment, array $order, ?string $returnPath = null): array
 {
     $first = explode(' ', trim($order['buyer_name']))[0];
     $last = trim(substr(trim($order['buyer_name']), strlen($first)));
-    $k = $back === null ? rawurlencode(order_key($order['id'])) : '';
+    $k = $returnPath === null ? rawurlencode(order_key($order['id'])) : '';
     $f = [
         'merchant_id' => cfg('payments.payfastMerchantId'), 'merchant_key' => cfg('payments.payfastMerchantKey'),
-        'return_url' => $back ?? base_url() . "/orders/{$order['reference']}?k=$k", 'cancel_url' => $back ?? base_url() . "/orders/{$order['reference']}?k=$k&cancelled=1",
+        'return_url' => base_url() . ($returnPath ?? "/orders/{$order['reference']}?k=$k"), 'cancel_url' => base_url() . ($returnPath ?? "/orders/{$order['reference']}?k=$k&cancelled=1"),
         'notify_url' => base_url() . '/api/webhooks/payfast',
         'name_first' => $first, 'name_last' => $last, 'email_address' => $order['buyer_email'],
-        'm_payment_id' => $payment['id'], 'amount' => number_format($payment['amount_cents'] / 100, 2, '.', ''), 'item_name' => substr($item ?? "TicketRoom order {$order['reference']}", 0, 100),
+        'm_payment_id' => $payment['id'], 'amount' => number_format($payment['amount_cents'] / 100, 2, '.', ''), 'item_name' => substr($order['item_name'] ?? "TicketRoom order {$order['reference']}", 0, 100),
     ];
     $f = array_filter($f, fn($v) => $v !== null && trim((string) $v) !== '');
     $f['signature'] = md5(payfast_string($f));
@@ -196,11 +194,18 @@ function payment_apply(string $provider, string $reference, string $outcome, int
             if (in_array($p['status'], ['confirmed', 'refunded', 'partially_refunded'], true)) return 'duplicate';
             if ($amountCents !== (int) $p['amount_cents']) {
                 q("UPDATE payments SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?", ["amount mismatch: provider $amountCents, expected {$p['amount_cents']}", now_iso(), $p['id']]);
+            if (($p['purpose'] ?? 'order') === 'topup') topup_closed($p, 'failed');
                 audit('payment.amount_mismatch', ['entityType' => 'payment', 'entityId' => $p['id'], 'details' => ['providerAmount' => $amountCents, 'expected' => (int) $p['amount_cents']]]);
                 return 'mismatch';
             }
             $now = now_iso();
             q("UPDATE payments SET status = 'confirmed', confirmed_at = ?, failure_reason = NULL, updated_at = ? WHERE id = ?", [$now, $now, $p['id']]);
+            // A cashless top-up: the money goes on the attendee's event balance.
+            if (($p['purpose'] ?? 'order') === 'topup') {
+                topup_confirm($p);
+                audit('payment.confirmed', ['entityType' => 'payment', 'entityId' => $p['id'], 'details' => ['purpose' => 'topup', 'amount' => (int) $p['amount_cents']]]);
+                return 'confirmed';
+            }
             if ($p['environment'] !== 'live') q('UPDATE orders SET test = 1 WHERE id = ?', [$p['order_id']]);
             $order = row('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
             ledger_payment($order, $p);
@@ -212,6 +217,7 @@ function payment_apply(string $provider, string $reference, string $outcome, int
         if ($outcome === 'failed' || $outcome === 'cancelled') {
             if (in_array($p['status'], ['confirmed', 'refunded', 'partially_refunded'], true)) return 'ignored';
             q('UPDATE payments SET status = ?, updated_at = ? WHERE id = ?', [$outcome, now_iso(), $p['id']]);
+            if (($p['purpose'] ?? 'order') === 'topup') topup_closed($p, $outcome);
             return $outcome;
         }
         return 'ignored';
@@ -329,6 +335,13 @@ function refund_process(string $refundId, ?array $actor = null): array
 {
     $r = row('SELECT * FROM refunds WHERE id = ?', [$refundId]);
     if (!$r || !in_array($r['status'], ['requested', 'processing', 'failed'], true)) throw conflict('This refund cannot be processed now.', 'bad_transition');
+    // A vendor sale refund goes back on the attendee's balance: no provider involved.
+    if ($r['kind'] === 'pos_sale') {
+        return tx(function () use ($r, $actor) {
+            q('UPDATE refunds SET decided_by = COALESCE(decided_by, ?), updated_at = ? WHERE id = ?', [$actor['id'] ?? null, now_iso(), $r['id']]);
+            return pos_refund_complete($r['id'], $actor);
+        });
+    }
     $p = row('SELECT * FROM payments WHERE id = ?', [$r['payment_id']]);
     q("UPDATE refunds SET status = 'processing', decided_by = COALESCE(decided_by, ?), failure_reason = NULL, updated_at = ? WHERE id = ?", [$actor['id'] ?? null, now_iso(), $r['id']]);
     // Sandbox money goes back at once: there is nobody to ask.
@@ -360,6 +373,14 @@ function refund_complete(string $refundId, string $providerRef, ?array $actor): 
     $now = now_iso();
     $total = (int) $r['amount_cents'] + (int) $r['fee_refund_cents'];
     q("UPDATE refunds SET status = 'completed', provider_reference = ?, completed_at = ?, updated_at = ? WHERE id = ?", [$providerRef, $now, $now, $r['id']]);
+    if ($r['kind'] === 'wallet_balance') {
+        $p = row('SELECT * FROM payments WHERE id = ?', [$r['payment_id']]);
+        $pr = (int) $p['refunded_cents'] + $total;
+        q('UPDATE payments SET refunded_cents = ?, status = ?, updated_at = ? WHERE id = ?', [$pr, $pr >= (int) $p['amount_cents'] ? 'refunded' : 'partially_refunded', $now, $p['id']]);
+        wallet_refund_completed($r, $p);
+        audit('refund.completed', ['actor' => $actor, 'entityType' => 'refund', 'entityId' => $r['id'], 'details' => ['kind' => 'wallet_balance', 'amount' => $total, 'providerReference' => $providerRef]]);
+        return row('SELECT * FROM refunds WHERE id = ?', [$r['id']]);
+    }
     $ids = json_decode((string) $r['ticket_ids'], true) ?: [];
     if ($ids) q("UPDATE tickets SET status = 'refunded', updated_at = ? WHERE id IN (" . placeholders($ids) . ") AND status IN ('valid','used')", array_merge([$now], $ids));
     $order = row('SELECT * FROM orders WHERE id = ?', [$r['order_id']]);
@@ -385,6 +406,9 @@ function refund_complete(string $refundId, string $providerRef, ?array $actor): 
 //            revenue:promotions         Promote packages (lib/promote.php)
 //            organiser:<org>:deductions what an organiser paid TicketRoom from their balance
 //            bank:payouts               money sent to organisers by EFT
+//            wallet:<user>:<event>      an attendee's cashless balance (lib/cashless.php)
+//            vendor:<vendor>:event:<ev> owed for a vendor's cashless sales
+//            revenue:cashless_commission TicketRoom's commission on vendor sales
 // Debits are positive, credits negative; every journal sums to zero.
 function ledger_post(string $kind, string $reference, array $lines, bool $test = false): void
 {
@@ -438,6 +462,7 @@ function ledger_check(): array
         $ledger = ledger_balance("provider:{$p['provider']}");
         $clearing[] = ['account' => "provider:{$p['provider']}", 'ledgerCents' => $ledger, 'expectedCents' => $expected, 'ok' => $ledger === $expected];
     }
+    $clearing[] = cashless_ledger_check();
     $ok = !$bad && !array_filter($clearing, fn($c) => !$c['ok']);
     return ['entries' => (int) val("SELECT count(*) FROM ledger_entries WHERE account NOT LIKE 'test:%'"), 'sumCents' => (int) val('SELECT COALESCE(SUM(amount_cents),0) FROM ledger_entries'),
         'testEntries' => (int) val("SELECT count(*) FROM ledger_entries WHERE account LIKE 'test:%'"),
@@ -464,7 +489,7 @@ function organiser_money(array $org): array
     }
     // Paid out by EFT, plus anything paid to TicketRoom from the balance (Promote).
     $paid = ledger_balance("organiser:{$org['id']}:payouts") + ledger_balance("organiser:{$org['id']}:deductions");
-    $inFlight = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payouts WHERE organiser_id = ? AND status IN ('requested','approved')", [$org['id']]);
+    $inFlight = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payouts WHERE organiser_id = ? AND vendor_id IS NULL AND status IN ('requested','approved')", [$org['id']]);
     $pendingRefunds = (int) val("SELECT COALESCE(SUM(r.amount_cents),0) FROM refunds r JOIN orders o ON o.id = r.order_id JOIN events e ON e.id = o.event_id
                                   WHERE e.organiser_id = ? AND o.test = 0 AND r.status IN ('requested','processing','manual_pending','failed')", [$org['id']]);
     return ['events' => $events, 'totalCents' => $total - $paid, 'availableCents' => max(0, $releasable - $paid - $inFlight - $pendingRefunds),
@@ -506,9 +531,12 @@ function clear_test_orders(array $actor): array
         }
         q("UPDATE tickets SET status = 'revoked', revoked_reason = 'test order cleared', updated_at = ? WHERE test = 1 AND status IN ('valid','used')", [$now]);
         $orders = affected("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE test = 1 AND status <> 'cancelled'", [$now]);
+        // Practice cashless money goes too (its test: ledger entries stay, as history).
+        $wallets = affected('UPDATE cashless_wallets SET test_balance_cents = 0, updated_at = ? WHERE test_balance_cents > 0', [$now]);
+        q("UPDATE wallet_topups SET status = 'cancelled' WHERE test = 1 AND status = 'pending'");
         // TEST Promote purchases stop too: no free promotion carries over into live.
         $promos = affected("UPDATE event_promotions SET status = 'cancelled', updated_at = ? WHERE test = 1 AND status IN ('pending_payment','active')", [$now]);
-        audit('payments.test_cleared', ['actor' => $actor, 'details' => ['orders' => $orders, 'tickets' => $freed, 'promotions' => $promos]]);
-        return ['orders' => $orders, 'tickets' => $freed, 'promotions' => $promos];
+        audit('payments.test_cleared', ['actor' => $actor, 'details' => ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets, 'promotions' => $promos]]);
+        return ['orders' => $orders, 'tickets' => $freed, 'wallets' => $wallets, 'promotions' => $promos];
     });
 }

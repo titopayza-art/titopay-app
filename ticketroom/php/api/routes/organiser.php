@@ -2,10 +2,10 @@
 // /api/organiser/* — organiser portal: organisation, team, events, ticket
 // types, promo codes, tracking links, analytics, orders, attendees, staff and
 // live check-ins, and email marketing. Mirrors src/routes/organiser.js.
-// Payments, refunds of paid orders, payouts, vendors and terminals are not part
-// of this edition: those routes answer not_available() (or an empty list where
-// the page only lists them). SMS campaigns come with Promote (lib/promote.php):
-// an event with an active promotion can be sent SMS campaigns once SMS is set up.
+// Money (refunds, payouts) is in routes/finance.php; vendors, tills and
+// wristbands for cashless events are in routes/cashless.php.
+// SMS campaigns come with Promote (lib/promote.php): an event with an active
+// promotion can be sent SMS campaigns once SMS is set up.
 declare(strict_types=1);
 
 const ORG_ALL = ['owner', 'manager', 'marketing', 'finance', 'viewer'];
@@ -134,8 +134,7 @@ function org_event_analytics(array $event): array
         'totals' => $tr + ['ticketsSold' => $sold, 'capacity' => (int) $event['capacity'], 'payableCents' => 0, 'isFree' => (bool) $event['is_free']],
         'daily' => $daily, 'byType' => $byType, 'checkins' => ['admitted' => (int) $checkins['admitted'], 'issued' => (int) $checkins['issued']],
         'checkinsByHour' => $byHour, 'trackingLinks' => $links, 'promoCodes' => $promos,
-        'vendors' => [], 'cashless' => ['topups_cents' => 0, 'wallets' => 0],
-    ];
+    ] + cashless_event_analytics($event);
 }
 
 // ============================================================== events
@@ -548,6 +547,7 @@ route('POST', '/api/organiser/:orgId/events', function ($a) {
     $u = require_auth();
     ['organiser' => $org] = organiser_access($u, $a['orgId'], ORG_EDIT);
     $b = check(body(), org_event_shape());
+    cashless_guard_switch(null, $b);
     $b = org_lineup(org_age_groups($b, $b['ageRestriction'] ?? null));
     if ($b['endsAt'] <= $b['startsAt']) throw bad('The event must end after it starts.', ['endsAt' => 'Must be after the start.']);
     org_assert_upload($org['id'], $b['imageUploadId'] ?? null);
@@ -593,6 +593,7 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId', function ($a) {
     // An empty list clears the age groups; other empty values are left alone.
     $b = array_filter($b, fn($v, $k) => $v !== null || $k === 'ageGroups', ARRAY_FILTER_USE_BOTH);
     if (in_array($event['status'], ['cancelled', 'completed'], true)) throw conflict('This event can no longer be edited.', 'event_locked');
+    cashless_guard_switch($event, $b);
     org_assert_upload($event['organiser_id'], $b['imageUploadId'] ?? null);
     $sold = (int) val('SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
     // Material changes after tickets are sold go through TicketRoom support so buyers can be notified and offered refunds (CPA s47).
@@ -858,21 +859,7 @@ route('DELETE', '/api/organiser/:orgId/events/:eventId/staff/:userId', function 
     return ['ok' => true];
 });
 
-// ============================================================== vendors & terminals (not in this edition)
-route('GET', '/api/organiser/:orgId/events/:eventId/vendors', function ($a) {
-    event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
-    return ['vendors' => []];
-});
-foreach (['POST /api/organiser/:orgId/events/:eventId/vendors', 'PATCH /api/organiser/:orgId/events/:eventId/vendors/:vendorId',
-    'POST /api/organiser/:orgId/events/:eventId/vendors/:vendorId/members', 'POST /api/organiser/:orgId/events/:eventId/vendors/:vendorId/terminals',
-    'PATCH /api/organiser/:orgId/events/:eventId/terminals/:terminalId'] as $r) {
-    [$m, $p] = explode(' ', $r);
-    route($m, $p, function ($a) { event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_EDIT); throw not_available(); });
-}
-route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/payout', function ($a) {
-    event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_MONEY);
-    throw not_available();
-});
+// Vendors, tills and wristbands: routes/cashless.php.
 
 // ============================================================== marketing (email; SMS with Promote)
 route('GET', '/api/organiser/:orgId/marketing/audience', function ($a) {

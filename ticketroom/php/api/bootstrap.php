@@ -14,6 +14,7 @@ require TR_APP . '/lib/qr.php';
 require TR_APP . '/lib/wallet.php';
 require TR_APP . '/lib/integrations.php';
 require TR_APP . '/lib/payments.php';
+require TR_APP . '/lib/cashless.php';
 require TR_APP . '/lib/verification.php';
 require TR_APP . '/lib/promote.php';
 
@@ -157,7 +158,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 15;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -260,10 +261,20 @@ const UPGRADES = [
     // Organiser verification (FICA / KYC). Only its own new tables, created
     // if missing, so it works whatever 11 did.
     12 => ['@verification'],
+    // Cashless: wristbands and tags, event wallets topped up by card, vendors
+    // and their POS tills, spending PINs. Touches only its own tables and
+    // columns (see tr_upgrade_cashless), so it works whether or not other
+    // upgrades ran before it.
+    // (13 belongs to another feature.) Safe in any order: it only adds its
+    // own columns when missing and creates its own tables IF NOT EXISTS.
+    14 => [
+        '@cashless',
+    ],
     // Promote: the R1500 once-off event promotion package, its payments and
     // campaign tracking links. Only its own tables and columns, each added if
-    // missing (see tr_promote_tables), so it works whatever 11 and 12 did.
-    13 => ['@promote'],
+    // missing (see tr_promote_tables), so it works whatever ran before it.
+    // (13 is never used: some sites may already be past it.)
+    15 => ['@promote'],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -318,7 +329,7 @@ function tr_upgrade(): void
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         foreach (UPGRADES as $v => $steps) {
             if ($v <= $have) continue;
-            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@promote' => tr_promote_tables(), default => db()->exec($sql) };
+            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), default => db()->exec($sql) };
             q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
         }
     });
@@ -356,6 +367,8 @@ function jobs(): array
         ['event-reminders', 600, fn() => send_reminders()],
         ['abandoned-checkouts', 900, fn() => send_abandoned()],
         ['complete-events', 900, fn() => q("UPDATE events SET status = 'completed', updated_at = ? WHERE status = 'published' AND ends_at < ?", [now_iso(), iso_in(-2 * 86400)])],
+        // Unused cashless balances go up for refund a couple of days after the event.
+        ['cashless-leftover-refunds', 3600, fn() => cashless_auto_refunds()],
         ['expire-transfers', 900, fn() => q("UPDATE ticket_transfers SET status = 'expired' WHERE status = 'pending' AND expires_at < ?", [now_iso()])],
         ['retention', 21600, function () {
             q('DELETE FROM sessions WHERE expires_at < ? OR revoked_at < ?', [iso_in(-30 * 86400), iso_in(-30 * 86400)]);
