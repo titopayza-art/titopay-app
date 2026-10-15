@@ -34,7 +34,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
 async function shot(p, name) {
   if (!process.env.TR_SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
-  await p.screenshot({ path: path.join(SHOTS, `cashdesk-${name}.png`), fullPage: true });
+  await p.screenshot({ path: path.join(SHOTS, `cashdesk-${name}.png`), fullPage: !(await p.locator("dialog[open], .modal:visible").count()) });
 }
 
 async function page(browser, creds, viewport = { width: 1280, height: 900 }) {
