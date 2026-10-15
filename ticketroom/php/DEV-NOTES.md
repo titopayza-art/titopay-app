@@ -55,6 +55,13 @@ The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
 - **Admin**: `GET /api/admin/promotions` (+ revenue live/test from the ledger), `POST /api/admin/promotions/:id/social`, `/refund` (finance; event cancelled or cancellation requested), `/refund/complete` (PayFast manual). Emails: `promotionConfirmed`, `promotionRefunded`, `socialRequested`, `socialPostLive`. Job `end-promotions`.
 - Tests: `tests-ui/php-promote.js` (`TR_MOCK_PORT5` for its SMS stand-in).
 
+## Waitlists, TicketRoom Exchange, friend top-ups
+`lib/exchange.php` (rules, policy constants at the top), `routes/exchange.php`. Tables `waitlist_entries`, `resale_listings`, `resale_payouts`; columns `events.resale_enabled`, `orders.resale_listing_id`, `wallet_topups.paid_by` (upgrade 18, `tr_upgrade_exchange()`, each only if missing).
+- **Waitlist**: only for a sold-out ticket type; one place per person. `waitlist_sweep()` hands free places (customer/goodwill refunds while people wait, lapsed or cancelled orders via `release_holds()`, more tickets released) and active resale listings to the next person: a private link (`/events/<slug>?offer=<token>`, hash stored) holds it for `WAITLIST_OFFER_MINUTES`. A primary offer holds the place in `quantity_held`; `create_order()` with `waitlistOffer` takes it. Job `exchange` expires offers, closes listings at the doors and waitlists when sales close.
+- **Exchange**: list at most `RESALE_PRICE_CAP_BPS` of what was paid (booking fee excluded), from `RESALE_MIN_PRICE_CENTS`, until doors open (`RESALE_CLOSE_MINUTES_BEFORE_DOORS`); organiser switch `resaleEnabled`. Free tickets cannot be sold. A resale order (`orders.resale_listing_id`) never touches ticket stock or organiser money. On payment (`resale_payment_confirmed`) the old ticket becomes `revoked`/`resold` (scanner outcome `resold`, offline label "Resold") and a new ticket with a new code is issued. Seller payout (`resale_payouts`): card refund on the seller's own payment (sandbox at once, Yoco by API, PayFast by hand) or EFT (finance approves, reveals the account, marks paid). Ledger: `resale:sellers` (checked in `ledger_check`).
+- **Friend top-up**: `friendEmail` on `POST /api/me/wallets/:eventId/topups`; credits the friend's wallet (needs a real customer account, else `friend_not_found` and `POST .../invite`). Friend top-ups are not card-refundable to the friend (EFT or cash cash-out instead).
+- Tests: `tests-ui/php-resale.js`.
+
 ## Running locally
 ```
 TR_ADMIN_PASSWORD='Admin-pass-#2026' node scripts/build-php.js
