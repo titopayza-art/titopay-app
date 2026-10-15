@@ -3,8 +3,8 @@
 // guests cashing out what is left (to their card, by EFT, or as cash at the
 // venue's cash-out desk). Run after php-cashless.js on the same instance:
 //   node tests-ui/php-cashdesk.js http://127.0.0.1:8600 /path/to/public_html
-// Set TR_SHOTS=1 to save screenshots of the desk, cash-up and cash-out
-// screens in tests-ui/artifacts/php/.
+// Set TR_SHOTS to a folder to save screenshots of the desk, cash-up and
+// cash-out screens there (TR_SHOTS=1 saves them in tests-ui/artifacts/php/).
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert/strict");
@@ -22,7 +22,7 @@ const GUEST2 = { email: `zanele.${RUN}@example.co.za`, password: "zanele-pass-12
 const GUEST3 = { email: `pieter.${RUN}@example.co.za`, password: "pieter-pass-123", portal: "customer" };
 const FIN2 = { email: `finance2.${RUN}@example.co.za`, password: "finance-two-pass-1", portal: "admin" };
 const BAND = `04${RUN.toUpperCase()}C0DE`;
-const SHOTS = path.join(__dirname, "artifacts", "php");
+const SHOTS = process.env.TR_SHOTS && process.env.TR_SHOTS !== "1" ? process.env.TR_SHOTS : path.join(__dirname, "artifacts", "php");
 const problems = [];
 const step = (m) => console.log(`  ok  ${m}`);
 const dataDir = [path.join(path.dirname(ROOT), "ticketroom-data"), path.join(ROOT, "data")].find((d) => fs.existsSync(path.join(d, "ticketroom.sqlite")));
