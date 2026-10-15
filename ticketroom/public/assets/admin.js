@@ -808,6 +808,7 @@ const INTEG_HELP = {
   email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
   sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets. Use BulkSMS or Clickatell, or connect your own provider through its web API.",
   identity: "How organisers' ID documents are checked (FICA). Staff review works now. The sandbox simulates a provider for testing. Your own provider is called with the ID number when an ID document is uploaded; anything it does not confirm goes to staff.",
+  google: "Optional. Lets customers and organisers sign in or sign up with their Google account, no password needed. Staff always use the admin password sign-in.",
 };
 // Write-only boxes: never pre-filled, and kept out of the browser's password
 // filling (they open for typing only when tapped).
@@ -827,6 +828,7 @@ function integrationCard(i) {
     ${i.key === "payments" && i.testOrders ? html`<div class="callout warn small row between"><span><strong>${i.testOrders} test order${i.testOrders === 1 ? "" : "s"}</strong> on record. They never count as sales or payouts. Clear them before you go live to free their seats.</span>${isA() ? html`<button type="button" class="btn btn-ghost btn-sm" data-clear-test>Clear test orders</button>` : ""}</div>` : ""}
     ${i.key === "identity" && i.sandboxRule ? html`<p class="callout warn small mb-0"><strong>Sandbox (simulated):</strong> ${i.sandboxRule}</p>` : ""}
     ${i.key === "identity" && i.pending ? html`<p class="small mb-0"><a href="#/verification">${i.pending} document${i.pending === 1 ? "" : "s"} waiting for a check</a></p>` : ""}
+    ${i.redirectUrl ? html`<p class="small mb-0">In Google Cloud, create an OAuth client ID (Web application) and add this under Authorised redirect URIs: <span class="mono">${i.redirectUrl}</span></p>` : ""}
     ${i.notifyUrl ? html`<p class="small mb-0">Payment notifications arrive at <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : ". PayFast is told this address with every payment."}</p>` : ""}
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
       ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>

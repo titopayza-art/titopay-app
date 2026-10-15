@@ -251,9 +251,13 @@ const UPGRADES = [
         "UPDATE orders SET test = 1 WHERE id IN (SELECT order_id FROM payments WHERE environment <> 'live')",
         'UPDATE tickets SET test = 1 WHERE order_id IN (SELECT id FROM orders WHERE test = 1)',
     ],
-    // (10 and 11 belong to other features.)
+    // Line-up on the event page (and Trending Artists on the home page).
+    10 => [
+        'ALTER TABLE events ADD COLUMN lineup TEXT',
+    ],
+    // (11 belongs to another feature.)
     // Organiser verification (FICA / KYC). Only its own new tables, created
-    // if missing, so it works whatever 10 and 11 did.
+    // if missing, so it works whatever 11 did.
     12 => ['@verification'],
 ];
 // The verification tables, exactly as written at the end of schema.sql.

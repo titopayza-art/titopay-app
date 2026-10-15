@@ -49,6 +49,12 @@ const INTEGRATION_FIELDS = [
         'httpUrl' => ['label' => 'Check-identity web address', 'secret' => true, 'plain' => true, 'provider' => 'http', 'hint' => 'Starting with https://. TicketRoom posts JSON (reference, documentType, idNumber, fullName, dateOfBirth, country) and expects {"status": "verified" | "declined" | "refer"}.'],
         'httpAuth' => ['label' => 'Authorization header', 'secret' => true, 'provider' => 'http', 'hint' => 'Optional. The whole value, for example: Bearer 1a2b3c…'],
     ],
+    // Sign in with Google, for customer and organiser accounts (never staff).
+    'google' => [
+        'enabled' => ['label' => 'Sign in with Google', 'options' => ['off' => 'Off', 'on' => 'On: customers and organisers can continue with Google']],
+        'clientId' => ['label' => 'OAuth client ID', 'placeholder' => '1234567890-abc.apps.googleusercontent.com', 'hint' => 'Google Cloud console → APIs & Services → Credentials → OAuth client ID (Web application).'],
+        'clientSecret' => ['label' => 'OAuth client secret', 'secret' => true],
+    ],
 ];
 
 // Saved values for a service, secrets decrypted. Cached for the request.

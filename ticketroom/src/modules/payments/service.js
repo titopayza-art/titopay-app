@@ -1,7 +1,7 @@
 const config = require("../../config");
 const db = require("../../lib/db");
 const audit = require("../../lib/audit");
-const { getProvider } = require("./providers");
+const { getProvider, isTestEnvironment } = require("./providers");
 const { AppError, notFound } = require("../../lib/errors");
 
 // Opens the provider's payment flow for an initiated payment: a hosted page
@@ -14,7 +14,14 @@ async function start(payment, { description, returnPath }) {
     cancelUrl: `${config.publicBaseUrl}${returnPath}`,
     notifyUrl: `${config.publicBaseUrl}/api/webhooks/${payment.provider}`,
   };
-  await db.query("UPDATE payments SET checkout_context = $2 WHERE id = $1", [payment.id, ctx]);
+  // The payment keeps the environment it was taken in. A test-mode payment
+  // makes this a test order, start to finish.
+  const environment = String(provider.environment || "live");
+  await db.query("UPDATE payments SET checkout_context = $2, environment = $3 WHERE id = $1", [payment.id, ctx, environment]);
+  payment = { ...payment, environment };
+  if (payment.purpose === "order") {
+    await db.query("UPDATE orders SET test = $2, updated_at = now() WHERE id = $1 AND status = 'pending_payment'", [payment.order_id, isTestEnvironment(environment)]);
+  }
   let walletToken;
   if (payment.method === "titopay_wallet") walletToken = await require("../wallets/service").activeToken(payment.user_id);
   let out;
@@ -52,7 +59,11 @@ async function apply(providerName, reference, outcome, amountCents) {
         return "mismatch";
       }
       await c.query("UPDATE payments SET status = 'confirmed', confirmed_at = now(), failure_reason = NULL, updated_at = now() WHERE id = $1", [p.id]);
-      if (p.purpose === "order") await require("../orders/service").fulfil(c, p.order_id, p);
+      if (p.purpose === "order") {
+        // The payment that paid decides: test money makes a test order.
+        await c.query("UPDATE orders SET test = $2 WHERE id = $1 AND status NOT IN ('paid','paid_unfulfilled','refunded','partially_refunded')", [p.order_id, isTestEnvironment(p.environment)]);
+        await require("../orders/service").fulfil(c, p.order_id, p);
+      }
       else await require("../cashless/service").confirmTopup(c, p);
       await audit.record(c, { action: "payment.confirmed", entityType: "payment", entityId: p.id, details: { reference, amount: p.amount_cents } });
       return "confirmed";

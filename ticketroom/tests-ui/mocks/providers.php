@@ -44,6 +44,24 @@ if ($path === '/kyc/check') {
     $no = (string) ($in['idNumber'] ?? '');
     $json(str_ends_with($no, '9') ? ['status' => 'declined', 'message' => 'Mock provider: no match', 'reference' => 'MOCK-1'] : ['status' => 'verified', 'message' => 'Mock provider: match', 'reference' => 'MOCK-2']);
 }
+// ---- Google sign-in (OpenID Connect). The test writes the account to use in
+// STATE/google.json ({"email":..,"name":..,"verified":true} or {"deny":true}).
+$b64u = fn(string $v) => rtrim(strtr(base64_encode($v), '+/', '-_'), '=');
+if ($path === '/google/auth') {
+    $who = json_decode((string) @file_get_contents("$state/google.json"), true) ?: [];
+    $back = $local((string) ($_GET['redirect_uri'] ?? ''));
+    $q = !empty($who['deny']) ? ['error' => 'access_denied', 'state' => $_GET['state'] ?? ''] : ['code' => $b64u(json_encode($who + ['aud' => $_GET['client_id'] ?? ''])), 'state' => $_GET['state'] ?? ''];
+    header('Location: ' . $back . '?' . http_build_query($q), true, 302);
+    exit;
+}
+if ($path === '/google/token' && $method === 'POST') {
+    parse_str($raw, $f);
+    $who = json_decode((string) base64_decode(strtr((string) ($f['code'] ?? ''), '-_', '+/')), true);
+    if (!$who || ($f['client_secret'] ?? '') !== 'google-test-secret' || ($f['client_id'] ?? '') !== $who['aud']) $json(['error' => 'invalid_grant'], 400);
+    $claims = ['iss' => 'https://accounts.google.com', 'aud' => $who['aud'], 'sub' => (string) crc32($who['email']), 'email' => $who['email'],
+        'email_verified' => $who['verified'] ?? true, 'name' => $who['name'] ?? 'Google User', 'iat' => time(), 'exp' => time() + 3600];
+    $json(['access_token' => 'ya29.test', 'token_type' => 'Bearer', 'expires_in' => 3600, 'id_token' => $b64u('{"alg":"RS256"}') . '.' . $b64u(json_encode($claims)) . '.' . $b64u('sig')]);
+}
 
 // ---- "Your own SMS provider": records what arrives, answers like most SMS APIs.
 if ($path === '/sms/send') {

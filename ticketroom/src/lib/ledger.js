@@ -28,6 +28,11 @@ const codes = {
   providerFees: (provider) => ({ code: `provider_fee_expense:${provider}`, type: "provider_fee_expense", owner_type: "provider", owner_id: provider, name: `Provider fees (${provider})` }),
 };
 
+// Test-mode money (the sandbox, provider test keys) lives in its own "test:"
+// accounts, never mixed with real money: never an organiser's balance, a
+// payout or a sales figure.
+const testSpec = (spec) => ({ ...spec, code: `test:${spec.code}`, name: `[test] ${spec.name}` });
+
 async function account(client, spec) {
   const kind = ACCOUNT_KINDS[spec.type];
   const { rows } = await client.query(
@@ -65,7 +70,7 @@ async function balanceByCode(client, code) {
 // lines: [{ account: spec, debit } | { account: spec, credit }]
 // Returns the journal id. Re-posting the same idempotency key returns the
 // original journal instead of posting twice.
-async function post(client, { kind, reference, idempotencyKey, memo, createdBy, reverses, lines }) {
+async function post(client, { kind, reference, idempotencyKey, memo, createdBy, reverses, lines, test = false }) {
   const existing = await client.query("SELECT id FROM journals WHERE idempotency_key = $1", [idempotencyKey]);
   if (existing.rows[0]) return existing.rows[0].id;
 
@@ -76,7 +81,7 @@ async function post(client, { kind, reference, idempotencyKey, memo, createdBy, 
     if (!Number.isSafeInteger(amount)) throw new Error("ledger amounts must be integer cents");
     if (amount === 0) continue;
     sum += amount;
-    resolved.push({ acct: await account(client, line.account), amount });
+    resolved.push({ acct: await account(client, test ? testSpec(line.account) : line.account), amount });
   }
   if (sum !== 0 || resolved.length < 2) throw conflict("Ledger journal does not balance.", "ledger_unbalanced");
 
@@ -107,4 +112,4 @@ async function reverse(client, journalId, { kind, reference, idempotencyKey, mem
   return rows[0].id;
 }
 
-module.exports = { codes, account, lockedBalance, balanceOf, balanceByCode, post, reverse };
+module.exports = { codes, testSpec, account, lockedBalance, balanceOf, balanceByCode, post, reverse };

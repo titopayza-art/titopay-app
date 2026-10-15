@@ -5,12 +5,13 @@ const audit = require("../lib/audit");
 const { r, check } = require("../lib/validate");
 const { hit, limit, reached, clear } = require("../lib/ratelimit");
 const { randomToken, sha256, hashSecret, verifySecret, DUMMY_HASH, signLink, verifyLink } = require("../lib/crypto");
-const { AppError, conflict, bad, tooMany } = require("../lib/errors");
+const { AppError, conflict, bad, tooMany, forbidden } = require("../lib/errors");
 const { wrap, requireAuth, setSessionCookie, clearSessionCookie } = require("../middleware/http");
 const outbox = require("../modules/messaging/outbox");
 const templates = require("../modules/messaging/templates");
 const marketing = require("../modules/marketing/service");
-const { userByEmail, phoneTaken } = require("../lib/accounts");
+const { userByEmail, phoneTaken, accountType, portalLink, PORTAL_ACCEPTS, ACCOUNT_PORTALS } = require("../lib/accounts");
+const settings = require("../modules/site/settings");
 
 const router = express.Router();
 const LOCK_AFTER = 30;
@@ -25,8 +26,8 @@ async function createSession(res, req, userId, q = db) {
 
 async function profile(userId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.full_name, u.phone, u.email_verified_at, (u.spending_pin_hash IS NOT NULL) AS has_pin, u.created_at,
-            COALESCE((SELECT array_agg(role) FROM platform_roles WHERE user_id = u.id), '{}') AS platform_roles,
+    `SELECT u.id, u.email, u.full_name, u.phone, u.email_verified_at, (u.spending_pin_hash IS NOT NULL) AS has_pin, u.created_at, u.account_type,
+            CASE WHEN u.account_type = 'staff' THEN COALESCE((SELECT array_agg(role) FROM platform_roles WHERE user_id = u.id), '{}') ELSE '{}' END AS platform_roles,
             COALESCE((SELECT json_agg(json_build_object('id', o.id, 'name', o.name, 'status', o.status, 'role', m.role))
                         FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = u.id), '[]') AS organisers,
             COALESCE((SELECT json_agg(json_build_object('id', v.id, 'name', v.name, 'role', vm.role, 'eventId', v.event_id, 'eventTitle', e.title))
@@ -38,7 +39,8 @@ async function profile(userId) {
 }
 
 function sendVerification(q, user) {
-  const url = `${config.publicBaseUrl}/account#/verify/${signLink({ v: user.id, e: user.email }, 7 * 86400)}`;
+  // Emailed links open in the account's own portal.
+  const url = portalLink(user, `verify/${signLink({ v: user.id, e: user.email }, 7 * 86400)}`);
   return outbox.enqueue(q, { to: user.email, userId: user.id, ...templates.verifyEmail({ name: user.full_name, url }) });
 }
 
@@ -48,7 +50,7 @@ function sendVerification(q, user) {
 async function sendFinishAccount(q, user) {
   const token = randomToken(32);
   await q.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '24 hours')", [sha256(token), user.id]);
-  await outbox.enqueue(q, { to: user.email, userId: user.id, ...templates.finishAccount({ name: user.full_name, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+  await outbox.enqueue(q, { to: user.email, userId: user.id, ...templates.finishAccount({ name: user.full_name, url: portalLink(user, `reset/${token}`) }) });
 }
 
 // Sign-up. Every account confirms its email before it can sign in, and one
@@ -64,7 +66,9 @@ router.post("/register", limit("register", 60, 60 * 60e3), wrap(async (req, res)
   await db.withTx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtext('signup:' || tr.email_key($1)))", [b.email]);
     const existing = await userByEmail(c, b.email);
-    if (existing && !existing.guest) {
+    // Customer sign-up makes customer accounts only; any other account on
+    // this email (organiser or staff) means the email is taken.
+    if (existing && (!existing.guest || accountType(existing) !== "customer")) {
       throw conflict('An account with this email already exists. Sign in, or use "Forgot password?" if you can\'t remember it.', "email_taken", { email: "Already has an account." });
     }
     if (await phoneTaken(c, b.phone, existing?.id)) {
@@ -76,7 +80,7 @@ router.post("/register", limit("register", 60, 60 * 60e3), wrap(async (req, res)
       u = existing;
       if (hit(`finishsend:${u.id}`, 3, 60 * 60e3)) await sendFinishAccount(c, u);
     } else {
-      ({ rows: [u] } = await c.query("INSERT INTO users (email, phone, full_name, password_hash) VALUES ($1,$2,$3,$4) RETURNING *",
+      ({ rows: [u] } = await c.query("INSERT INTO users (email, phone, full_name, password_hash, account_type) VALUES ($1,$2,$3,$4,'customer') RETURNING *",
         [b.email, b.phone || null, b.fullName, hashSecret(b.password)]));
       await sendVerification(c, u);
     }
@@ -87,7 +91,8 @@ router.post("/register", limit("register", 60, 60 * 60e3), wrap(async (req, res)
 }));
 
 router.post("/login", limit("login", 120, 15 * 60e3), wrap(async (req, res) => {
-  const b = check(req.body, { email: r.email(), password: r.str({ min: 1, max: 200 }) });
+  const b = check(req.body, { email: r.email(), password: r.str({ min: 1, max: 200 }), portal: r.oneOf(Object.keys(PORTAL_ACCEPTS), { optional: true }) });
+  const portal = b.portal || "site";
   const { rows } = await db.query("SELECT * FROM users WHERE lower(email) = $1 AND status <> 'deleted'", [b.email]);
   const u = rows[0] || await userByEmail(db, b.email);
   const ok = verifySecret(b.password, u?.password_hash || DUMMY_HASH);
@@ -111,6 +116,20 @@ router.post("/login", limit("login", 120, 15 * 60e3), wrap(async (req, res) => {
     throw generic;
   }
   if (u.status === "suspended") throw new AppError(403, "suspended", "This account is suspended. Contact hello@ticketroom.co.za.");
+  const type = accountType(u);
+  // Maintenance: only TicketRoom staff can sign in until it is over.
+  if (type !== "staff") {
+    const m = await settings.get("maintenance");
+    if (m.enabled) throw new AppError(503, "maintenance", m.message);
+  }
+  // One account, one portal. The admin sign-in never says what kind of
+  // account an email has; staff accounts never sign in anywhere else.
+  if (!PORTAL_ACCEPTS[portal].includes(type)) {
+    if (portal === "admin" || type === "staff") throw generic;
+    throw new AppError(403, "wrong_portal",
+      `${type === "organiser" ? "This is an organiser account." : "This is a customer account."} Sign in on ${type === "organiser" ? "the organiser portal" : "the customer portal"}.`,
+      { portal: ACCOUNT_PORTALS[type] });
+  }
   // Right password, email not confirmed yet: send a fresh link (a few per hour at most).
   if (!u.email_verified_at) {
     if (hit(`verifysend:${u.id}`, 3, 60 * 60e3)) await db.withTx((c) => sendVerification(c, u));
@@ -185,8 +204,8 @@ router.post("/verify-email", limit("verifylink", 30, 60 * 60e3), wrap(async (req
   });
   if (result.guest) throw bad(`This link has been replaced. We've emailed ${result.user.email} a link to choose your password: open the newest email from us.`);
   const { rows: [{ n }] } = await db.query("SELECT count(*)::int AS n FROM tickets WHERE owner_user_id = $1 AND status = 'valid'", [result.user.id]);
-  const { rows: org } = await db.query("SELECT 1 FROM organiser_members WHERE user_id = $1 LIMIT 1", [result.user.id]);
-  res.json({ ok: true, signedIn: result.first, firstName: String(result.user.full_name || "").trim().split(/\s+/)[0], tickets: n, organiser: !!org[0] });
+  const type = accountType(result.user);
+  res.json({ ok: true, signedIn: result.first, accountType: type, firstName: String(result.user.full_name || "").trim().split(/\s+/)[0], tickets: n, organiser: type === "organiser" });
 }));
 
 // "Didn't get the email?" Same answer whether or not the address has an account.
@@ -196,7 +215,7 @@ router.post("/verify-email/resend", limit("verifyresend", 5, 60 * 60e3), wrap(as
   if (req.user) u = (await db.query("SELECT * FROM users WHERE id = $1", [req.user.id])).rows[0];
   else if (b.email) u = await userByEmail(db, b.email);
   // A guest account has no password yet: it gets the link to choose one instead.
-  if (u && u.status === "active" && (!u.email_verified_at || u.guest) && hit(`verifysend:${u.id}`, 3, 60 * 60e3)) {
+  if (u && u.status === "active" && accountType(u) !== "staff" && (!u.email_verified_at || u.guest) && hit(`verifysend:${u.id}`, 3, 60 * 60e3)) {
     await db.withTx((c) => (u.guest ? sendFinishAccount(c, u) : sendVerification(c, u)));
   }
   res.json({ ok: true, message: "If that email is waiting to be confirmed, a new link is on its way." });
@@ -206,12 +225,15 @@ router.post("/verify-email/resend", limit("verifyresend", 5, 60 * 60e3), wrap(as
 router.post("/password/forgot", limit("forgot", 5, 60 * 60e3), wrap(async (req, res) => {
   const b = check(req.body, { email: r.email() });
   const found = await userByEmail(db, b.email);
-  const rows = found && found.status === "active" ? [found] : [];
+  // Staff passwords are reset by the platform owner or an admin from the admin
+  // portal, never by email from the public sign-in. The answer is the same, so
+  // it reveals nothing about which emails are staff.
+  const rows = found && found.status === "active" && accountType(found) !== "staff" ? [found] : [];
   if (rows[0]) {
     const token = randomToken(32);
     await db.withTx(async (c) => {
       await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '1 hour')", [sha256(token), rows[0].id]);
-      await outbox.enqueue(c, { to: rows[0].email, userId: rows[0].id, ...templates.passwordReset({ name: rows[0].full_name, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+      await outbox.enqueue(c, { to: rows[0].email, userId: rows[0].id, ...templates.passwordReset({ name: rows[0].full_name, url: portalLink(rows[0], `reset/${token}`) }) });
     });
     if (!config.isProd) res.setHeader("X-Dev-Reset-Token", token);
   }
@@ -234,11 +256,10 @@ router.post("/password/reset", limit("reset", 10, 60 * 60e3), wrap(async (req, r
   });
   // The link proved the inbox, so the new password signs them straight in.
   const { rows: [u] } = await db.query(
-    `SELECT u.status, (SELECT count(*) FROM tickets WHERE owner_user_id = u.id AND status = 'valid')::int AS tickets,
-            EXISTS (SELECT 1 FROM platform_roles WHERE user_id = u.id) AS staff, EXISTS (SELECT 1 FROM organiser_members WHERE user_id = u.id) AS organiser
+    `SELECT u.status, u.account_type, (SELECT count(*) FROM tickets WHERE owner_user_id = u.id AND status = 'valid')::int AS tickets
        FROM users u WHERE u.id = $1`, [userId]);
   if (u.status === "active") await createSession(res, req, userId);
-  res.json({ ok: true, signedIn: u.status === "active", tickets: u.tickets, staff: u.staff, organiser: u.organiser });
+  res.json({ ok: true, signedIn: u.status === "active", tickets: u.tickets, accountType: u.account_type, staff: u.account_type === "staff", organiser: u.account_type === "organiser" });
 }));
 
 // POPIA: access to personal information.
@@ -268,6 +289,13 @@ router.post("/me/delete", requireAuth, wrap(async (req, res) => {
   const b = check(req.body, { password: r.str({ max: 200 }) });
   const { rows } = await db.query("SELECT password_hash FROM users WHERE id = $1", [req.user.id]);
   if (!verifySecret(b.password, rows[0].password_hash)) throw new AppError(401, "bad_credentials", "Password is incorrect.");
+  // Staff accounts are closed by an admin under Staff & roles; an organisation's
+  // owner closes the organisation with TicketRoom first, so nothing is left without an owner.
+  if (accountType(req.user) === "staff") throw forbidden("Staff accounts are closed by an admin under Staff & roles.");
+  const { rows: owns } = await db.query(
+    `SELECT 1 FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id
+      WHERE m.user_id = $1 AND m.role = 'owner' AND o.status IN ('pending','approved','suspended') LIMIT 1`, [req.user.id]);
+  if (owns[0]) throw conflict("You own an organisation on TicketRoom. Write to hello@ticketroom.co.za to close it first, then you can delete your account.", "owns_organisation");
   await db.withTx(async (c) => {
     const { rows: live } = await c.query(
       `SELECT 1 FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = $1 AND t.status = 'valid' AND e.ends_at > now() LIMIT 1`, [req.user.id]);

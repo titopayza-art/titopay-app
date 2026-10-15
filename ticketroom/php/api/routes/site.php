@@ -40,6 +40,42 @@ route('POST', '/api/site/callback', function () {
     return json_out(['reference' => $ref, 'responseTime' => $s['support']['responseTime']], 201);
 });
 
+// The Contact page: customers and event organisers write in with the event,
+// the kind of query and (for customers) an order reference or wristband code.
+const CONTACT_TYPES = [
+    'customer' => ['tickets' => ['tickets', 'My tickets'], 'order' => ['payment', 'Payment or order problem'], 'refund' => ['refund', 'Refund'], 'transfer' => ['tickets', 'Transfer a ticket'],
+        'cashless' => ['tag', 'Cashless or wristband'], 'account' => ['account', 'My account'], 'event' => ['other', 'Question about an event'], 'other' => ['other', 'Something else']],
+    'organiser' => ['selling' => ['organiser', 'Selling tickets'], 'setup' => ['organiser', 'Setting up an event'], 'payouts' => ['payment', 'Payouts'], 'verification' => ['organiser', 'Verification documents'],
+        'promote' => ['organiser', 'Promoting my event'], 'cashless' => ['tag', 'Cashless and vendors'], 'account' => ['account', 'My organiser account'], 'other' => ['other', 'Something else']],
+];
+route('POST', '/api/site/contact', function () {
+    limit('contact', 8, 3600);
+    $b = check(body(), ['audience' => R::oneOf(['customer', 'organiser']), 'fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(),
+        'phone' => R::str(['optional' => true, 'max' => 30]), 'eventSlug' => R::str(['optional' => true, 'max' => 160]), 'eventName' => R::str(['optional' => true, 'max' => 160]),
+        'queryType' => R::str(['max' => 20]), 'reference' => R::str(['optional' => true, 'max' => 40]), 'message' => R::text(['max' => 4000])]);
+    $types = CONTACT_TYPES[$b['audience']];
+    if (!isset($types[$b['queryType']])) throw invalid(['queryType' => 'Choose a type of query.']);
+    if (trim($b['message']) === '') throw invalid(['message' => 'This field is required.']);
+    [$category, $topic] = $types[$b['queryType']];
+    $ev = !empty($b['eventSlug']) ? row('SELECT id, title, organiser_id FROM events WHERE slug = ?', [$b['eventSlug']]) : null;
+    $eventName = $ev['title'] ?? ($b['eventName'] ?? null);
+    $s = settings_all();
+    $ref = reference('CQ');
+    $who = $b['audience'] === 'organiser' ? 'Event organiser' : 'Customer';
+    $details = "$who: {$b['fullName']} <{$b['email']}>" . (!empty($b['phone']) ? "\nPhone: {$b['phone']}" : '') . ($eventName ? "\nEvent: $eventName" : '')
+        . (!empty($b['reference']) ? "\nOrder reference or wristband: " . strtoupper(trim($b['reference'])) : '') . "\nQuery: $topic\n\n{$b['message']}";
+    tx(function () use ($b, $s, $ref, $category, $topic, $ev, $details, $who) {
+        $now = now_iso();
+        insert('support_cases', ['id' => uuid(), 'reference' => $ref, 'user_id' => user()['id'] ?? null, 'email' => $b['email'], 'category' => $category,
+            'subject' => "$who: $topic", 'body' => $details, 'status' => 'open', 'full_name' => $b['fullName'], 'phone' => $b['phone'] ?? null,
+            'source' => 'web', 'event_id' => $ev['id'] ?? null, 'due_at' => iso_in(48 * 3600), 'created_at' => $now, 'updated_at' => $now]);
+        outbox_enqueue(['to' => $s['support']['email'], 'subject' => "[TicketRoom] $ref $who: $topic", 'body' => "New message $ref\n\n$details\n\nRespond within {$s['support']['responseTime']}. Manage it in Admin portal → Support."]);
+        outbox_enqueue(['to' => $b['email'], 'userId' => user()['id'] ?? null] + tpl('contactReceived', ['name' => $b['fullName'], 'reference' => $ref, 'topic' => $topic,
+            'responseTime' => $s['support']['responseTime'], 'email' => $s['support']['email'], 'hoursNote' => $s['hours']['note']]));
+    });
+    return json_out(['reference' => $ref, 'responseTime' => $s['support']['responseTime']], 201);
+});
+
 route('POST', '/api/site/chat', function () {
     limit('chat', 20, 60);
     limit('chatday', 200, 86400);

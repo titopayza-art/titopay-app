@@ -15,8 +15,8 @@ route('GET', '/api/public/events', function () {
     $q = trim(mb_substr((string) qs('q', ''), 0, 80));
     if ($q !== '') {
         $like = '%' . like_escape(mb_strtolower($q)) . '%';
-        $where[] = "(lower(e.title) LIKE ? ESCAPE '\\' OR lower(e.venue_name) LIKE ? ESCAPE '\\' OR lower(e.city) LIKE ? ESCAPE '\\' OR lower(o.name) LIKE ? ESCAPE '\\')";
-        array_push($p, $like, $like, $like, $like);
+        $where[] = "(lower(e.title) LIKE ? ESCAPE '\\' OR lower(e.venue_name) LIKE ? ESCAPE '\\' OR lower(e.city) LIKE ? ESCAPE '\\' OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(COALESCE(e.lineup, '')) LIKE ? ESCAPE '\\')";
+        array_push($p, $like, $like, $like, $like, $like);
     }
     if (qs('category')) { $where[] = 'e.category = ?'; $p[] = qs('category'); }
     if (qs('city')) { $where[] = 'e.city = ?'; $p[] = qs('city'); }
@@ -36,15 +36,68 @@ route('GET', '/api/public/events', function () {
 });
 
 route('GET', '/api/public/events/:slug', function ($a) {
-    $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.transfers_enabled, e.cashless_enabled, e.capacity
-                FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.slug = ? AND e.status IN ('published','cancelled','completed')", [$a['slug']]);
-    if (!$ev) throw not_found('Event not found.');
+    // A preview link (from the organiser portal) shows a draft or an event
+    // waiting for approval exactly as buyers will see it, without sales.
+    $pv = qs('preview') ? verify_link(qs('preview')) : null;
+    $states = "'published','cancelled','completed'" . ($pv ? ",'draft','pending_approval'" : '');
+    $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.transfers_enabled, e.cashless_enabled, e.capacity, e.lineup, e.organiser_id
+                FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.slug = ? AND e.status IN ($states)", [$a['slug']]);
+    if (!$ev || ($pv && ($pv['pv'] ?? '') !== $ev['id'] && $ev['status'] !== 'published')) throw not_found('Event not found.');
+    $preview = $pv && ($pv['pv'] ?? '') === $ev['id'];
+    $ev['lineup'] = public_lineup($ev['lineup']);
+    $ev['preview'] = $preview;
+    if ($preview) {
+        // People on the organiser's team see the publish button on the preview.
+        $me = user();
+        $ev['previewOrganiserId'] = $me && val('SELECT 1 FROM organiser_members WHERE organiser_id = ? AND user_id = ?', [$ev['organiser_id'], $me['id']]) ? $ev['organiser_id'] : null;
+    }
+    unset($ev['organiser_id']);
     $types = rows("SELECT id, name, description, kind, admits, price_cents, per_order_limit, sales_start_at, sales_end_at, MAX(quantity_total - quantity_sold - quantity_held, 0) AS remaining
                      FROM ticket_types WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, price_cents", [$ev['id']]);
     foreach ($types as &$t) $t['fee_cents'] = ticket_fee((int) $t['price_cents']);
-    $ev['salesOpen'] = sales_open($ev);
+    $ev['salesOpen'] = $ev['status'] === 'published' && sales_open($ev);
     $ev['liked'] = user() ? (bool) val('SELECT 1 FROM event_likes WHERE user_id = ? AND event_id = ?', [user()['id'], $ev['id']]) : false;
     return ['event' => $ev, 'ticketTypes' => $types];
+});
+
+function public_lineup(?string $json): array
+{
+    $l = $json ? json_decode($json, true) : null;
+    return is_array($l) ? array_values(array_filter($l, fn($x) => is_array($x) && !empty($x['name']))) : [];
+}
+
+// Trending Artists: acts on upcoming live events, ranked by recent ticket
+// sales and likes for those events. Worked out on the fly and cached briefly.
+route('GET', '/api/public/artists/trending', function () {
+    limit('browse', 300, 60);
+    // Recounted every 5 minutes, or straight away when an event is published or edited.
+    $sig = (string) val("SELECT count(*) || '|' || COALESCE(MAX(updated_at), '') FROM events WHERE status = 'published'");
+    $c = row("SELECT value FROM meta WHERE key = 'trending_artists'");
+    if ($c) { $v = json_decode($c['value'], true); if (($v['at'] ?? 0) > time() - 300 && ($v['sig'] ?? '') === $sig) return ['artists' => $v['artists']]; }
+    $since = iso_in(-30 * 86400);
+    $events = rows("SELECT e.id, e.slug, e.title, e.starts_at, e.city, e.image_upload_id, e.lineup,
+                           (SELECT COALESCE(SUM(oi.quantity),0) FROM orders o JOIN order_items oi ON oi.order_id = o.id WHERE o.event_id = e.id AND o.test = 0 AND o.status IN ('paid','partially_refunded') AND o.paid_at > ?) AS sold,
+                           (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes
+                      FROM events e WHERE e.status = 'published' AND e.ends_at > ? AND e.lineup IS NOT NULL AND e.lineup <> ''", [$since, now_iso()]);
+    $acts = [];
+    foreach ($events as $e) {
+        $weight = 1 + (int) $e['sold'] + 2 * (int) $e['likes'];
+        foreach (public_lineup($e['lineup']) as $i => $act) {
+            $k = mb_strtolower($act['name']);
+            $acts[$k] ??= ['name' => $act['name'], 'score' => 0, 'events' => []];
+            // Headliners (listed first) count a little more.
+            $acts[$k]['score'] += $weight * ($i === 0 ? 1.5 : 1);
+            $acts[$k]['events'][] = ['slug' => $e['slug'], 'title' => $e['title'], 'starts_at' => $e['starts_at'], 'city' => $e['city'], 'image_upload_id' => $e['image_upload_id']];
+        }
+    }
+    usort($acts, fn($a, $b) => $b['score'] <=> $a['score'] ?: strcmp($a['name'], $b['name']));
+    $out = [];
+    foreach (array_slice($acts, 0, 12) as $a) {
+        usort($a['events'], fn($x, $y) => strcmp($x['starts_at'], $y['starts_at']));
+        $out[] = ['name' => $a['name'], 'eventCount' => count($a['events']), 'next' => $a['events'][0]];
+    }
+    q('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', ['trending_artists', json_encode(['at' => time(), 'sig' => $sig, 'artists' => $out])]);
+    return ['artists' => $out];
 });
 
 // Like (or unlike) an event. Liked events are saved in the customer portal.

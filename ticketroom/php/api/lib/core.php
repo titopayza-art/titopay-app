@@ -64,7 +64,7 @@ function cfg(?string $key = null, $default = null)
     $c = $GLOBALS['TR_CONFIG'] ?? [];
     if ($key === null) return $c;
     // Email, payment and SMS settings saved in the admin portal win over config.php.
-    if (preg_match('/^(mail|payments|sms|kyc)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
+    if (preg_match('/^(mail|payments|sms|kyc|google)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
         $v = integration_value($m[1], $m[2]);
         if ($v !== null) return $v;
     }

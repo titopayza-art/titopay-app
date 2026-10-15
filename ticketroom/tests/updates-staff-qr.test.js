@@ -56,9 +56,11 @@ test("staff and roles: admins add people with chosen roles; nobody changes their
   const add = await admin.post("/api/admin/staff", { fullName: "Ayanda Khumalo", email: "ayanda@test.local", roles: ["support"] });
   assert.equal(add.status, 201);
   assert.equal(add.body.invited, true);
-  assert.match((await lastMailTo("ayanda@test.local")).body, /as Support[\s\S]*account#\/reset\//);
+  assert.match((await lastMailTo("ayanda@test.local")).body, /as Support[\s\S]*\/admin#\/reset\//);
+  // A customer's email can never become staff: staff use their own work email.
   const fanAdded = await admin.post("/api/admin/staff", { fullName: "Sipho Fan", email: fan.user.email, roles: ["finance", "support"] });
-  assert.equal(fanAdded.body.invited, false);
+  assert.equal(fanAdded.status, 409);
+  assert.equal(fanAdded.body.error.code, "not_staff_account");
   const team = (await support.get("/api/admin/staff")).body.staff;
   const ayanda = team.find((s) => s.email === "ayanda@test.local");
   assert.deepEqual(ayanda.roles, ["support"]);
@@ -68,6 +70,7 @@ test("staff and roles: admins add people with chosen roles; nobody changes their
   assert.equal((await h.one("SELECT count(*)::int AS n FROM platform_roles WHERE user_id = $1", [ayanda.id])).n, 2);
   assert.equal((await admin.put(`/api/admin/staff/${ayanda.id}`, { roles: [] })).status, 200);
   assert.equal((await h.one("SELECT count(*)::int AS n FROM platform_roles WHERE user_id = $1", [ayanda.id])).n, 0);
+  assert.equal((await h.one("SELECT status FROM users WHERE id = $1", [ayanda.id])).status, "suspended", "off the team: the staff account is switched off");
   assert.equal((await admin.post("/api/admin/staff", { fullName: "No Roles", email: "none@test.local", roles: [] })).status, 422);
 });
 
@@ -96,7 +99,7 @@ test("free tickets: the per-person limit counts every order, so one account cann
 });
 
 test("organisers waiting for approval cannot invite people; live-event edits alert the team", async () => {
-  const applicant = await h.user({ name: "New Organiser" });
+  const applicant = await h.user({ name: "New Organiser", type: "organiser" });
   const ap = await applicant.post("/api/organiser/apply", { name: "Pending Promotions", contactEmail: "pending@test.local" });
   assert.equal(ap.status, 201);
   const orgId = ap.body.organiser.id;

@@ -119,6 +119,8 @@ function eventForm(e = {}) {
     <div class="grid-2"><div class="field"><label for="city">City</label><input id="city" name="city" required value="${e.city || ""}"></div>
       <div class="field"><label for="province">Province</label><select id="province" name="province"><option value="">—</option>${PROVINCES.map((p) => html`<option ${sel(p, e.province)}>${p}</option>`)}</select></div></div>
     <div class="field"><label for="description">Description</label><textarea id="description" name="description" maxlength="8000">${e.description || ""}</textarea></div>
+    <div class="field"><label for="lineup">Line up <span class="muted">(optional)</span></label><textarea id="lineup" name="lineup" maxlength="4000" rows="4" placeholder="${"20:00 Black Coffee\n21:30 Sjava\nDJ Maphorisa"}">${lineupText(e.lineup)}</textarea>
+      <span class="hint">One act per line, headliner first. Start a line with a time to show set times. Shown in the Line up tab and in Trending artists.</span></div>
     <div class="field"><label for="img">Poster image</label><input id="img" type="file" accept="image/png,image/jpeg,image/webp"><input type="hidden" name="imageUploadId" value="${e.image_upload_id || ""}"><span class="hint">PNG, JPEG or WebP, up to 2 MB. 16:9 works best.</span></div>
     <div class="grid-2"><div class="field"><label for="salesStartAt">Sales open <span class="muted">(optional)</span></label><input id="salesStartAt" name="salesStartAt" type="datetime-local" value="${toLocalInput(e.sales_start_at)}"></div>
       <div class="field"><label for="salesEndAt">Sales close <span class="muted">(default: event end)</span></label><input id="salesEndAt" name="salesEndAt" type="datetime-local" value="${toLocalInput(e.sales_end_at)}"></div></div>
@@ -133,6 +135,11 @@ function eventForm(e = {}) {
     <button class="btn btn-primary" type="submit">${e.id ? "Save changes" : "Create draft"}</button></form>`;
 }
 
+function lineupText(l) {
+  let list = l;
+  if (typeof l === "string") { try { list = JSON.parse(l || "[]"); } catch { list = []; } }
+  return (Array.isArray(list) ? list : []).map((a) => (a.time ? `${a.time} ` : "") + a.name).join("\n");
+}
 function toIso(v) { return v ? new Date(v).toISOString() : undefined; }
 function eventPayload(v) {
   const ageGroups = Object.keys(AGE_GROUPS).filter((k) => v[`ag_${k}`]);
@@ -184,16 +191,27 @@ async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);
   const e = d.event;
   const actions = [];
-  if (e.status === "draft" && can("owner", "manager")) actions.push(html`<button class="btn btn-primary" data-submit>Submit for approval</button>`);
   if (e.status === "published") actions.push(html`<a class="btn btn-ghost" href="/events/${e.slug}" target="_blank">View public page ↗</a>`);
+  else if (!["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-preview>Preview</button>`);
+  if (e.status === "draft" && can("owner", "manager")) actions.push(html`<button class="btn btn-primary" data-submit>Publish</button>`);
   if (can("owner") && !["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-cancel>${e.cancellation_requested_at ? "Cancellation requested" : "Cancel event"}</button>`);
   render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}${e.ref ? html` · Event ID <span class="mono">${e.ref}</span>` : ""}${e.age_groups ? html`<br><span class="small">For: ${ageGroupText(e.age_groups)}</span>` : ""}`, html`${actions}`, html`<a href="#/events">My events</a>`)}
-    ${e.status === "pending_approval" ? html`<p class="callout">Submitted. TicketRoom will review and publish it shortly.</p>` : ""}
+    ${e.status === "pending_approval" ? html`<p class="callout">Waiting to be published. TicketRoom checks new events, usually within one business day, and emails you when it is live. <button class="btn-link" data-preview>Preview it</button></p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
     <div class="tabs" role="tablist">${TABS.filter(([k]) => k !== "vendors" || FEATURES.cashless).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
     <div id="tab"></div>`);
-  $("[data-submit]")?.addEventListener("click", async () => { try { await post(`${base()}/events/${id}/submit`); toast("Submitted for approval.", "good"); eventWorkspace({ id, tab }); } catch (err) { toast(err.message, "bad"); } });
+  // Preview opens the event page as buyers will see it, through a private link.
+  $$("[data-preview]").forEach((b) => b.addEventListener("click", async () => {
+    const w = window.open("", "_blank");
+    try { const r = await get(`${base()}/events/${id}/preview-link`); if (w) w.location = r.url; else location.href = r.url; }
+    catch (err) { w?.close(); toast(err.message, "bad"); }
+  }));
+  $("[data-submit]")?.addEventListener("click", async () => {
+    const ok = await confirmDialog("Publish this event?", "TicketRoom checks every new event before it goes live, usually within one business day. You'll get an email the moment it is published. Preview it first if you haven't yet.", { confirm: "Publish" });
+    if (!ok) return;
+    try { await post(`${base()}/events/${id}/submit`); toast("Sent for publishing. We'll email you when it's live.", "good"); eventWorkspace({ id, tab }); } catch (err) { toast(err.message, "bad"); }
+  });
   $("[data-cancel]")?.addEventListener("click", async () => {
     if (e.cancellation_requested_at) return;
     const reason = await confirmDialog("Cancel this event?", "If tickets have been sold, TicketRoom cancels the event and refunds every buyer in full, including fees. This cannot be undone.", { confirm: "Request cancellation", danger: true, input: { label: "Reason (shown to buyers)", required: true } });

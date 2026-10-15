@@ -18,6 +18,7 @@ const problems = [];
   try {
     for (const [who, [creds, path, sections]] of Object.entries(PEOPLE)) {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      await ctx.addInitScript(() => { try { localStorage.setItem("tr_consent", JSON.stringify({ v: 1, functional: true, analytics: true })); } catch { /* no storage */ } });
       // Count only movement a person can see: shifts after the page is shown.
       await ctx.addInitScript(() => {
         window.__moved = 0;

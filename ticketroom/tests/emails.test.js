@@ -68,7 +68,7 @@ test("abandoned checkout: one nudge, not after booking, not after unsubscribe", 
 });
 
 test("organisers are emailed on approval and when their event is published or sent back", async () => {
-  const o = await h.user({ name: "Naledi Dlamini" });
+  const o = await h.user({ name: "Naledi Dlamini", type: "organiser" });
   const app = await o.post("/api/organiser/apply", { name: "Soweto Arts", contactEmail: "arts@test.local" });
   await admin.post(`/api/admin/organisers/${app.body.organiser.id}/status`, { status: "approved" });
   const ev = await o.post(`/api/organiser/${app.body.organiser.id}/events`, { title: "Free Jazz", category: "music", venueName: "Park", city: "Soweto", startsAt: new Date(Date.now() + 864e5 * 9).toISOString(), endsAt: new Date(Date.now() + 864e5 * 9 + 3600e3).toISOString(), capacity: 50, isFree: true });

@@ -13,7 +13,9 @@ const who = {
   const b = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, args: ["--no-sandbox"] });
   let bad = 0;
   for (const [k, [cred, urls]] of Object.entries(who)) {
-    const p = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+    const c = await b.newContext({ viewport: { width: 390, height: 844 } });
+    await c.addInitScript(() => { try { localStorage.setItem("tr_consent", JSON.stringify({ v: 1, functional: true, analytics: true })); } catch { /* no storage */ } });
+    const p = await c.newPage();
     if (cred) await p.request.post(B + "/api/auth/login", { data: { email: cred[0], password: cred[1], portal: cred[2] || "site" } });
     // the live site's first event slug
     for (let u of urls) {

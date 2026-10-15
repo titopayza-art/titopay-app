@@ -218,7 +218,7 @@ async function fulfil(c, orderId, payment) {
     // consumer booking fee.
     await ledger.post(c, {
       kind: "ticket_sale", reference: order.reference, idempotencyKey: `order-paid:${order.id}`,
-      memo: `Order ${order.reference}`,
+      memo: `Order ${order.reference}`, test: order.test,
       lines: [
         { account: ledger.codes.providerClearing(payment.provider), debit: order.total_cents },
         { account: ledger.codes.organiserPayable(event.organiser_id, event.id), credit: order.subtotal_cents - order.discount_cents - order.organiser_fee_cents },
@@ -230,6 +230,8 @@ async function fulfil(c, orderId, payment) {
 
   if (fulfilled) {
     const issued = await tickets.issueForOrder(c, upd[0]);
+    // Bought in test mode: the tickets are test tickets, refused at the gate.
+    if (upd[0].test) await c.query("UPDATE tickets SET test = true WHERE order_id = $1", [order.id]);
     const { rows: [owner] } = await c.query("SELECT guest FROM users WHERE id = $1", [order.user_id]);
     await outbox.enqueue(c, { to: order.buyer_email, userId: order.user_id,
       ...templates.orderConfirmed({ order: upd[0], event, ticketCount: issued.length, guestLink: owner?.guest ? orderLink(upd[0]) : null }) });

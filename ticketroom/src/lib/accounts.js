@@ -31,4 +31,31 @@ async function phoneTaken(q, phone, exceptUserId) {
   return !!rows[0];
 }
 
-module.exports = { emailKey, userByEmail, phoneTaken };
+// ---------------------------------------------------------------- account types
+// One account, one portal. Customers buy tickets, organisers run events,
+// staff run TicketRoom; each signs in on its own portal only.
+const ACCOUNT_PORTALS = { customer: "/account", organiser: "/organisers", staff: "/admin" };
+// Which accounts each sign-in box accepts ("site" is the public website).
+const PORTAL_ACCEPTS = { site: ["customer", "organiser"], customer: ["customer"], organiser: ["organiser"], admin: ["staff"], scanner: ["customer", "organiser"] };
+// Works with a users row (account_type) and with req.user (accountType).
+const accountType = (u) => String(u?.account_type || u?.accountType || "customer");
+// Where an emailed link for this account opens: its own portal.
+const portalLink = (u, hash) => `${require("../config").publicBaseUrl}${ACCOUNT_PORTALS[accountType(u)] || "/account"}#/${hash}`;
+
+// The platform owner: the first administrator (kept in platform_meta). If it
+// was never recorded (a database set up before migration 013 had an admin),
+// the first admin is recorded now, like the PHP edition's upgrade step.
+async function ownerId(q) {
+  q = q || db;
+  const { rows } = await q.query("SELECT value FROM platform_meta WHERE key = 'owner_user_id'");
+  if (rows[0]) return rows[0].value;
+  const { rows: made } = await q.query(
+    `INSERT INTO platform_meta (key, value)
+     SELECT 'owner_user_id', u.id::text FROM users u JOIN platform_roles r ON r.user_id = u.id AND r.role = 'admin' ORDER BY u.created_at LIMIT 1
+     ON CONFLICT (key) DO NOTHING RETURNING value`);
+  if (made[0]) return made[0].value;
+  const { rows: again } = await q.query("SELECT value FROM platform_meta WHERE key = 'owner_user_id'");
+  return again[0]?.value || null;
+}
+
+module.exports = { emailKey, userByEmail, phoneTaken, ACCOUNT_PORTALS, PORTAL_ACCEPTS, accountType, portalLink, ownerId };

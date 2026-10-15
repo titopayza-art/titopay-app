@@ -37,6 +37,7 @@ const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", p
 
 async function page(browser, { width = 1280, height = 900 } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height } });
+  await ctx.addInitScript(() => { try { localStorage.setItem("tr_consent", JSON.stringify({ v: 1, functional: true, analytics: true })); } catch { /* no storage */ } });
   const p = await ctx.newPage();
   p.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource.*(401|404|409|422|501)/.test(m.text())) problems.push(`[console] ${p.url()} ${m.text()}`); });
   p.on("pageerror", (e) => problems.push(`[pageerror] ${p.url()} ${e.message}`));
@@ -158,6 +159,7 @@ async function signIn(p, email, password) {
     await o.getByLabel("Ends").fill(local(new Date(Date.now() + 6 * 3600e3)));
     await o.getByLabel("Venue", { exact: true }).fill("Thokoza Park");
     await o.getByLabel("City", { exact: true }).fill("Soweto");
+    await o.getByLabel(/Line up/).fill("19:00 Soweto String Quartet\nThe Brother Moves On\n21:30 Nduduzo Makhathini");
     await o.getByRole("button", { name: "Create draft" }).click();
     // The event's QR code is offered straight away, ready to download.
     const made = o.locator("dialog", { hasText: "Your event is created" });
@@ -170,8 +172,21 @@ async function signIn(p, email, password) {
     // them (tests-ui/php-verification.js covers this in the portals).
     const orgId = (await (await o.request.get(`${BASE}/api/auth/me`)).json()).user.organisers[0].id;
     await verifyOrganiser(o.request, a.request, BASE, orgId);
-    await o.getByRole("button", { name: "Submit for approval" }).click();
-    await o.getByText("Submitted for approval.").waitFor();
+    // Preview shows the page as buyers will see it, before it is live.
+    const [pv] = await Promise.all([o.context().waitForEvent("page"), o.getByRole("button", { name: "Preview" }).first().click()]);
+    await pv.getByText(/Only people with this link can see this page/).waitFor();
+    await pv.getByRole("heading", { name: "Free Jazz in the Park" }).waitFor();
+    await pv.getByRole("tab", { name: "Line up" }).click();
+    await pv.getByRole("link", { name: "Soweto String Quartet" }).waitFor();
+    assert.equal((await pv.locator(".lineup-time").first().textContent()).trim(), "19:00");
+    assert.match(await pv.locator(".event-facts").textContent(), /SAST/);
+    await shot(pv, "organiser-event-preview");
+    const draftSlug = new URL(pv.url()).pathname.split("/").pop();
+    await pv.close();
+    assert.equal((await fetch(`${BASE}/api/public/events/${draftSlug}`)).status, 404, "no preview link, no draft");
+    await o.getByRole("button", { name: "Publish" }).click();
+    await o.locator("dialog[open]").getByRole("button", { name: "Publish" }).click();
+    await o.getByText(/Sent for publishing/).waitFor();
 
     // Admin publishes it.
     await a.goto(`${BASE}/admin#/events`);

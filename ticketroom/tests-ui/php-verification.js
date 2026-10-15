@@ -16,7 +16,7 @@ const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3] || "/srv/trtest/public_html";
 const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026", portal: "admin" };
 const NALEDI = { email: "naledi@example.co.za", password: "organiser-pass-1", portal: "organiser" };
-const MOCK_PORT = process.env.TR_MOCK_PORT3 || "8703";
+const MOCK_PORT = process.env.TR_MOCK_PORT4 || "8704";
 const MOCK = `http://127.0.0.1:${MOCK_PORT}`;
 const problems = [];
 const step = (m) => console.log(`  ok  ${m}`);
@@ -312,16 +312,16 @@ const newEvent = async (o, orgId, extra = {}, price = 15000) => {
     assert.equal(Number(sql("SELECT count(*) AS n FROM verification_documents WHERE organiser_id = ? AND deleted_at IS NULL", S.orgId)[0].n), 0, "everything deleted after the keeping period");
     assert.equal(sql("SELECT id_number_enc FROM organiser_verification WHERE organiser_id = ?", S.orgId)[0].id_number_enc, null, "ID number deleted too");
     assert.equal(Number(sql("SELECT count(*) AS n FROM audit_log WHERE action = 'verification.retention_deleted' AND organiser_id = ?", S.orgId)[0].n), 1);
-    // An older site (schema 9) gets the tables by upgrade 12, which touches nothing else.
+    // An older site (schema 10) gets the tables by upgrade 12, which touches nothing else.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tr-upg-"));
     fs.cpSync(path.join(ROOT, "api"), path.join(tmp, "public_html", "api"), { recursive: true });
     fs.cpSync(dataDir, path.join(tmp, "ticketroom-data"), { recursive: true });
     const old = path.join(tmp, "ticketroom-data", "ticketroom.sqlite");
-    execFileSync("php", ["-r", `$d=new PDO('sqlite:${old}'); $d->exec("DROP TABLE organiser_verification; DROP TABLE verification_documents; DROP TABLE event_risk; UPDATE meta SET value = '9' WHERE key = 'schema_version'");`]);
+    execFileSync("php", ["-r", `$d=new PDO('sqlite:${old}'); $d->exec("DROP TABLE organiser_verification; DROP TABLE verification_documents; DROP TABLE event_risk; UPDATE meta SET value = '10' WHERE key = 'schema_version'");`]);
     const out = execFileSync("php", ["-r", `require '${tmp}/public_html/api/bootstrap.php'; tr_load(); echo val("SELECT value FROM meta WHERE key = 'schema_version'"), ' ', val("SELECT count(*) FROM sqlite_master WHERE name IN ('organiser_verification','verification_documents','event_risk')");`]).toString();
     assert.equal(out, "12 3", "upgraded to 12 with the three verification tables");
     fs.rmSync(tmp, { recursive: true, force: true });
-    step("POPIA: keeping period (5 years minimum, set in the admin portal), old copies and closed organisers deleted automatically; upgrade from schema 9");
+    step("POPIA: keeping period (5 years minimum, set in the admin portal), old copies and closed organisers deleted automatically; upgrade to schema 12");
 
     // 12. Pages render for everyone involved.
     await adm.goto(`${BASE}/admin#/`);

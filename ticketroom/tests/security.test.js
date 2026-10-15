@@ -10,7 +10,7 @@ before(async () => {
   ownerA = await h.user(); ownerB = await h.user(); fan = await h.user();
   admin = await h.user({ roles: ["admin"] }); support = await h.user({ roles: ["support"] }); finance = await h.user({ roles: ["finance"] });
   evA = await h.organiserWithEvent(ownerA); evB = await h.organiserWithEvent(ownerB);
-  marketingA = await h.user();
+  marketingA = await h.user({ type: "organiser" });
   await h.db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'marketing')", [evA.organiser.id, marketingA.user.id]);
   await h.buyAndPay(fan, evA.event, [{ ticketTypeId: evA.ticketTypes[0].id, quantity: 1 }]);
 });
@@ -58,8 +58,9 @@ test("financial approvals are separated from technical administration", async ()
   assert.equal((await admin.post(`/api/admin/refunds/${rf.id}/decide`, { approve: true })).status, 403);
   assert.equal((await support.post(`/api/admin/refunds/${rf.id}/decide`, { approve: true })).status, 403);
   assert.equal((await ownerA.post(`/api/organiser/${evA.organiser.id}/refunds/${rf.id}/decide`, { approve: true })).status, 404);
-  assert.equal((await support.post(`/api/admin/users/${fan.user.id}/roles`, { role: "admin", grant: true })).status, 403);
-  assert.equal((await admin.post(`/api/admin/users/${admin.user.id}/roles`, { role: "finance", grant: true })).status, 403);
+  // Platform roles are given under Staff & roles only: there is no way to grant one to a customer.
+  assert.equal((await support.post(`/api/admin/users/${fan.user.id}/roles`, { role: "admin", grant: true })).status, 404);
+  assert.equal((await admin.post(`/api/admin/users/${fan.user.id}/roles`, { role: "finance", grant: true })).status, 404);
   assert.equal((await admin.post("/api/admin/reconciliation", { provider: "simulated", from: new Date(0).toISOString(), to: new Date().toISOString() })).status, 403);
 });
 

@@ -4,7 +4,7 @@ const db = require("../lib/db");
 const { r, check } = require("../lib/validate");
 const { limit } = require("../lib/ratelimit");
 const { wrap, requireAuth } = require("../middleware/http");
-const { eventStaffAccess, isStaffRole } = require("../middleware/access");
+const { eventStaffAccess } = require("../middleware/access");
 const tickets = require("../modules/tickets/service");
 const tags = require("../modules/tags/service");
 const passes = require("../modules/tickets/passes");
@@ -15,7 +15,8 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get("/events", wrap(async (req, res) => {
-  const all = isStaffRole(req.user, "admin", "support");
+  // Only the events this person was added to, or their organisation's.
+  const all = false;
   const { rows } = await db.query(
     `SELECT DISTINCT e.id, e.title, e.venue_name, e.city, e.starts_at, e.ends_at, e.status, e.cashless_enabled,
             COALESCE(s.can_scan, m.role IN ('owner','manager'), $2) AS can_scan,
@@ -64,10 +65,11 @@ router.get("/events/:eventId/offline-pack", limit("offlinepack", 60, 3600e3, (q)
   const label = Object.fromEntries(types.map((t) => [t.id, gateLabel(t)]));
   const generatedAt = new Date().toISOString();
   const { rows: tks } = await db.query(
-    `SELECT code, qr_version, status, holder_name, ticket_type_id FROM tickets WHERE event_id = $1 ${since ? "AND updated_at >= $2" : ""}`, since ? [ev.id, since] : [ev.id]);
+    `SELECT code, qr_version, status, holder_name, ticket_type_id, test FROM tickets WHERE event_id = $1 ${since ? "AND updated_at >= $2" : ""}`, since ? [ev.id, since] : [ev.id]);
   // "Lerato Mokoena" travels as "Lerato M.".
   const short = (name) => { const [f, ...rest] = String(name || "").trim().split(/\s+/); return f ? (rest.length ? `${f} ${rest.join(" ").slice(0, 1)}.` : f) : ""; };
-  const list = tks.map((t) => [t.code, t.qr_version, t.status === "valid" ? 1 : t.status === "used" ? 2 : 0, short(t.holder_name), label[t.ticket_type_id] || ""]);
+  // Test tickets ride along as "not valid", so offline phones refuse them too.
+  const list = tks.map((t) => [t.code, t.qr_version, t.test ? 0 : t.status === "valid" ? 1 : t.status === "used" ? 2 : 0, short(t.holder_name), t.test ? "Test ticket" : label[t.ticket_type_id] || ""]);
   // Gate passes ride along; the sixth field marks a re-entry pass.
   const { rows: gps } = await db.query(
     `SELECT code, qr_version, status, holder_name, role, access_note, reentry, scans FROM gate_passes WHERE event_id = $1 ${since ? "AND updated_at >= $2" : ""}`, since ? [ev.id, since] : [ev.id]);
