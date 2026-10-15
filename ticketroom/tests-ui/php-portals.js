@@ -59,6 +59,8 @@ const login = (creds) => anon("/api/auth/login", creds);
     const orgOnAdmin = await login({ ...ORG, portal: "admin" });
     assert.equal(orgOnAdmin.status, 401, "organiser refused on the admin portal");
     assert.equal(orgOnAdmin.body.error.code, "bad_credentials", "and the admin sign-in says nothing about the account");
+    assert.match(orgOnAdmin.body.error.message, /^Access denied\./, "the staff sign-in says access denied");
+    assert.equal((await login({ email: "nobody@example.co.za", password: "whatever-123", portal: "admin" })).body.error.message, orgOnAdmin.body.error.message, "same words for an unknown email");
     assert.equal((await login({ ...FAN, portal: "admin" })).body.error.code, "bad_credentials");
     assert.equal((await login({ ...ADMIN, portal: "site" })).body.error.code, "bad_credentials", "staff sign in on the admin portal only");
     const fanP = await page(browser, FAN);

@@ -713,6 +713,7 @@ const INTEG_HELP = {
   payments: "Choose your payment provider and paste its keys. Start in Test mode, buy a ticket with a test card, then switch to Live.",
   email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
   sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets. Use BulkSMS or Clickatell, or connect your own provider through its web API.",
+  google: "Optional. Lets customers and organisers sign in or sign up with their Google account, no password needed. Staff always use the admin password sign-in.",
 };
 // Write-only boxes: never pre-filled, and kept out of the browser's password
 // filling (they open for typing only when tapped).
@@ -730,6 +731,7 @@ function integrationCard(i) {
     ${i.key === "payments" && isA() && i.environment !== "live" ? html`<div class="callout small stack"><span><strong>Want to try payments now?</strong> The TicketRoom sandbox needs no provider account: buyers see a practice payment page and choose whether it goes through. PayFast's shared test account sends you through PayFast's own sandbox instead. Either way no real money moves and every ticket is marked TEST. Switch to your own keys and Live when you're ready.</span>
       <div class="row"><button type="button" class="btn btn-primary btn-sm" data-sandbox="ticketroom">Use the TicketRoom sandbox</button><button type="button" class="btn btn-ghost btn-sm" data-sandbox="payfast">Use PayFast's test account</button></div></div>` : ""}
     ${i.key === "payments" && i.testOrders ? html`<div class="callout warn small row between"><span><strong>${i.testOrders} test order${i.testOrders === 1 ? "" : "s"}</strong> on record. They never count as sales or payouts. Clear them before you go live to free their seats.</span>${isA() ? html`<button type="button" class="btn btn-ghost btn-sm" data-clear-test>Clear test orders</button>` : ""}</div>` : ""}
+    ${i.redirectUrl ? html`<p class="small mb-0">In Google Cloud, create an OAuth client ID (Web application) and add this under Authorised redirect URIs: <span class="mono">${i.redirectUrl}</span></p>` : ""}
     ${i.notifyUrl ? html`<p class="small mb-0">Payment notifications arrive at <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : ". PayFast is told this address with every payment."}</p>` : ""}
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
       ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
