@@ -1,0 +1,259 @@
+// Public discovery, checkout and order status.
+const express = require("express");
+const db = require("../lib/db");
+const { r, check } = require("../lib/validate");
+const { limit, enforce } = require("../lib/ratelimit");
+const { verifyLink, reference } = require("../lib/crypto");
+const { notFound, bad, conflict } = require("../lib/errors");
+const { wrap, requireAuth } = require("../middleware/http");
+const orders = require("../modules/orders/service");
+const marketing = require("../modules/marketing/service");
+const passes = require("../modules/tickets/passes");
+const tickets = require("../modules/tickets/service");
+const { emailKey, accountType } = require("../lib/accounts");
+const { AGE_GROUPS } = require("../modules/tickets/kinds");
+const { sha256 } = require("../lib/crypto");
+
+const router = express.Router();
+
+const PUBLIC_EVENT = `e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
+  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name, o.ref AS organiser_ref,
+  (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
+  (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale')::int AS remaining,
+  (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id)::int AS likes`;
+
+router.get("/events", limit("browse", 300, 60e3), wrap(async (req, res) => {
+  const q = String(req.query.q || "").slice(0, 80).trim();
+  const params = [];
+  const where = ["e.status = 'published'", "e.ends_at > now()"];
+  if (q) { params.push(`%${q.replace(/[%_\\]/g, "\\$&")}%`); where.push(`(e.title ILIKE $${params.length} OR e.venue_name ILIKE $${params.length} OR e.city ILIKE $${params.length} OR o.name ILIKE $${params.length})`); }
+  if (req.query.category) { params.push(String(req.query.category)); where.push(`e.category = $${params.length}`); }
+  if (req.query.city) { params.push(String(req.query.city)); where.push(`e.city = $${params.length}`); }
+  // An age group also matches events for all ages.
+  if (Object.hasOwn(AGE_GROUPS, String(req.query.age || ""))) { params.push(`%,${req.query.age},%`); where.push(`(',' || COALESCE(e.age_groups, '') || ',' LIKE $${params.length} OR e.age_groups = 'all')`); }
+  if (req.query.free === "1") where.push("(e.is_free OR NOT EXISTS (SELECT 1 FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale' AND tt.price_cents > 0))");
+  if (req.query.when === "weekend") where.push("e.starts_at < date_trunc('week', now()) + interval '7 days' AND e.starts_at > date_trunc('week', now()) + interval '4 days'");
+  if (req.query.when === "month") where.push("e.starts_at < now() + interval '30 days'");
+  const { rows } = await db.query(
+    `SELECT ${PUBLIC_EVENT} FROM events e JOIN organisers o ON o.id = e.organiser_id
+      WHERE ${where.join(" AND ")} ORDER BY e.featured DESC, e.starts_at LIMIT 60`, params);
+  const { rows: cities } = await db.query("SELECT city, count(*)::int AS n FROM events WHERE status = 'published' AND ends_at > now() GROUP BY city ORDER BY n DESC");
+  res.json({ events: rows, cities });
+}));
+
+router.get("/events/:slug", wrap(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT ${PUBLIC_EVENT}, e.description, e.refund_policy, e.accessibility_info, e.transfers_enabled, e.cashless_enabled, e.capacity
+       FROM events e JOIN organisers o ON o.id = e.organiser_id
+      WHERE e.slug = $1 AND e.status IN ('published','cancelled','completed')`, [req.params.slug]);
+  const ev = rows[0];
+  if (!ev) throw notFound("Event not found.");
+  const { rows: types } = await db.query(
+    `SELECT id, name, description, kind, admits, price_cents, per_order_limit, sales_start_at, sales_end_at,
+            GREATEST(quantity_total - quantity_sold - quantity_held, 0)::int AS remaining
+       FROM ticket_types WHERE event_id = $1 AND status = 'on_sale' ORDER BY sort_order, price_cents`, [ev.id]);
+  const { ticketFee } = require("../lib/money");
+  const liked = req.user ? (await db.query("SELECT 1 FROM event_likes WHERE user_id = $1 AND event_id = $2", [req.user.id, ev.id])).rows.length > 0 : false;
+  res.json({ event: { ...ev, salesOpen: orders.salesOpen(ev), liked }, ticketTypes: types.map((t) => ({ ...t, fee_cents: ticketFee(t.price_cents) })) });
+}));
+
+// Tracking link click (?ref=CODE on an event page).
+// Like (or unlike) an event. Liked events are saved in the customer portal.
+router.post("/events/:slug/like", requireAuth, limit("like", 120, 60e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { liked: r.bool() });
+  const { rows: [ev] } = await db.query("SELECT id FROM events WHERE slug = $1 AND status IN ('published','completed')", [req.params.slug]);
+  if (!ev) throw notFound("Event not found.");
+  if (b.liked) await db.query("INSERT INTO event_likes (user_id, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [req.user.id, ev.id]);
+  else await db.query("DELETE FROM event_likes WHERE user_id = $1 AND event_id = $2", [req.user.id, ev.id]);
+  const { rows: [{ n }] } = await db.query("SELECT count(*)::int AS n FROM event_likes WHERE event_id = $1", [ev.id]);
+  res.json({ liked: b.liked, likes: n });
+}));
+
+router.post("/events/:slug/click", limit("click", 30, 60e3), wrap(async (req, res) => {
+  const b = check(req.body, { ref: r.str({ max: 40, pattern: /^[A-Za-z0-9_-]+$/ }) });
+  await db.query("UPDATE tracking_links SET clicks = clicks + 1 WHERE code = $2 AND event_id = (SELECT id FROM events WHERE slug = $1)", [req.params.slug, b.ref]);
+  res.json({ ok: true });
+}));
+
+const itemsRule = r.array(r.object({ ticketTypeId: r.uuid(), quantity: r.int({ min: 1, max: 50 }) }), { min: 1, max: 10 });
+
+router.post("/checkout/quote", limit("quote", 120, 60e3), wrap(async (req, res) => {
+  const b = check(req.body, { eventSlug: r.str({ max: 120 }), items: itemsRule, promoCode: r.str({ optional: true, max: 40 }) });
+  const { rows } = await db.query("SELECT * FROM events WHERE slug = $1", [b.eventSlug]);
+  if (!rows[0]) throw notFound("Event not found.");
+  res.json({ quote: orders.publicQuote(await orders.quote(db, rows[0], b.items, b.promoCode)) });
+}));
+
+const guestRule = r.object({ fullName: r.str({ min: 2, max: 120 }), email: r.email(), phone: r.phone({ optional: true }) }, { optional: true });
+const paymentView = (p) => (p ? { status: p.status, method: p.method, redirectUrl: p.redirectUrl || null, awaitingApproval: !!p.awaitingApproval } : null);
+const keyOf = (req) => (typeof req.query.k === "string" ? req.query.k.slice(0, 600) : null);
+
+// Booking. Signed in, or as a guest with a name and email: no account needed.
+router.post("/orders", wrap(async (req, res) => {
+  const b = check(req.body, {
+    eventSlug: r.str({ max: 120 }), items: itemsRule, promoCode: r.str({ optional: true, max: 40 }),
+    ref: r.str({ optional: true, max: 40, pattern: /^[A-Za-z0-9_-]+$/ }), buyerPhone: r.phone({ optional: true }),
+    marketingOptIn: r.object({ email: r.bool(), sms: r.bool() }, { optional: true }), idempotencyKey: r.idemKey(),
+    paymentMethod: r.oneOf(["card", "titopay_wallet"], { optional: true, fallback: "card" }),
+    guest: guestRule,
+  });
+  // Signed in as an organiser or staff: tickets are bought as a guest, never into a work account.
+  const customer = req.user && accountType(req.user) === "customer" ? req.user : null;
+  let buyer = customer;
+  if (buyer) enforce("order", 20, 60e3, buyer.id);
+  else {
+    if (!b.guest) throw bad("Tell us your name and email so we can send your tickets.", { guest: "Required." });
+    // Many phones share one address (mobile networks, venue Wi-Fi): a roomy
+    // limit per address, a tight one per email.
+    enforce("guestorder", 120, 60 * 60e3, req.ip);
+    enforce("guestordermail", 15, 60 * 60e3, emailKey(b.guest.email));
+    buyer = await db.withTx((c) => orders.guestBuyer(c, b.guest, req.ip));
+  }
+  const result = await orders.createOrder(buyer, b);
+  res.status(result.replay ? 200 : 201).json({
+    order: { reference: result.order.reference, status: result.order.status, totalCents: result.order.total_cents, expiresAt: result.order.expires_at },
+    accessKey: customer ? null : orders.orderKey(result.order.id),
+    payment: paymentView(result.payment),
+  });
+}));
+
+// An order and its tickets, for the buyer (signed in, or with the private link).
+router.get("/orders/:ref", limit("orderview", 120, 60e3), wrap(async (req, res) => {
+  const key = keyOf(req);
+  const { order, items, payment } = await orders.getForUser(req.user, req.params.ref, key);
+  const { rows: [owner] } = await db.query("SELECT email, guest FROM users WHERE id = $1", [order.user_id]);
+  const { rows: tks } = await db.query(
+    `SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.test, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
+      WHERE t.order_id = $1 AND t.owner_user_id = $2 ORDER BY t.created_at`, [order.id, order.user_id]);
+  const k = orders.keyOpens(key, order.id) ? key : orders.orderKey(order.id);
+  for (const t of tks) t.qrUrl = t.status === "valid" ? `/api/public/orders/${order.reference}/tickets/${t.id}/qr.svg?k=${encodeURIComponent(k)}` : null;
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    order: {
+      reference: order.reference, status: order.status, subtotalCents: order.subtotal_cents, discountCents: order.discount_cents,
+      feeCents: order.fee_cents, totalCents: order.total_cents, refundedCents: order.refunded_cents, expiresAt: order.expires_at, paidAt: order.paid_at,
+      buyerName: order.buyer_name, test: !!order.test,
+      event: { title: order.title, slug: order.slug, startsAt: order.starts_at, endsAt: order.ends_at, venue: order.venue_name, city: order.city },
+    },
+    guest: !!owner?.guest, email: owner?.guest ? owner.email : null,
+    items, tickets: tks, payment: payment ? { status: payment.status, method: payment.method } : null,
+  });
+}));
+
+router.get("/orders/:ref/tickets/:id/qr.svg", limit("orderqr", 240, 60e3), wrap(async (req, res) => {
+  const order = await orders.orderAccess(req.user, req.params.ref, keyOf(req));
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) throw notFound("Ticket not found.");
+  const { rows: [t] } = await db.query("SELECT * FROM tickets WHERE id = $1 AND order_id = $2 AND owner_user_id = $3 AND status = 'valid'", [req.params.id, order.id, order.user_id]);
+  if (!t) throw notFound("Ticket not found.");
+  res.setHeader("Cache-Control", "no-store");
+  res.type("image/svg+xml").send(await tickets.qrSvg(t));
+}));
+
+// Re-open the hosted checkout for an unpaid order (e.g. the buyer closed the tab).
+router.post("/orders/:ref/pay", limit("pay", 10, 60e3, (q) => q.user?.id || q.ip), wrap(async (req, res) => {
+  const order = await orders.orderAccess(req.user, req.params.ref, keyOf(req));
+  if (order.status !== "pending_payment" || new Date(order.expires_at) < new Date()) throw bad("This order can no longer be paid. Start a new order.");
+  const payments = require("../modules/payments/service");
+  await db.query("UPDATE payments SET status = 'cancelled', updated_at = now() WHERE order_id = $1 AND status IN ('initiated')", [order.id]);
+  const prev = await db.query("SELECT method FROM payments WHERE order_id = $1 ORDER BY created_at DESC LIMIT 1", [order.id]);
+  const method = prev.rows[0]?.method || "card";
+  const { providerForMethod } = require("../modules/payments/providers");
+  const { rows: p } = await db.query("INSERT INTO payments (purpose, order_id, user_id, provider, method, amount_cents) VALUES ('order',$1,$2,$3,$4,$5) RETURNING *",
+    [order.id, order.user_id, providerForMethod(method), method, order.total_cents]);
+  const started = await payments.start(p[0], { description: `${order.title} — ${order.reference}`, returnPath: orders.orderPath(order) });
+  res.json({ payment: { status: started.status, method, redirectUrl: started.redirectUrl, awaitingApproval: !!started.awaitingApproval } });
+}));
+
+// ---------------------------------------------------------------- sandbox
+// TicketRoom's own practice payment page (/pay?m=sandbox). The buyer chooses
+// what the "bank" says; the answer goes through exactly the same path as a
+// real provider's notification. Opened with the short-lived key in the link.
+async function sandboxPayment(id, key) {
+  const d = verifyLink(String(key || "").slice(0, 600));
+  if (!d || d.p !== id) throw notFound("This payment link has expired. Go back to your order and try again.");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound("Payment not found.");
+  const { rows: [p] } = await db.query("SELECT * FROM payments WHERE id = $1 AND provider = 'sandbox'", [id]);
+  if (!p) throw notFound("Payment not found.");
+  return p;
+}
+const sandboxReturn = (orderId, ref) => `/orders/${ref}?k=${encodeURIComponent(orders.orderKey(orderId))}`;
+
+router.get("/payments/:id/sandbox", limit("payform", 30, 600e3), wrap(async (req, res) => {
+  const p = await sandboxPayment(req.params.id, req.query.k);
+  const { rows: [o] } = await db.query(
+    "SELECT o.reference, o.buyer_name, o.buyer_email, o.total_cents, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.id = $1", [p.order_id]);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ payment: { id: p.id, status: p.status, amountCents: Number(p.amount_cents) }, order: o, returnUrl: sandboxReturn(p.order_id, o.reference) });
+}));
+
+router.post("/payments/:id/sandbox", limit("payform", 30, 600e3), wrap(async (req, res) => {
+  const b = check(req.body, { k: r.str({ max: 600 }), outcome: r.oneOf(["paid", "failed", "cancelled"]) });
+  const p = await sandboxPayment(req.params.id, b.k);
+  if (p.status !== "pending") throw conflict("This payment is no longer open.", "payment_closed");
+  const payments = require("../modules/payments/service");
+  const result = await payments.apply("sandbox", p.provider_reference, b.outcome, b.outcome === "paid" ? Number(p.amount_cents) : 0);
+  await require("../lib/audit").record(null, { action: "payment.sandbox", entityType: "payment", entityId: p.id, ip: req.ip, details: { outcome: b.outcome, result } });
+  const { rows: [o] } = await db.query("SELECT reference FROM orders WHERE id = $1", [p.order_id]);
+  res.json({ result, returnUrl: sandboxReturn(p.order_id, o.reference) + (b.outcome === "cancelled" ? "&cancelled=1" : "") });
+}));
+
+router.post("/orders/:ref/cancel", wrap(async (req, res) => res.json(await orders.cancelPending(req.user, req.params.ref, keyOf(req)))));
+
+// One-click unsubscribe from a signed link. POST so link scanners cannot opt people out.
+router.post("/unsubscribe", limit("unsub", 30, 60e3), wrap(async (req, res) => {
+  const b = check(req.body, { token: r.str({ max: 600 }) });
+  const data = verifyLink(b.token);
+  // TicketRoom updates subscriber (no account needed).
+  if (data?.n && !data.confirm) {
+    await db.query("UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = now(), updated_at = now() WHERE id = $1", [data.n]);
+    return res.json({ ok: true, organiser: "TicketRoom updates", channel: "email" });
+  }
+  if (!data?.u) throw bad("This unsubscribe link is invalid or has expired. You can manage preferences in your account.");
+  if (data.all) {
+    // Everything: every organiser, every channel, plus TicketRoom's own news.
+    await db.withTx(async (c) => {
+      const { rows } = await c.query("SELECT organiser_id, channel FROM marketing_consents WHERE user_id = $1 AND granted", [data.u]);
+      for (const x of rows) await marketing.setConsent(c, data.u, x.organiser_id, x.channel, false, "unsubscribe_all");
+      await marketing.setConsent(c, data.u, null, "email", false, "unsubscribe_all");
+      await marketing.setConsent(c, data.u, null, "sms", false, "unsubscribe_all");
+      await c.query("UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = now(), updated_at = now() WHERE lower(email) = (SELECT lower(email) FROM users WHERE id = $1) AND status <> 'unsubscribed'", [data.u]);
+    });
+    return res.json({ ok: true, all: true });
+  }
+  await db.withTx((c) => marketing.setConsent(c, data.u, data.o || null, data.c, false, "unsubscribe_link"));
+  const { rows } = data.o ? await db.query("SELECT name FROM organisers WHERE id = $1", [data.o]) : { rows: [{ name: "TicketRoom" }] };
+  res.json({ ok: true, organiser: rows[0]?.name, channel: data.c });
+}));
+
+router.post("/support", limit("support", 5, 60 * 60e3), wrap(async (req, res) => {
+  const b = check(req.body, {
+    email: req.user ? r.email({ optional: true }) : r.email(), category: r.oneOf(["tickets", "refund", "tag", "payment", "account", "other"]),
+    subject: r.str({ min: 3, max: 140 }), body: r.text({ max: 4000 }),
+  });
+  const { rows } = await db.query(
+    "INSERT INTO support_cases (reference, user_id, email, category, subject, body) VALUES ($1,$2,$3,$4,$5,$6) RETURNING reference",
+    [reference("SC"), req.user?.id || null, req.user?.email || b.email, b.category, b.subject, b.body]);
+  res.status(201).json({ reference: rows[0].reference });
+}));
+
+// A gate pass opened from its private link (no account needed).
+router.get("/pass", limit("passview", 60, 60e3), wrap(async (req, res) => {
+  const t = String(req.query.t || "");
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(t)) throw notFound("This pass link is not valid.");
+  const { rows: [g] } = await db.query("SELECT * FROM gate_passes WHERE link_token_hash = $1", [sha256(t)]);
+  if (!g) throw notFound("This pass link is not valid. If the organiser sent you a new one, use that.");
+  const { rows: [e] } = await db.query(
+    `SELECT e.title, e.ref, e.starts_at, e.ends_at, e.venue_name, e.city, e.status, o.name AS organiser
+       FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.id = $1`, [g.event_id]);
+  const live = g.status === "active" && !["cancelled", "suspended"].includes(e.status);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    pass: { holderName: g.holder_name, role: passes.roleLabel(g.role), accessNote: g.access_note, reentry: g.reentry,
+      status: live ? "active" : "revoked", code: g.code, used: !g.reentry && g.scans > 0 },
+    event: e,
+    svg: live ? await passes.svg(g) : null,
+  });
+}));
+
+router.PUBLIC_EVENT = PUBLIC_EVENT;
+module.exports = router;

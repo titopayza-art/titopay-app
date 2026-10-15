@@ -1,0 +1,1099 @@
+// Organiser portal: events, tickets, promo/tracking, analytics, attendees,
+// staff, vendors & terminals, refunds, finance & payouts, marketing.
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog } from "/assets/core.js";
+import { deskApp } from "/assets/cashdesk.js";
+
+const main = $("#main");
+let ORG = null;
+let FEATURES = { cashless: true, sms: true };           // current organiser
+let ORGS = [];
+let QUERIES = 0;                                          // open customer queries passed on by TicketRoom
+let VERIF = null;                                         // verification summary (overall status, gates)
+
+const head = (title, sub = "", actions = "", crumbs = "") => html`${crumbs ? html`<div class="crumbs">${crumbs}</div>` : ""}<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
+const can = (...roles) => ORG && (roles.includes(ORG.role) || ORG.role === "admin");
+const base = () => `/api/organiser/${ORG.id}`;
+
+function nav() {
+  render($("#sidenav"), html`
+    ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
+    ${ORG?.ref ? html`<div class="org-id">Organiser ID <span class="mono">${ORG.ref}</span></div>` : ""}
+    <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/verification">Verification${verifTodo() ? html`<span class="count">${verifTodo()}</span>` : ""}</a>${can("owner", "manager") ? html`<a href="#/queries">Customer queries${QUERIES ? html`<span class="count">${QUERIES}</span>` : ""}</a>` : ""}<a href="#/marketing">Marketing</a><a href="#/promote" data-feature="promote">Promote</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
+    <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
+  $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
+}
+
+function pendingBanner() {
+  if (ORG.status === "approved") return "";
+  return html`<p class="callout ${ORG.status === "pending" ? "warn" : "bad"}"><strong>${ORG.status === "pending" ? "Your organiser account is being reviewed." : `Your organiser account is ${ORG.status}.`}</strong> ${ORG.status === "pending" ? "You can build events now; you can submit them for publishing and send marketing once TicketRoom approves your account (usually within 1 business day)." : "Contact hello@ticketroom.co.za."}</p>`;
+}
+
+// ---------------- apply ----------------
+async function apply() {
+  const u = await me();
+  // A TicketRoom staff account opening the organiser portal: explain instead of
+  // offering the sign-up form (which would make the company email an organiser).
+  if (isStaff(u)) {
+    return render(main, html`${head("This is the organiser portal")}
+      <div class="card stack"><p class="mb-0">You're signed in as <strong>${u.email}</strong>, a TicketRoom staff account. Staff work in the admin portal; they don't sign up as organisers.</p>
+        <p class="mb-0">To review organisers, open <strong>Organiser accounts</strong> in the admin portal. To try the organiser portal yourself, sign out and create a separate account with a different email.</p>
+        <div class="row"><a class="btn btn-primary" href="/admin#/organisers">Go to Organiser accounts</a><button class="btn btn-ghost" data-out>Sign out</button></div></div>`), $("[data-out]").addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/signin"; });
+  }
+  render(main, html`${head("Create your organiser account", "Tell us who you are. TicketRoom reviews every organiser before their events go live.")}
+    <div class="card"><form class="stack" id="ap">
+      <div class="field"><label for="n">Organisation or trading name</label><input id="n" name="name" required maxlength="120"></div>
+      <div class="grid-2"><div class="field"><label for="ce">Contact email</label><input id="ce" name="contactEmail" type="email" required><span class="hint">Where TicketRoom and your ticket buyers reach you. We've filled in your sign-in email; change it if you use another.</span></div>
+      <div class="field"><label for="cp">Contact number</label><input id="cp" name="contactPhone" type="tel" placeholder="082 123 4567"></div></div>
+      <div class="field"><label for="d">About your events</label><textarea id="d" name="description" maxlength="2000" placeholder="What kind of events do you run, and where?"></textarea></div>
+      <button class="btn btn-primary">Submit for review</button></form></div>`);
+  $("#ce").value = u.email;
+  if (u.phone) $("#cp").value = u.phone;
+  onSubmit($("#ap"), async (v) => { const r = await post("/api/organiser/apply", v); localStorage.setItem("tr_org", r.organiser.id); toast("Organiser account created.", "good"); location.hash = "#/"; location.reload(); });
+}
+
+// ---------------- setup checklist ----------------
+// The road from sign-up to a live event, ticked off as it happens. It goes
+// away by itself once the first event is on sale.
+function setupChecklist(events) {
+  const first = events.find((e) => e.status !== "cancelled");
+  const steps = [
+    ["Confirm your email", true, ""],
+    ["TicketRoom approves your organisation", ORG.status === "approved", ORG.status === "approved" ? "" : "Usually within one working day. Build your event meanwhile."],
+    ["Verify your organisation (ID and signed terms)", !!VERIF && VERIF.overall !== "action_needed", "#/verification"],
+    ["Create your first event", !!first, "#/events/new"],
+    ["Add ticket types", events.some((e) => e.ticket_types > 0), first ? `#/events/${first.id}/tickets` : ""],
+    ["Add bank details to get paid", !!ORG.bank?.last4 || (events.length > 0 && events.every((e) => e.is_free)), "#/settings"],
+    ["Submit it for approval", events.some((e) => ["pending_approval", "published", "completed"].includes(e.status)), first ? `#/events/${first.id}` : ""],
+    ["Share your event", events.some((e) => e.status === "published"), first ? `#/events/${first.id}` : ""],
+  ];
+  const done = steps.filter((x) => x[1]).length;
+  if (done === steps.length || !can("owner", "manager")) return "";
+  return html`<section class="card checklist mb"><div class="card-title"><h2 class="mb-0">Get your first event live</h2><span class="small muted">${done} of ${steps.length} done</span></div>
+    <div class="meter amber mt"><i data-pct="${(done / steps.length) * 100}"></i></div>
+    <ol class="steps-list">${steps.map(([label, ok, href]) => html`<li class="${ok ? "done" : ""}"><span class="tick" aria-hidden="true">${ok ? "✓" : ""}</span>
+      ${!ok && href.startsWith("#") ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`}${!ok && href && !href.startsWith("#") ? html`<span class="small muted"> · ${href}</span>` : ""}<span class="sr-only">${ok ? " (done)" : " (to do)"}</span></li>`)}</ol></section>`;
+}
+
+// ---------------- dashboard ----------------
+async function dashboard() {
+  const d = await get(`${base()}/dashboard`);
+  const t = d.totals;
+  const upcoming = d.events.filter((e) => new Date(e.starts_at) > new Date()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  render(main, html`${head(`Hi, ${ORG.name}`, html`Here's how your events are selling.${ORG.ref ? html` <span class="small">Organiser ID <span class="mono">${ORG.ref}</span></span>` : ""}`, can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}
+    ${pendingBanner()}${verifBanner()}${setupChecklist(d.events)}
+    <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
+      <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold.toLocaleString("en-ZA")}</div><div class="s">across ${t.events} event${t.events === 1 ? "" : "s"}</div></div>
+      <div class="kpi"><div class="k">Last 7 days</div><div class="v">${money(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} order${t.last7Orders === 1 ? "" : "s"}</div></div>
+      <div class="kpi"><div class="k">Live events</div><div class="v">${t.live}</div><div class="s">published & upcoming</div></div></div>
+    <section class="card mt"><div class="card-title"><h2>Upcoming events</h2><a href="#/events">All events</a></div>
+      ${upcoming.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
+        ${upcoming.map((e) => html`<tr><td><a href="#/events/${e.id}">${e.title}</a></td><td>${fmtDate(e.starts_at)}</td><td>${badge(e.status)}</td>
+          <td><div class="small">${e.sold} / ${e.capacity}</div><div class="meter"><i data-pct="${(e.sold / e.capacity) * 100}"></i></div></td><td class="num">${moneyExact(e.revenue_cents)}</td></tr>`)}
+      </tbody></table></div>` : empty("No upcoming events.", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create your first event</a>` : "")}</section>`);
+  paintMeters(main);
+}
+
+// ---------------- events list & editor ----------------
+async function events() {
+  const list = await get(`${base()}/events`);
+  render(main, html`${head("My events", "", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}${pendingBanner()}
+    ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Event ID</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
+      ${list.map((e) => html`<tr><td><a href="#/events/${e.id}"><strong>${e.title}</strong></a></td><td class="mono small">${e.ref || ""}</td><td>${fmtDateTime(e.starts_at)}</td><td>${badge(e.status)}</td><td>${e.sold} / ${e.capacity}</td><td class="num">${moneyExact(e.revenue_cents)}</td></tr>`)}
+    </tbody></table></div>` : empty("No events yet.")}`);
+}
+
+const CATS = ["music", "festival", "comedy", "sport", "arts", "food", "business", "family", "nightlife", "other"];
+const PROVINCES = ["Eastern Cape", "Free State", "Gauteng", "KwaZulu-Natal", "Limpopo", "Mpumalanga", "North West", "Northern Cape", "Western Cape"];
+
+function eventForm(e = {}) {
+  const sel = (v, cur) => raw(v === cur ? "selected" : "");
+  return html`<form class="stack" id="evf">
+    <label class="check card flat"><input type="checkbox" name="isFree" ${raw(e.is_free ? "checked" : "")}><span><strong>This is a free event</strong><br><span class="small muted">No ticket price, no booking fee and no commission. Attendees register for free tickets with a QR code. We'll create a "Free admission" ticket type for you.</span></span></label>
+    <div class="field"><label for="title">Event name</label><input id="title" name="title" required maxlength="140" value="${e.title || ""}"></div>
+    <div class="field"><label for="summary">One-line summary</label><input id="summary" name="summary" maxlength="240" value="${e.summary || ""}" placeholder="Shown on event cards"></div>
+    <div class="grid-2"><div class="field"><label for="category">Category</label><select id="category" name="category">${CATS.map((c) => html`<option value="${c}" ${sel(c, e.category)}>${c}</option>`)}</select></div>
+      <div class="field"><label for="capacity">Total capacity</label><input id="capacity" name="capacity" type="number" min="1" required value="${e.capacity || ""}"></div></div>
+    <div class="grid-2"><div class="field"><label for="startsAt">Starts</label><input id="startsAt" name="startsAt" type="datetime-local" required value="${toLocalInput(e.starts_at)}"></div>
+      <div class="field"><label for="endsAt">Ends</label><input id="endsAt" name="endsAt" type="datetime-local" required value="${toLocalInput(e.ends_at)}"></div></div>
+    <div class="grid-2"><div class="field"><label for="venueName">Venue</label><input id="venueName" name="venueName" required value="${e.venue_name || ""}"></div>
+      <div class="field"><label for="address">Street address</label><input id="address" name="address" value="${e.address || ""}"></div></div>
+    <div class="grid-2"><div class="field"><label for="city">City</label><input id="city" name="city" required value="${e.city || ""}"></div>
+      <div class="field"><label for="province">Province</label><select id="province" name="province"><option value="">–</option>${PROVINCES.map((p) => html`<option ${sel(p, e.province)}>${p}</option>`)}</select></div></div>
+    <div class="field"><label for="description">Description</label><textarea id="description" name="description" maxlength="8000">${e.description || ""}</textarea></div>
+    <div class="field"><label for="lineup">Line up <span class="muted">(optional)</span></label><textarea id="lineup" name="lineup" maxlength="4000" rows="4" placeholder="${"20:00 Black Coffee\n21:30 Sjava\nDJ Maphorisa"}">${lineupText(e.lineup)}</textarea>
+      <span class="hint">One act per line, headliner first. Start a line with a time to show set times. Shown in the Line up tab and in Trending artists.</span></div>
+    <div class="field"><label for="img">Poster image</label><input id="img" type="file" accept="image/png,image/jpeg,image/webp"><input type="hidden" name="imageUploadId" value="${e.image_upload_id || ""}"><span class="hint">PNG, JPEG or WebP, up to 2 MB. 16:9 works best.</span></div>
+    <div class="grid-2"><div class="field"><label for="salesStartAt">Sales open <span class="muted">(optional)</span></label><input id="salesStartAt" name="salesStartAt" type="datetime-local" value="${toLocalInput(e.sales_start_at)}"></div>
+      <div class="field"><label for="salesEndAt">Sales close <span class="muted">(default: event end)</span></label><input id="salesEndAt" name="salesEndAt" type="datetime-local" value="${toLocalInput(e.sales_end_at)}"></div></div>
+    <div class="field"><label for="refundPolicy">Refund policy</label><textarea id="refundPolicy" name="refundPolicy" maxlength="2000">${e.refund_policy || "Tickets are non-refundable unless the event is cancelled or materially changed."}</textarea></div>
+    <div class="field"><label for="accessibilityInfo">Accessibility information</label><textarea id="accessibilityInfo" name="accessibilityInfo" maxlength="2000" placeholder="Step-free access, accessible toilets, companion tickets…">${e.accessibility_info || ""}</textarea></div>
+    <fieldset class="field age-groups"><legend class="label">Who is this event for? <span class="muted">(pick any)</span></legend>
+      <div class="check-grid">${Object.entries(AGE_GROUPS).map(([k, l]) => html`<label class="check"><input type="checkbox" name="ag_${k}" ${raw(ageGroupList(e.age_groups).includes(k) ? "checked" : "")}><span>${l}</span></label>`)}</div>
+      <span class="hint">Shown on your event page, and people can filter events by age group.</span></fieldset>
+    <div class="field"><label for="ageRestriction">Age restriction <span class="muted">(entry rule)</span></label><input id="ageRestriction" name="ageRestriction" maxlength="60" value="${e.age_restriction || ""}" placeholder="e.g. 18+"><span class="hint">Leave empty if anyone may enter.</span></div>
+    <label class="check"><input type="checkbox" name="transfersEnabled" ${raw(e.transfers_enabled === false ? "" : "checked")}><span>Allow ticket holders to transfer tickets</span></label>
+    <label class="check"><input type="checkbox" name="resaleEnabled" ${raw(e.resale_enabled === false ? "" : "checked")}><span>Allow fan resale on TicketRoom Exchange <span class="muted">(never above face value; your waitlist gets first offer; turning it off takes listings down)</span></span></label>
+    <label class="check" data-feature="cashless"><input type="checkbox" name="cashlessEnabled" ${raw(e.cashless_enabled ? "checked" : "")}><span>Cashless event (wristbands / tags and vendor POS)</span></label>
+    <button class="btn btn-primary" type="submit">${e.id ? "Save changes" : "Create draft"}</button></form>`;
+}
+
+function lineupText(l) {
+  let list = l;
+  if (typeof l === "string") { try { list = JSON.parse(l || "[]"); } catch { list = []; } }
+  return (Array.isArray(list) ? list : []).map((a) => (a.time ? `${a.time} ` : "") + a.name).join("\n");
+}
+function toIso(v) { return v ? new Date(v).toISOString() : undefined; }
+function eventPayload(v) {
+  const ageGroups = Object.keys(AGE_GROUPS).filter((k) => v[`ag_${k}`]);
+  for (const k of Object.keys(AGE_GROUPS)) delete v[`ag_${k}`];
+  return { ...v, ageGroups, capacity: Number(v.capacity), startsAt: toIso(v.startsAt), endsAt: toIso(v.endsAt), salesStartAt: toIso(v.salesStartAt), salesEndAt: toIso(v.salesEndAt),
+    imageUploadId: v.imageUploadId || undefined, province: v.province || undefined, transfersEnabled: !!v.transfersEnabled, resaleEnabled: !!v.resaleEnabled, cashlessEnabled: !!v.cashlessEnabled, isFree: !!v.isFree };
+}
+
+// "All ages" and the specific groups exclude each other.
+function wireAgeGroups(form) {
+  const all = form.elements.ag_all;
+  const rest = Object.keys(AGE_GROUPS).filter((k) => k !== "all").map((k) => form.elements[`ag_${k}`]);
+  all.addEventListener("change", () => { if (all.checked) rest.forEach((x) => { x.checked = false; }); });
+  rest.forEach((x) => x.addEventListener("change", () => { if (x.checked) all.checked = false; }));
+}
+
+function wireUpload(form) {
+  $("#img", form).addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast("That image is larger than 2 MB.", "bad"); e.target.value = ""; return; }
+    try { const r = await api("POST", `${base()}/uploads`, undefined, { raw: file, headers: { "content-type": file.type } }); form.elements.imageUploadId.value = r.uploadId; toast("Image uploaded.", "good"); }
+    catch (err) { toast(err.message, "bad"); e.target.value = ""; }
+  });
+}
+
+function newEvent() {
+  render(main, html`${head("Create event", "Start with the basics. You'll add ticket types next.", "", html`<a href="#/events">My events</a>`)}<div class="card">${eventForm()}</div>`);
+  const f = $("#evf"); wireUpload(f); wireAgeGroups(f);
+  onSubmit(f, async (v) => {
+    const r = await post(`${base()}/events`, eventPayload(v));
+    const next = () => { location.hash = `#/events/${r.event.id}/tickets`; };
+    // The event's QR code, ready to download the moment the event exists.
+    try {
+      const q = await get(`${base()}/events/${r.event.id}/qr`);
+      const d = dialog("Your event is created", html`<div class="stack"><p class="mb-0">Here is the QR code for <strong>${q.title}</strong>. It opens your event page, so put it on posters, flyers and socials. It starts working once TicketRoom has approved the event.</p>
+        <div data-qr></div><button class="btn btn-primary" data-next>Next: add ticket types</button>
+        <p class="tiny muted mb-0">You can download it again any time from the event's Overview tab.</p></div>`, { onClose: next });
+      $("[data-qr]", d).append(qrPanel(q.svg, { name: `${q.title} QR code`, caption: q.title }));
+      $("[data-next]", d).addEventListener("click", () => d.close());
+    } catch { toast("Draft created. Now add ticket types.", "good"); next(); }
+  });
+}
+
+// ---------------- event workspace ----------------
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
+
+async function eventWorkspace({ id, tab = "" }) {
+  const d = await get(`${base()}/events/${id}`);
+  const e = d.event;
+  const actions = [];
+  if (e.status === "published") actions.push(html`<a class="btn btn-ghost" href="/events/${e.slug}" target="_blank">View public page ↗</a>`);
+  else if (!["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-preview>Preview</button>`);
+  if (e.status === "draft" && can("owner", "manager")) actions.push(html`<button class="btn btn-primary" data-submit>Publish</button>`);
+  if (can("owner") && !["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-cancel>${e.cancellation_requested_at ? "Cancellation requested" : "Cancel event"}</button>`);
+  render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}${e.ref ? html` · Event ID <span class="mono">${e.ref}</span>` : ""}${e.age_groups ? html`<br><span class="small">For: ${ageGroupText(e.age_groups)}</span>` : ""}`, html`${actions}`, html`<a href="#/events">My events</a>`)}
+    ${e.status === "pending_approval" ? html`<p class="callout">Waiting to be published. TicketRoom checks new events, usually within one business day, and emails you when it is live. <button class="btn-link" data-preview>Preview it</button></p>` : ""}
+    ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
+    ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
+    <div class="tabs" role="tablist">${TABS.filter(([k]) => (k !== "vendors" || FEATURES.cashless) && (k !== "promote" || FEATURES.promote)).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
+    <div id="tab"></div>`);
+  // Preview opens the event page as buyers will see it, through a private link.
+  $$("[data-preview]").forEach((b) => b.addEventListener("click", async () => {
+    const w = window.open("", "_blank");
+    try { const r = await get(`${base()}/events/${id}/preview-link`); if (w) w.location = r.url; else location.href = r.url; }
+    catch (err) { w?.close(); toast(err.message, "bad"); }
+  }));
+  $("[data-submit]")?.addEventListener("click", async () => {
+    const ok = await confirmDialog("Publish this event?", "TicketRoom checks every new event before it goes live, usually within one business day. You'll get an email the moment it is published. Preview it first if you haven't yet.", { confirm: "Publish" });
+    if (!ok) return;
+    try { await post(`${base()}/events/${id}/submit`); toast("Sent for publishing. We'll email you when it's live.", "good"); eventWorkspace({ id, tab }); } catch (err) { toast(err.message, "bad"); }
+  });
+  $("[data-cancel]")?.addEventListener("click", async () => {
+    if (e.cancellation_requested_at) return;
+    const reason = await confirmDialog("Cancel this event?", "If tickets have been sold, TicketRoom cancels the event and refunds every buyer in full, including fees. This cannot be undone.", { confirm: "Request cancellation", danger: true, input: { label: "Reason (shown to buyers)", required: true } });
+    if (!reason) return;
+    const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
+  });
+  const el = $("#tab");
+  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
+  render(el, spinner());
+  await fns[tab](el, d, () => eventWorkspace({ id, tab }));
+}
+
+// "Share your event": the public link and a QR code to download for posters,
+// flyers and socials. Shown on every event; the QR works once it is published.
+async function shareCard(el, event) {
+  const card = document.createElement("section");
+  card.className = "card mt";
+  card.setAttribute("aria-labelledby", "share-h");
+  el.append(card);
+  render(card, html`<div class="card-title"><h3 id="share-h">Share your event</h3></div>${spinner()}`);
+  try {
+    const q = await get(`${base()}/events/${event.id}/qr`);
+    render(card, html`<div class="card-title"><h3 id="share-h">Share your event</h3></div>
+      <div class="grid-2"><div class="stack"><p class="mb-0">Your event page:</p><p class="mb-0"><a class="mono small" href="${q.url}" target="_blank" rel="noopener">${q.url}</a></p>
+        <div class="row"><button class="btn btn-ghost btn-sm" data-copy>Copy link</button></div>
+        ${q.status === "published" ? html`<p class="small muted mb-0">Put the QR code on posters, flyers and slides. Scanning it opens your event page, where people get tickets.</p>`
+          : html`<p class="callout warn small mb-0">The QR code opens your event page once the event is published. You can download it now and use it after approval.</p>`}</div>
+        <div data-qr></div></div>`);
+    $("[data-qr]", card).append(qrPanel(q.svg, { name: `${q.title} QR code`, caption: q.title }));
+    $("[data-copy]", card).addEventListener("click", async () => { try { await navigator.clipboard.writeText(q.url); toast("Link copied.", "good"); } catch { toast(q.url); } });
+  } catch (err) { render(card, html`<p class="muted mb-0">The QR code could not be made right now: ${err.message}</p>`); }
+}
+
+async function overviewTab(el, d) {
+  const a = await get(`${base()}/events/${d.event.id}/analytics`);
+  const t = a.totals;
+  const checkPct = a.checkins.issued ? Math.round((a.checkins.admitted / a.checkins.issued) * 100) : 0;
+  render(el, html`<div class="kpis">
+      <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold}</div><div class="s">of ${t.capacity} capacity</div><div class="meter amber mt"><i data-pct="${(t.ticketsSold / t.capacity) * 100}"></i></div></div>
+      <div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.ticket_revenue_cents)}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"}${t.refunded_cents ? ` · refunds ${money(t.refunded_cents)}` : ""}</div></div>
+      <div class="kpi"><div class="k">Checked in</div><div class="v">${a.checkins.admitted}</div><div class="s">${checkPct}% of ${a.checkins.issued} issued</div></div>
+      <div class="kpi"><div class="k">Owed to you</div><div class="v">${money(t.payableCents)}</div><div class="s">${t.abandoned} abandoned checkouts</div></div></div>
+    <section class="card mt"><div class="card-title"><h3>Tickets sold per day, last 30 days</h3><button class="btn-link" data-tbl>Show as table</button></div>
+      <div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.tickets, title: "Tickets sold per day", tickEvery: 3 })}</div>
+      <div class="table-wrap hidden mt" id="dtbl"><table><thead><tr><th>Day</th><th class="num">Tickets</th><th class="num">Revenue</th></tr></thead><tbody>${a.daily.filter((x) => x.tickets).map((x) => html`<tr><td>${x.day}</td><td class="num">${x.tickets}</td><td class="num">${moneyExact(x.revenue_cents)}</td></tr>`)}</tbody></table></div></section>
+    <div class="grid-2 mt">
+      <section class="card"><h3>By ticket type</h3><div class="table-wrap"><table><thead><tr><th>Type</th><th class="num">Price</th><th>Sold</th><th class="num">Waitlist</th><th class="num">In</th></tr></thead><tbody>
+        ${a.byType.map((x) => html`<tr><td>${x.name}</td><td class="num">${moneyExact(x.price_cents)}</td><td><div class="small">${x.quantity_sold}/${x.quantity_total}${x.quantity_held ? ` (+${x.quantity_held} reserved)` : ""}</div><div class="meter"><i data-pct="${x.quantity_total ? (x.quantity_sold / x.quantity_total) * 100 : 0}"></i></div>${x.on_resale || x.resold ? html`<div class="tiny muted">${x.on_resale} on resale · ${x.resold} resold</div>` : ""}</td><td class="num">${x.waiting}</td><td class="num">${x.checked_in}</td></tr>`)}</tbody></table></div></section>
+      <section class="card"><h3>Sales by channel</h3>${a.trackingLinks.length ? html`<div class="table-wrap"><table><thead><tr><th>Link</th><th class="num">Clicks</th><th class="num">Orders</th><th class="num">Revenue</th></tr></thead><tbody>
+        ${a.trackingLinks.map((l) => html`<tr><td>${l.label}<div class="tiny muted mono">${l.code}</div></td><td class="num">${l.clicks}</td><td class="num">${l.orders}</td><td class="num">${moneyExact(l.revenue_cents)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">Create tracking links under Promos & links to see which channels sell.</p>`}</section>
+      <section class="card"><h3>Check-ins by hour</h3>${a.checkinsByHour.length ? barChart(a.checkinsByHour, { label: (x) => x.hour.slice(0, 2), value: (x) => x.n, title: "Check-ins by hour", height: 150 }) : html`<p class="muted">No scans yet. Gate staff use the Scanner on their phones.</p>`}</section>
+      <section class="card"><h3>Promo codes</h3>${a.promoCodes.length ? html`<div class="table-wrap"><table><thead><tr><th>Code</th><th class="num">Used</th><th class="num">Discount given</th></tr></thead><tbody>${a.promoCodes.map((p) => html`<tr><td class="mono">${p.code}</td><td class="num">${p.used_count}${p.max_uses ? `/${p.max_uses}` : ""}</td><td class="num">${moneyExact(p.discount_given_cents)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No promo codes.</p>`}</section>
+      ${d.event.cashless_enabled ? html`<section class="card"><h3>Cashless</h3><p>${money(a.cashless.topups_cents)} topped up by ${a.cashless.wallets} attendees.</p>${a.vendors.length ? html`<div class="table-wrap"><table><thead><tr><th>Vendor</th><th class="num">Sales</th><th class="num">Gross</th></tr></thead><tbody>${a.vendors.map((v) => html`<tr><td>${v.name}</td><td class="num">${v.sales}</td><td class="num">${moneyExact(v.gross_cents)}</td></tr>`)}</tbody></table></div>` : ""}</section>` : ""}
+    </div>`);
+  paintMeters(el);
+  $("[data-tbl]", el).addEventListener("click", (ev) => { const t2 = $("#dtbl"); t2.classList.toggle("hidden"); ev.target.textContent = t2.classList.contains("hidden") ? "Show as table" : "Hide table"; });
+  shareCard(el, d.event);
+}
+
+async function ticketsTab(el, d, reload) {
+  const editable = can("owner", "manager");
+  render(el, html`<section class="card"><div class="card-title"><h3>Ticket types</h3>${editable ? html`<button class="btn btn-primary btn-sm" data-add>Add ticket type</button>` : ""}</div>
+    ${d.ticketTypes.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th class="num">Price</th><th>Quantity</th><th>Per order</th><th>Status</th><th></th></tr></thead><tbody>
+      ${d.ticketTypes.map((t) => html`<tr><td><strong>${t.name}</strong>${t.description ? html`<div class="small muted">${t.description}</div>` : ""}</td>
+        <td>${TICKET_KINDS[t.kind]?.label || t.kind}${t.admits > 1 ? html`<div class="small muted">Admits ${t.admits}</div>` : ""}</td><td class="num">${t.price_cents ? moneyExact(t.price_cents) : "Free"}</td>
+        <td>${t.quantity_sold} sold${t.quantity_held ? `, ${t.quantity_held} reserved` : ""} / ${t.quantity_total}${t.waiting ? html`<div class="small wl-count">${t.waiting} on the waitlist</div>` : ""}</td><td>${t.per_order_limit}</td><td>${badge(t.status)}</td>
+        <td>${editable ? html`<button class="btn btn-ghost btn-sm" data-edit="${t.id}">Edit</button>` : ""}</td></tr>`)}</tbody></table></div>`
+      : empty("No ticket types yet. Add at least one before submitting.")}
+    <p class="small muted mt mb-0">Sell any kind of ticket: general, early bird, VIP, golden circle, student, child, pensioner, couple, group or table, day and season passes, backstage and hospitality. A couple, group or table ticket lets several people in on one QR code; the gate scanner shows how many. Buyers pay a service fee per paid ticket on top of your price. Once a ticket type has sales its price is locked. To change the price, add a new release such as "Second release".</p>
+    <p class="small muted mb-0">Crew, artists, media and guests don't need tickets: give them a <a href="#/events/${d.event.id}/passes">gate pass</a>.</p></section>`);
+  const form = (t = {}) => {
+    const dlg = dialog(t.id ? "Edit ticket type" : "Add ticket type", html`<form class="stack">
+      <div class="grid-2"><div class="field"><label for="tk">Kind of ticket</label><select id="tk" name="kind">${Object.entries(TICKET_KINDS).map(([k, x]) => html`<option value="${k}" ${raw(k === (t.kind || "general") ? "selected" : "")}>${x.label}</option>`)}</select></div>
+        <div class="field"><label for="ta">People per ticket</label><input id="ta" name="admits" type="number" min="1" max="20" required value="${t.admits || 1}" ${raw(t.quantity_sold ? "disabled" : "")}><span class="hint">2 for a couple, 8 for a table of eight.</span></div></div>
+      <div class="field"><label for="tn">Name</label><input id="tn" name="name" required maxlength="80" value="${t.name || ""}" placeholder="e.g. Early Bird"><span class="hint">What buyers see, e.g. "VIP Early Bird" or "Table of 8".</span></div>
+      <div class="field"><label for="td">Description</label><input id="td" name="description" maxlength="240" value="${t.description || ""}"></div>
+      <div class="grid-2"><div class="field"><label for="tp">Price (R)</label><input id="tp" name="price" inputmode="decimal" required value="${t.price_cents !== undefined ? t.price_cents / 100 : ""}" ${raw(t.quantity_sold ? "disabled" : "")}><span class="hint">0 for free</span></div>
+        <div class="field"><label for="tq">Quantity</label><input id="tq" name="quantityTotal" type="number" min="0" required value="${t.quantity_total ?? ""}"></div></div>
+      <div class="grid-2"><div class="field"><label for="tl">Max per order</label><input id="tl" name="perOrderLimit" type="number" min="1" max="50" value="${t.per_order_limit || 10}"></div>
+        <div class="field"><label for="ts">Status</label><select id="ts" name="status">${["on_sale", "paused", "hidden"].map((s) => html`<option value="${s}" ${raw(s === (t.status || "on_sale") ? "selected" : "")}>${s.replace("_", " ")}</option>`)}</select></div></div>
+      <button class="btn btn-primary">Save</button></form>`);
+    // Picking a kind fills in a sensible name and head count until the organiser types their own.
+    const kindSel = $("#tk", dlg), nameIn = $("#tn", dlg), admitsIn = $("#ta", dlg);
+    let named = !!t.name, counted = !!t.id;
+    nameIn.addEventListener("input", () => { named = true; });
+    admitsIn.addEventListener("input", () => { counted = true; });
+    kindSel.addEventListener("change", () => {
+      const k = TICKET_KINDS[kindSel.value];
+      if (!named) nameIn.value = k.label;
+      if (!counted && !admitsIn.disabled) admitsIn.value = k.admits || 1;
+    });
+    onSubmit($("form", dlg), async (v) => {
+      const body = { name: v.name, kind: v.kind, description: v.description, quantityTotal: Number(v.quantityTotal), perOrderLimit: Number(v.perOrderLimit), status: v.status };
+      if (v.admits !== undefined) body.admits = Number(v.admits);
+      if (v.price !== undefined) { const c = parseRand(v.price); if (c === null) throw Object.assign(new Error("Check the price."), { details: { price: "Enter an amount like 150 or 0." } }); body.priceCents = c; }
+      if (t.id) await patch(`${base()}/events/${d.event.id}/ticket-types/${t.id}`, body); else await post(`${base()}/events/${d.event.id}/ticket-types`, body);
+      dlg.close(); toast("Saved.", "good"); reload();
+    });
+  };
+  $("[data-add]", el)?.addEventListener("click", () => form());
+  $$("[data-edit]", el).forEach((b) => b.addEventListener("click", () => form(d.ticketTypes.find((t) => t.id === b.dataset.edit))));
+}
+
+async function promosTab(el, d, reload) {
+  const editable = can("owner", "manager", "marketing");
+  render(el, html`<div class="grid-2">
+    <section class="card"><div class="card-title"><h3>Promo codes</h3></div>
+      ${d.promoCodes.length ? html`<div class="table-wrap"><table><thead><tr><th>Code</th><th>Discount</th><th>Used</th><th></th></tr></thead><tbody>
+        ${d.promoCodes.map((p) => html`<tr><td class="mono">${p.code}</td><td>${p.kind === "percent" ? `${p.value}%` : moneyExact(p.value)}</td><td>${p.used_count}${p.max_uses ? `/${p.max_uses}` : ""}</td>
+          <td>${editable ? html`<button class="btn btn-ghost btn-sm" data-toggle="${p.id}" data-active="${p.active}">${p.active ? "Disable" : "Enable"}</button>` : badge(p.active ? "active" : "cancelled")}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No promo codes yet.</p>`}
+      ${editable ? html`<form class="stack mt" id="pf"><div class="grid-2"><div class="field"><label for="pc">Code</label><input id="pc" name="code" required maxlength="30" class="mono" placeholder="EARLY10"></div>
+        <div class="field"><label for="pk">Type</label><select id="pk" name="kind"><option value="percent">Percentage off</option><option value="fixed">Rand amount off</option></select></div></div>
+        <div class="grid-2"><div class="field"><label for="pv">Value</label><input id="pv" name="value" inputmode="decimal" required placeholder="10"></div><div class="field"><label for="pm">Max uses</label><input id="pm" name="maxUses" type="number" min="1" placeholder="Unlimited"></div></div>
+        <button class="btn btn-dark">Create code</button></form>` : ""}</section>
+    <section class="card"><div class="card-title"><h3>Tracking links</h3></div><p class="small muted">Share a different link per channel (Instagram, WhatsApp, radio) to see which one sells.</p>
+      ${d.trackingLinks.length ? html`<div class="stack">${d.trackingLinks.map((l) => html`<div class="card flat"><div class="row between"><strong>${l.label}</strong><span class="small muted">${l.clicks} clicks</span></div><div class="row"><input readonly value="${l.url}" class="mono small grow" aria-label="Link for ${l.label}"><button class="btn btn-ghost btn-sm" data-copy="${l.url}">Copy</button></div></div>`)}</div>` : ""}
+      ${editable ? html`<form class="row mt" id="lf"><label class="sr-only" for="ll">Label</label><input id="ll" name="label" required placeholder="e.g. Instagram story" class="grow"><button class="btn btn-dark">Create link</button></form>` : ""}</section></div>`);
+  if ($("#pf")) onSubmit($("#pf"), async (v) => {
+    const value = v.kind === "percent" ? Number(v.value) : parseRand(v.value);
+    await post(`${base()}/events/${d.event.id}/promo-codes`, { code: v.code, kind: v.kind, value, maxUses: v.maxUses ? Number(v.maxUses) : undefined }); toast("Promo code created.", "good"); reload();
+  });
+  if ($("#lf")) onSubmit($("#lf"), async (v) => { await post(`${base()}/events/${d.event.id}/tracking-links`, v); toast("Link created.", "good"); reload(); });
+  $$("[data-toggle]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/promo-codes/${b.dataset.toggle}`, { active: b.dataset.active !== "true" }); reload(); }));
+  $$("[data-copy]", el).forEach((b) => b.addEventListener("click", async () => { await navigator.clipboard?.writeText(b.dataset.copy); toast("Copied."); }));
+}
+
+async function ordersTab(el, d) {
+  const draw = async (q = "") => {
+    const { orders } = await get(`${base()}/events/${d.event.id}/orders?q=${encodeURIComponent(q)}`);
+    render($("#olist", el), orders.length ? html`<div class="table-wrap"><table><thead><tr><th>Order</th><th>Buyer</th><th>Tickets</th><th class="num">Total</th><th>Status</th><th>Date</th><th></th></tr></thead><tbody>
+      ${orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.buyer_name}<div class="small muted">${o.buyer_email}</div></td><td>${o.tickets}</td><td class="num">${moneyExact(o.total_cents)}${o.refunded_cents ? html`<div class="tiny muted">−${moneyExact(o.refunded_cents)}</div>` : ""}</td>
+        <td>${badge(o.status)}${o.refund_status ? html`<div class="tiny">refund ${o.refund_status}</div>` : ""}</td><td>${fmtDate(o.created_at)}</td>
+        <td>${can("owner", "finance") && ["paid", "partially_refunded"].includes(o.status) && o.total_cents > 0 ? html`<button class="btn btn-ghost btn-sm" data-refund="${o.id}" data-ref="${o.reference}">Refund</button>` : ""}</td></tr>`)}</tbody></table></div>` : empty("No orders yet."));
+    $$("[data-refund]", el).forEach((b) => b.addEventListener("click", () => {
+      const dlg = dialog(`Refund ${b.dataset.ref}`, html`<form class="stack"><p class="muted">Refunds all valid tickets on this order. TicketRoom finance approves every refund before money moves; the tickets stop working once it completes.</p>
+        <div class="field"><label for="rr">Reason</label><input id="rr" name="reason" required minlength="3" maxlength="400"></div>
+        <label class="check"><input type="checkbox" name="includeFees"><span>Also refund the buyer's service fees</span></label><button class="btn btn-danger">Request refund</button></form>`);
+      onSubmit($("form", dlg), async (v) => { const r = await post(`${base()}/events/${d.event.id}/orders/${b.dataset.refund}/refund`, v); dlg.close(); toast(`Refund ${r.refund.reference} requested (${moneyExact(r.refund.amountCents)}).`, "good"); draw(q); });
+    }));
+  };
+  render(el, html`<form class="row" id="os"><label class="sr-only" for="oq">Search orders</label><input id="oq" class="grow" placeholder="Search by reference, name or email"><button class="btn btn-ghost">Search</button></form><div id="olist" class="mt">${spinner()}</div>`);
+  $("#os").addEventListener("submit", (e) => { e.preventDefault(); draw($("#oq").value); });
+  draw();
+}
+
+async function attendeesTab(el, d) {
+  const url = `${base()}/events/${d.event.id}/attendees`;
+  let q = "", page = 1;
+  render(el, html`<div class="row between"><p class="muted mb-0" id="att-sum">${spinner()}</p>
+    <a class="btn btn-ghost btn-sm" href="${url}?format=csv" download>Export CSV</a></div>
+    <p class="tiny muted">Attendee details are personal information. Use them only to run this event (POPIA). Exports are logged.</p>
+    <form class="row" id="att-s" role="search"><label class="sr-only" for="att-q">Search attendees</label><input id="att-q" type="search" placeholder="Name, ticket code, order or email"><button class="btn btn-ghost">Search</button></form>
+    <div id="att-list" class="mt"></div>`);
+  async function draw() {
+    const r = await get(`${url}?page=${page}${q ? `&q=${encodeURIComponent(q)}` : ""}`);
+    const list = r.attendees;
+    const total = r.total ?? list.length;
+    const checkedIn = r.checkedIn ?? list.filter((a) => a.status === "used").length;
+    $("#att-sum").textContent = `${total.toLocaleString("en-ZA")} ticket${total === 1 ? "" : "s"} · ${checkedIn.toLocaleString("en-ZA")} checked in`;
+    render($("#att-list"), html`${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Holder</th><th>Ticket</th><th>Code</th><th>Order</th><th>Status</th><th>Checked in</th></tr></thead><tbody>
+      ${list.map((a) => html`<tr><td>${a.holder_name || "–"}</td><td>${a.ticket_type}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty(q ? "No tickets match that search." : "No attendees yet.")}
+      ${page > 1 || r.more ? html`<div class="row between mt"><button class="btn btn-ghost btn-sm" data-pg="-1" ${raw(page > 1 ? "" : "disabled")}>Previous</button><span class="small muted">Page ${page}</span><button class="btn btn-ghost btn-sm" data-pg="1" ${raw(r.more ? "" : "disabled")}>Next</button></div>` : ""}`);
+    $("#att-list").querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => { page += Number(b.dataset.pg); draw(); }));
+  }
+  $("#att-s").addEventListener("submit", (e) => { e.preventDefault(); q = $("#att-q").value.trim(); page = 1; draw(); });
+  await draw();
+}
+
+async function staffTab(el, d, reload) {
+  const { staff } = await get(`${base()}/events/${d.event.id}/staff`);
+  render(el, html`<section class="card" aria-labelledby="live-h"><div class="card-title"><h3 id="live-h">Live check-ins</h3><span class="badge good" data-live>Live</span></div><div id="live">${spinner()}</div></section>
+    <section class="card mt"><div class="card-title"><h3>Ticket scanners & desk staff</h3></div>
+    <p class="small muted">Add your team by email. They scan tickets on their own phones at <strong>ticketroom.co.za/scan</strong>. There is no app to install, and they see a live count of people let in. They only see this event. New people get an email invite to set a password.</p>
+    ${staff.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scan tickets</th><th>Manage tags</th><th class="num">Admitted</th><th></th></tr></thead><tbody>
+      ${staff.map((s) => html`<tr><td>${s.full_name}<div class="small muted">${s.email}</div></td><td>${s.can_scan ? "Yes" : "No"}</td><td>${s.can_manage_tags ? "Yes" : "No"}</td><td class="num">${s.admitted}</td><td>${can("owner", "manager") ? html`<button class="btn btn-ghost btn-sm" data-rm="${s.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No scanners yet. Add your first one below.</p>`}
+    ${can("owner", "manager") ? html`<form class="stack mt" id="sf"><div class="grid-2"><div class="field"><label for="sn">Name <span class="muted">(for new people)</span></label><input id="sn" name="fullName" maxlength="120" autocomplete="off"></div>
+      <div class="field"><label for="se">Email</label><input id="se" name="email" type="email" required autocomplete="off"></div></div>
+      <label class="check"><input type="checkbox" name="canScan" checked><span>Can scan tickets at the gate</span></label><label class="check" data-feature="tags"><input type="checkbox" name="canManageTags"><span>Can link, replace and block tags (registration desk)</span></label>
+      <button class="btn btn-dark">Add scanner</button></form>` : ""}</section>`);
+  if ($("#sf")) onSubmit($("#sf"), async (v) => {
+    const r = await post(`${base()}/events/${d.event.id}/staff`, v);
+    toast(r.invited ? `Invite emailed to ${v.email}. They can scan once they set a password.` : "Scanner added. They'll see this event at /scan.", "good");
+    reload();
+  });
+  $$("[data-rm]", el).forEach((b) => b.addEventListener("click", async () => { await del(`${base()}/events/${d.event.id}/staff/${b.dataset.rm}`); reload(); }));
+
+  const live = $("#live", el);
+  const tick = async () => {
+    if (!live.isConnected) return;
+    try {
+      const x = await get(`${base()}/events/${d.event.id}/checkins/live`);
+      const pct = x.issued ? Math.round((x.admitted / x.issued) * 100) : 0;
+      render(live, html`<div class="grid-3"><div class="kpi"><div class="k">Admitted</div><div class="v">${x.admitted}</div><div class="s">of ${x.issued} tickets (${pct}%)</div></div>
+        <div class="kpi"><div class="k">Still to arrive</div><div class="v">${Math.max(0, x.issued - x.admitted)}</div><div class="s">valid tickets not yet scanned</div></div>
+        <div class="kpi"><div class="k">Last 15 minutes</div><div class="v">${x.last15min}</div><div class="s">people admitted</div></div></div>
+        <div class="meter mt" aria-hidden="true"><i data-pct="${pct}"></i></div>
+        ${x.scanners.length ? html`<h4 class="mt">By scanner</h4><div class="table-wrap"><table><thead><tr><th>Scanner</th><th class="num">Admitted</th><th class="num">Refused</th><th>Last scan</th></tr></thead><tbody>${x.scanners.map((s) => html`<tr><td>${s.full_name}</td><td class="num">${s.admitted}</td><td class="num">${s.refused}</td><td>${fmtTime(s.last_scan)}</td></tr>`)}</tbody></table></div>` : html`<p class="small muted mt mb-0">No scans yet. Counts update every 5 seconds.</p>`}
+        ${x.recent.length ? html`<h4 class="mt">Latest scans</h4><ul class="small">${x.recent.slice(0, 8).map((a) => html`<li>${fmtTime(a.occurred_at)} · ${badge(a.outcome)} ${a.holder_name || ""} <span class="muted">by ${a.scanner}${a.gate ? `, ${a.gate}` : ""}</span></li>`)}</ul>` : ""}
+        <p class="tiny muted mb-0">Updated ${fmtTime(x.at)}</p>`);
+      paintMeters(live);
+      $("[data-live]", el)?.classList.replace("warn", "good");
+    } catch { $("[data-live]", el)?.classList.replace("good", "warn"); }
+    setTimeout(tick, document.hidden ? 15000 : 5000);
+  };
+  tick();
+}
+
+// Gate passes: crew, artists, media, vendors and guests get in without a
+// ticket. Each pass has its own QR code and private link; re-entry passes
+// scan in as often as needed, one-entry passes once.
+async function passesTab(el, d, reload) {
+  const ev = d.event;
+  const { passes, roles } = await get(`${base()}/events/${ev.id}/passes`);
+  const edit = can("owner", "manager");
+  const active = passes.filter((g) => g.status === "active");
+  const onSite = active.filter((g) => g.scans > 0).length;
+  const when = `${fmtDate(ev.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(ev.starts_at)}`;
+  const place = [ev.venue_name, ev.city].filter(Boolean).join(", ");
+  const rowsFor = (g) => [["Pass", g.roleLabel], ["Name", g.holderName], ...(g.accessNote ? [["Access", g.accessNote]] : []), ["Entry", g.reentry ? "In and out" : "One entry"]];
+  const savePass = async (g) => {
+    const r = await get(`${base()}/events/${ev.id}/passes/${g.id}`);
+    if (!r.svg) return toast("This pass was cancelled.", "bad");
+    const png = await ticketPng(r.svg, { label: "GATE PASS", title: ev.title, when, place, rows: rowsFor(r.pass), code: r.pass.code, codeLabel: "PASS CODE", note: "Show this pass at the gate. Keep it private." });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `gate-pass-${r.pass.holderName.replace(/[^\w]+/g, "-").toLowerCase()}.png`; document.body.append(a); a.click(); a.remove();
+  };
+  const showLinks = (title, issued) => {
+    const dlg = dialog(title, html`<div class="stack"><p class="mb-0">${issued.length === 1 ? "Send this private link to the pass holder, or download the pass and print it." : "Each person has their own private link. Those with an email address have been sent theirs."}</p>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Link</th><th></th></tr></thead><tbody>${issued.map((x, i) => html`<tr><td>${x.pass.holderName}${x.pass.email ? html`<div class="tiny muted">Emailed to ${x.pass.email}</div>` : ""}</td>
+        <td><input readonly class="mono tiny" value="${x.url}" aria-label="Pass link for ${x.pass.holderName}"></td><td class="row"><button class="btn btn-ghost btn-sm" data-copy="${i}">Copy</button><button class="btn btn-ghost btn-sm" data-img="${i}">Pass image</button></td></tr>`)}</tbody></table></div>
+      <p class="tiny muted mb-0">Links are shown only now. If one is lost, use "New link" on the pass: the old link and QR code stop working.</p></div>`, { onClose: reload });
+    $$("[data-copy]", dlg).forEach((b) => b.addEventListener("click", async () => { try { await navigator.clipboard.writeText(issued[b.dataset.copy].url); toast("Link copied.", "good"); } catch { toast("Select the link and copy it."); } }));
+    $$("[data-img]", dlg).forEach((b) => b.addEventListener("click", () => savePass(issued[b.dataset.img].pass).catch((err) => toast(err.message, "bad"))));
+  };
+  const roleOptions = (cur = "crew") => Object.entries(roles).map(([k, l]) => html`<option value="${k}" ${raw(k === cur ? "selected" : "")}>${l}</option>`);
+  render(el, html`<div class="kpis"><div class="kpi"><div class="k">Active passes</div><div class="v">${active.length}</div><div class="s">${passes.length - active.length} cancelled</div></div>
+      <div class="kpi"><div class="k">Scanned in</div><div class="v">${onSite}</div><div class="s">passes used at least once</div></div>
+      <div class="kpi"><div class="k">By role</div><div class="s">${Object.entries(roles).map(([k, l]) => [l, active.filter((g) => g.role === k).length]).filter(([, n]) => n).map(([l, n]) => `${l} ${n}`).join(" · ") || "None yet"}</div></div></div>
+    ${edit ? html`<section class="card mt"><div class="card-title"><h3>Issue gate passes</h3></div>
+      <p class="small muted">For crew, artists, media, vendors, security, sponsors and your guest list. Passes don't use ticket stock. Each person gets a QR code that your gate staff scan like a ticket, from two days before the event (for setup) until a day after.</p>
+      <form class="stack" id="pf"><div class="grid-2"><div class="field"><label for="pr">Pass type</label><select id="pr" name="role">${roleOptions()}</select></div>
+          <div class="field"><label for="pa">Access <span class="muted">(optional)</span></label><input id="pa" name="accessNote" maxlength="60" placeholder="e.g. Backstage, VIP deck"></div></div>
+        <label class="check"><input type="checkbox" name="reentry" checked><span>Allow re-entry (in and out all day). Untick for one entry only, like a guest-list spot.</span></label>
+        <div class="tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-mode="one">One person</button><button type="button" role="tab" aria-selected="false" data-mode="many">Many people</button></div>
+        <div data-one class="grid-2"><div class="field"><label for="ph">Name</label><input id="ph" name="holderName" maxlength="120" autocomplete="off"></div>
+          <div class="field"><label for="pe">Email <span class="muted">(optional, we send the pass)</span></label><input id="pe" name="email" type="email" autocomplete="off"></div></div>
+        <div data-many class="field hidden"><label for="pl">One person per line: name, then a comma and their email (optional)</label><textarea id="pl" name="people" rows="6" placeholder="Thandi Mokoena, thandi@example.co.za&#10;Sound crew 1&#10;Pieter van Wyk, pieter@example.co.za"></textarea><span class="hint">Up to 200 at a time.</span></div>
+        <button class="btn btn-dark">Issue pass</button></form></section>` : ""}
+    <section class="card mt"><div class="card-title"><h3>Passes</h3><span class="small muted">${passes.length} issued</span></div>
+      ${passes.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Pass</th><th>Entry</th><th>Status</th><th>Scans</th><th></th></tr></thead><tbody>
+        ${passes.map((g) => html`<tr><td>${g.holderName}${g.email ? html`<div class="tiny muted">${g.email}</div>` : ""}<div class="tiny muted mono">${g.code}</div></td>
+          <td>${g.roleLabel}${g.accessNote ? html`<div class="tiny muted">${g.accessNote}</div>` : ""}</td><td>${g.reentry ? "In and out" : "One entry"}</td><td>${badge(g.status === "active" ? "active" : "cancelled")}</td>
+          <td>${g.scans}${g.lastScannedAt ? html`<div class="tiny muted">last ${fmtDateTime(g.lastScannedAt)}</div>` : ""}</td>
+          <td>${edit && g.status === "active" ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-pimg="${g.id}">Pass image</button><button class="btn btn-ghost btn-sm" data-pnew="${g.id}">New link</button><button class="btn btn-ghost btn-sm" data-pcancel="${g.id}">Cancel</button></div>` : ""}</td></tr>`)}</tbody></table></div>`
+        : html`<p class="muted mb-0">No gate passes yet.</p>`}</section>`);
+
+  const form = $("#pf", el);
+  if (form) {
+    let mode = "one";
+    $$("[data-mode]", form).forEach((b) => b.addEventListener("click", () => {
+      mode = b.dataset.mode;
+      $$("[data-mode]", form).forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+      $("[data-one]", form).classList.toggle("hidden", mode !== "one");
+      $("[data-many]", form).classList.toggle("hidden", mode !== "many");
+      $(".btn-dark", form).textContent = mode === "one" ? "Issue pass" : "Issue passes";
+    }));
+    onSubmit(form, async (v) => {
+      const opts = { role: v.role, accessNote: v.accessNote, reentry: !!v.reentry };
+      if (mode === "one") {
+        if (!v.holderName) throw Object.assign(new Error("Enter the pass holder's name."), { details: { holderName: "Required." } });
+        const r = await post(`${base()}/events/${ev.id}/passes`, { ...opts, holderName: v.holderName, email: v.email || undefined });
+        return showLinks("Pass issued", [r]);
+      }
+      const people = String(v.people || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+        const [name, email] = l.split(",").map((x) => x.trim());
+        return { holderName: name, ...(email ? { email } : {}) };
+      });
+      if (!people.length) throw Object.assign(new Error("Add at least one person, one per line."), { details: { people: "One person per line." } });
+      const r = await post(`${base()}/events/${ev.id}/passes/bulk`, { ...opts, people });
+      showLinks(`${r.passes.length} passes issued`, r.passes);
+    });
+  }
+  const byId = (id) => passes.find((g) => g.id === id);
+  $$("[data-pimg]", el).forEach((b) => b.addEventListener("click", () => savePass(byId(b.dataset.pimg)).catch((err) => toast(err.message, "bad"))));
+  $$("[data-pnew]", el).forEach((b) => b.addEventListener("click", async () => {
+    const g = byId(b.dataset.pnew);
+    if (!(await confirmDialog("Make a new link?", `${g.holderName}'s current link and QR code stop working straight away.${g.email ? " We email the new link to " + g.email + "." : ""}`, { confirm: "Make new link" }))) return;
+    try { const r = await post(`${base()}/events/${ev.id}/passes/${g.id}/reissue`); showLinks("New link made", [r]); } catch (err) { toast(err.message, "bad"); }
+  }));
+  $$("[data-pcancel]", el).forEach((b) => b.addEventListener("click", async () => {
+    const g = byId(b.dataset.pcancel);
+    if (!(await confirmDialog("Cancel this pass?", `${g.holderName}'s pass stops working at the gate straight away. This cannot be undone; issue a new pass if needed.`, { confirm: "Cancel pass", danger: true }))) return;
+    try { await post(`${base()}/events/${ev.id}/passes/${g.id}/revoke`); toast("Pass cancelled.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
+async function vendorsTab(el, d, reload) {
+  const { vendors } = await get(`${base()}/events/${d.event.id}/vendors`);
+  const edit = can("owner", "manager");
+  render(el, html`${!d.event.cashless_enabled ? html`<p class="callout warn">Cashless is switched off for this event. Turn it on under Details to use vendors and POS.</p>` : ""}
+    ${vendors.length ? html`<div class="stack">${vendors.map((v) => html`<section class="card"><div class="card-title"><div><h3>${v.name}</h3><span class="small muted">${v.description || ""} · commission ${(v.commission_bps / 100).toFixed(1)}% · gross ${moneyExact(v.gross_cents)}</span></div>
+        <div class="row">${badge(v.status)}${edit ? html`<button class="btn btn-ghost btn-sm" data-vstatus="${v.id}" data-s="${v.status === "active" ? "suspended" : "active"}">${v.status === "active" ? "Suspend" : "Reactivate"}</button>` : ""}
+        ${can("owner", "finance") ? html`<button class="btn btn-ghost btn-sm" data-vpay="${v.id}">Request settlement</button>` : ""}</div></div>
+      <div class="grid-2"><div><div class="label">Team</div>${v.members.length ? html`<ul class="small">${v.members.map((m) => html`<li>${m.name} (${m.role}), ${m.email}</li>`)}</ul>` : html`<p class="small muted">No vendor staff yet.</p>`}
+          ${edit ? html`<form class="row" data-member="${v.id}"><input name="email" type="email" required placeholder="Staff email" class="grow" aria-label="Vendor staff email"><select name="role" aria-label="Role"><option value="cashier">Cashier</option><option value="manager">Manager</option></select><button class="btn btn-ghost btn-sm">Add</button></form>` : ""}</div>
+        <div><div class="label">Terminals</div>${v.terminals.length ? html`<ul class="small">${v.terminals.map((t) => html`<li>${t.label} ${badge(t.status)} ${t.lastSeenAt ? html`<span class="muted">seen ${fmtDateTime(t.lastSeenAt)}</span>` : ""} ${edit && t.status !== "retired" ? html`<button class="btn-link" data-tstatus="${t.id}" data-s="${t.status === "active" ? "suspended" : "active"}">${t.status === "active" ? "suspend" : "activate"}</button>` : ""}</li>`)}</ul>` : html`<p class="small muted">No terminals.</p>`}
+          ${edit ? html`<form class="row" data-term="${v.id}"><input name="label" required placeholder="e.g. Till 1" class="grow" aria-label="Terminal name"><button class="btn btn-ghost btn-sm">Register terminal</button></form>` : ""}</div></div></section>`)}</div>` : empty("No vendors yet.")}
+    ${edit ? html`<section class="card mt"><h3>Add vendor</h3><form class="stack" id="vf"><div class="grid-2"><div class="field"><label for="vn">Vendor name</label><input id="vn" name="name" required></div><div class="field"><label for="vc">Commission (%)</label><input id="vc" name="commission" inputmode="decimal" value="0"></div></div>
+      <div class="field"><label for="vd">What they sell</label><input id="vd" name="description" maxlength="240"></div><button class="btn btn-dark">Add vendor</button></form></section>` : ""}
+    <div id="bands"></div><div id="cdesk"></div>`);
+  if (FEATURES.tagRegistry) wristbands($("#bands", el), d, edit);
+  if (FEATURES.cashDesk && d.event.cashless_enabled && can("owner", "manager", "finance")) cashDeskCard($("#cdesk", el), el, d, reload);
+  if ($("#vf")) onSubmit($("#vf"), async (v) => { await post(`${base()}/events/${d.event.id}/vendors`, { name: v.name, description: v.description, commissionBps: Math.round(Number(v.commission || 0) * 100) }); toast("Vendor added.", "good"); reload(); });
+  $$("[data-member]", el).forEach((f) => onSubmit(f, async (v) => { await post(`${base()}/events/${d.event.id}/vendors/${f.dataset.member}/members`, v); toast("Vendor staff added.", "good"); reload(); }));
+  $$("[data-term]", el).forEach((f) => onSubmit(f, async (v) => {
+    const r = await post(`${base()}/events/${d.event.id}/vendors/${f.dataset.term}/terminals`, v);
+    dialog("Terminal registered", html`<p>Enter this key once on the POS device (<strong>ticketroom.co.za/pos</strong>). <strong>It is shown only now.</strong></p><input readonly class="mono small" value="${r.terminal.terminalKey}" aria-label="Terminal key"><p class="small muted mt">If it is lost or a device is stolen, suspend the terminal and register a new one.</p>`, { onClose: reload });
+  }));
+  $$("[data-vstatus]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/vendors/${b.dataset.vstatus}`, { status: b.dataset.s }); reload(); }));
+  $$("[data-tstatus]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/terminals/${b.dataset.tstatus}`, { status: b.dataset.s }); reload(); }));
+  $$("[data-vpay]", el).forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`${base()}/events/${d.event.id}/vendors/${b.dataset.vpay}/payout`); toast(`Settlement ${r.payout.reference} requested for ${moneyExact(r.payout.amount_cents)}.`, "good"); } catch (err) { toast(err.message, "bad"); } }));
+}
+
+// Wristbands for this event: register the chip numbers of a box of bands in
+// one go. The download is the only copy of each band's printed code and
+// activation code. Shown only where the server offers it (features.tagRegistry).
+async function wristbands(el, d, edit) {
+  const { tags: list, counts } = await get(`${base()}/events/${d.event.id}/tags`);
+  const n = (k) => counts[k] || 0;
+  render(el, html`<section class="card mt"><h3>Wristbands</h3>
+    <p class="small muted">${list.length ? `${list.length} registered: ${n("active")} linked to a ticket, ${n("assigned")} not linked yet, ${n("lost") + n("blocked")} blocked.` : "No wristbands registered yet."} Attendees link a band in their account with the code printed on it, or at your registration desk (Gate scanner, Tag desk).</p>
+    ${edit ? html`<form class="stack" id="bf"><div class="field"><label for="bu">Chip numbers (UIDs), one per line</label><textarea id="bu" name="uids" rows="4" class="mono" placeholder="04A1B2C3D4E5F6"></textarea><span class="hint">Read them with the supplier's list or a phone's NFC reader. Up to 2000 at a time.</span></div>
+      <button class="btn btn-dark">Register wristbands</button></form>` : ""}</section>`);
+  if ($("#bf", el)) onSubmit($("#bf", el), async (v) => {
+    const r = await post(`${base()}/events/${d.event.id}/tags`, { uids: String(v.uids || "").split(/\s+/).filter(Boolean) });
+    const csv = ["chip_uid,band_code,activation_code", ...r.tags.map((t) => [t.payload.replace(/^UID:/, ""), t.displayCode, t.activationCode].join(","))].join("\n");
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `wristbands-${r.batchId.slice(0, 8)}.csv` });
+    a.click();
+    toast(`${r.tags.length} wristbands registered. Keep the downloaded list safe: it is the only copy of the activation codes.`, "good");
+    wristbands(el, d, edit);
+  });
+}
+
+// Top-ups in person and the cash-out desk. Money taken at your desks is
+// yours already, so it comes off what TicketRoom pays you for this event.
+async function cashDeskCard(box, tab, d, reload) {
+  const ctx = await get(`/api/cashdesk/events/${d.event.id}`);
+  const s = ctx.settings;
+  const edit = can("owner", "manager");
+  render(box, html`<section class="card mt stack"><h3 class="mb-0">Top-up desk and cash-out</h3>
+    <p class="small muted mb-0">Guests can top up their wristband at your desk with cash or on your card machine, and get what is left back in cash at the end. Your gate staff who manage wristbands can run the desk from the gate scanner (Top-up desk). Money taken at your desks comes off what TicketRoom pays you for this event.</p>
+    <div class="row"><button class="btn btn-primary" data-desk>Open the top-up desk</button>
+      ${edit ? html`<button class="btn ${s.cashoutDeskOpen ? "btn-danger" : "btn-dark"}" data-co="${s.cashoutDeskOpen ? "" : "1"}">${s.cashoutDeskOpen ? "Close the cash-out desk" : "Open the cash-out desk"}</button>` : ""}</div>
+    <p class="small mb-0">Cash-out desk: <strong>${s.cashoutDeskOpen ? "open" : "closed"}</strong>. While it is open, guests can ask for their balance in cash and show a code at the desk.</p>
+    ${edit ? html`<form class="row" id="capf"><label class="grow small" for="cap">Most one desk person can take in a day (R)</label><input id="cap" name="cap" inputmode="decimal" value="${s.deskDailyCapCents / 100}" style="max-width:9rem"><button class="btn btn-ghost btn-sm">Save</button></form>` : ""}</section>`);
+  $("[data-desk]", box).addEventListener("click", () => deskApp(tab, d.event.id, { onBack: reload, backLabel: "Back to Vendors & POS" }));
+  $("[data-co]", box)?.addEventListener("click", async (e) => {
+    try { await put(`${base()}/events/${d.event.id}/cashdesk`, { cashoutDeskOpen: !!e.target.dataset.co }); toast(e.target.dataset.co ? "Cash-out desk open." : "Cash-out desk closed.", "good"); cashDeskCard(box, tab, d, reload); } catch (err) { toast(err.message, "bad"); }
+  });
+  if ($("#capf", box)) onSubmit($("#capf", box), async (v) => { await put(`${base()}/events/${d.event.id}/cashdesk`, { deskDailyCapCents: parseRand(v.cap) }); toast("Desk limit saved.", "good"); });
+}
+
+async function detailsTab(el, d, reload) {
+  if (!can("owner", "manager")) return render(el, html`<p class="muted">You have view-only access.</p>`);
+  render(el, html`<div class="card">${eventForm(d.event)}</div>`);
+  const f = $("#evf"); wireUpload(f); wireAgeGroups(f);
+  onSubmit(f, async (v) => { await patch(`${base()}/events/${d.event.id}`, eventPayload(v)); toast("Saved.", "good"); reload(); });
+}
+
+// ---------------- marketing ----------------
+async function marketing() {
+  const [{ campaigns }, aud, evs] = await Promise.all([get(`${base()}/campaigns`), get(`${base()}/marketing/audience`), get(`${base()}/events`)]);
+  const cfg = await get("/api/config");
+  render(main, html`${head("Marketing", "Email the people who booked with you. Only those who ticked the box to hear from you are included. That is what POPIA requires, and it keeps people happy to read your mail.", can("owner", "manager", "marketing") ? html`<button class="btn btn-primary" data-new>New campaign</button>` : "")}
+    ${pendingBanner()}
+    <div class="kpis"><div class="kpi"><div class="k">Ticket holders</div><div class="v">${aud.ticketHolders}</div><div class="s">all your events</div></div>
+      <div class="kpi"><div class="k">Email audience</div><div class="v">${aud.emailOptIns}</div><div class="s">opted in to your email</div></div>
+      <div class="kpi" data-feature="sms"><div class="k">SMS audience</div><div class="v">${aud.smsOptIns}</div><div class="s">opted in, with a mobile number</div></div>
+      <div class="kpi"><div class="k">Campaigns sent</div><div class="v">${campaigns.filter((c) => c.status === "sent").length}</div><div class="s">limit 10 per day${FEATURES.promote ? ", none for promoted events" : ""}</div></div></div>
+    ${cfg.messaging.email === "log" || cfg.messaging.sms === "log" ? html`<p class="callout warn mt"><strong>Delivery is simulated in this environment.</strong> Messages are queued and recorded but not sent until an email/SMS gateway is connected.</p>` : ""}
+    <section class="card mt"><h2>Campaigns</h2>${campaigns.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Channel</th><th>Status</th><th class="num">Recipients</th><th class="num">Delivered</th><th>Date</th><th></th></tr></thead><tbody>
+      ${campaigns.map((c) => html`<tr><td><strong>${c.name}</strong>${c.subject ? html`<div class="small muted">${c.subject}</div>` : ""}</td><td>${c.channel.toUpperCase()}</td><td>${badge(c.status)}</td><td class="num">${c.recipients_count}</td><td class="num">${c.delivered_count}</td>
+        <td>${c.sent_at ? fmtDateTime(c.sent_at) : c.scheduled_at ? `Scheduled ${fmtDateTime(c.scheduled_at)}` : fmtDate(c.created_at)}</td><td>${["draft", "scheduled"].includes(c.status) ? html`<button class="btn btn-ghost btn-sm" data-open="${c.id}">Open</button>` : ""}</td></tr>`)}</tbody></table></div>` : empty("No campaigns yet.")}</section>`);
+  const open = (c = null) => campaignDialog(c, evs, marketing);
+  $("[data-new]")?.addEventListener("click", () => open());
+  $$("[data-open]").forEach((b) => b.addEventListener("click", () => open(campaigns.find((c) => c.id === b.dataset.open))));
+}
+
+// opts.eventId: a campaign for one event (the Promote tab), its audience fixed.
+// opts.channel picks email or SMS; opts.promoted adds the event link to the message.
+function campaignDialog(c, evs, done, opts = {}) {
+  const fixed = opts.eventId ? evs.find((e) => e.id === opts.eventId) : null;
+  const channel = c?.channel || opts.channel || "email";
+  const starter = opts.promoted && !c ? (channel === "sms" ? `Hi {{first_name}}, ${fixed?.title || "our event"} is coming up. Get your tickets: {{event_link}}` : `Hi {{first_name}},\n\n${fixed?.title || "Our event"} is coming up and we'd love to see you there.\n\nGet your tickets: {{event_link}}`) : "";
+  const hintEmail = `Use {{first_name}} to personalise${opts.promoted ? " and {{event_link}} for your tracked ticket link (added at the end if you leave it out)" : ""}. An unsubscribe link and your organisation name are added automatically.`;
+  const dlg = dialog(c ? c.name : opts.promoted ? `New ${channel === "sms" ? "SMS" : "email"} campaign` : "New campaign", html`<form class="stack" id="cf">
+    <div class="grid-2"><div class="field"><label for="cn">Campaign name (internal)</label><input id="cn" name="name" required value="${c?.name || ""}"></div>
+      <div class="field"><label for="cc">Channel</label><select id="cc" name="channel" ${raw(c || opts.channel ? "disabled" : "")}><option value="email" ${raw(channel === "email" ? "selected" : "")}>Email</option>${FEATURES.sms ? html`<option value="sms" ${raw(channel === "sms" ? "selected" : "")}>SMS</option>` : ""}</select></div></div>
+    <div class="field" id="subj"><label for="cs">Email subject</label><input id="cs" name="subject" maxlength="150" value="${c?.subject || ""}"></div>
+    <div class="field"><label for="cb">Message</label><textarea id="cb" name="body" required maxlength="5000" rows="6">${c?.body || starter}</textarea><span class="hint" id="cbh"></span></div>
+    ${fixed ? html`<p class="small muted mb-0">Audience: people who booked for <strong>${fixed.title}</strong> and opted in to hear from you.</p>`
+      : html`<fieldset class="field"><legend class="label">Audience: people who bought tickets to…</legend>
+      <div class="stack">${evs.map((e) => html`<label class="check"><input type="checkbox" name="ev_${e.id}" ${raw(c?.audience?.eventIds?.includes(e.id) ? "checked" : "")}><span>${e.title} <span class="muted small">${fmtDate(e.starts_at)}</span></span></label>`)}</div><span class="hint">Leave all unticked to include every event.${FEATURES.promote ? " Pick only a promoted event for no daily limit and SMS." : ""}</span></fieldset>`}
+    <div class="row"><button class="btn btn-dark" type="submit">Save draft</button></div></form>
+    <div id="pv" class="mt"></div>`, { wide: true, onClose: done });
+  const form = $("#cf", dlg);
+  const chan = () => (form.elements.channel.disabled ? channel : form.elements.channel.value);
+  const sync = () => { const sms = chan() === "sms"; $("#subj", dlg).classList.toggle("hidden", sms); $("#cbh", dlg).textContent = sms ? `${form.elements.body.value.length}/300 characters. Your name and an opt-out link are added automatically.` : hintEmail; };
+  form.elements.channel.addEventListener("change", sync); form.elements.body.addEventListener("input", sync); sync();
+  let current = c;
+  const payload = (v) => ({ name: v.name, channel: current?.channel || chan(), subject: v.subject, body: v.body, eventIds: fixed ? [fixed.id] : evs.filter((e) => v[`ev_${e.id}`]).map((e) => e.id) });
+  const preview = async () => {
+    const p = await get(`${base()}/campaigns/${current.id}/preview`);
+    const smsCost = p.segments ? (p.estimatedCostCents != null ? ` · est. ${moneyExact(p.estimatedCostCents)}` : " · SMS cost not set on this site") : "";
+    render($("#pv", dlg), html`<div class="card flat"><div class="card-title"><h3>Preview</h3><span class="small muted">${p.recipients} recipient${p.recipients === 1 ? "" : "s"}${p.segments ? ` · ${p.segments} SMS segment${p.segments === 1 ? "" : "s"} each` : ""}${smsCost}</span></div>
+      ${p.promotion ? html`<p class="small callout good">Promoted event${p.promotion.test ? " (TEST)" : ""}: no daily limit, and a tracking link is made when it goes out so you can see what it sells.</p>` : ""}
+      ${p.preview.subject ? html`<p><strong>${p.preview.subject}</strong></p>` : ""}<div class="prose small">${p.preview.body}</div>
+      <div class="row mt"><button class="btn btn-ghost btn-sm" data-test>Send test to me</button><label class="sr-only" for="sat">Schedule for</label><input type="datetime-local" id="sat" class="grow"><button class="btn btn-ghost btn-sm" data-sched>Schedule</button><button class="btn btn-primary btn-sm" data-send>Send now</button></div></div>`);
+    $("[data-test]", dlg).addEventListener("click", async () => { try { const r = await post(`${base()}/campaigns/${current.id}/test`); toast(`Test queued to ${r.sentTo}.`, "good"); } catch (err) { toast(err.message, "bad"); } });
+    $("[data-send]", dlg).addEventListener("click", async () => {
+      if (!(await confirmDialog("Send campaign?", `This sends to ${p.recipients} people now. It can't be recalled.`, { confirm: "Send now" }))) return;
+      try { const r = await post(`${base()}/campaigns/${current.id}/send`, {}); toast(`Sent to ${r.campaign.recipients_count} recipients.`, "good"); dlg.close(); } catch (err) { toast(err.message, "bad"); }
+    });
+    $("[data-sched]", dlg).addEventListener("click", async () => {
+      const at = $("#sat", dlg).value; if (!at) return toast("Pick a date and time.", "bad");
+      try { await post(`${base()}/campaigns/${current.id}/send`, { scheduledAt: new Date(at).toISOString() }); toast("Scheduled.", "good"); dlg.close(); } catch (err) { toast(err.message, "bad"); }
+    });
+  };
+  onSubmit(form, async (v) => {
+    const body = payload(v);
+    const r = current ? await patch(`${base()}/campaigns/${current.id}`, body) : await post(`${base()}/campaigns`, body);
+    current = r.campaign; toast("Draft saved.", "good"); await preview();
+  });
+  if (c) preview();
+}
+
+// ---------------- Promote ----------------
+// One payment promotes one event until it ends: unlimited email campaigns,
+// SMS when it is switched on, a post on TicketRoom's socials, and results for
+// every campaign. Bought by card (or from the available balance) right here.
+const PROMOTE_INCLUDES = (sms) => [
+  ["Unlimited email campaigns", "Email everyone who booked with you and asked to hear from you, as often as you like, until the event ends. No daily limit."],
+  ["SMS campaigns", sms ? "Text the same opted-in crowd. Each SMS holds up to 160 characters and carries an opt-out link." : "Text your opted-in crowd as soon as TicketRoom switches SMS on. Email works from day one."],
+  ["Your event on our socials", "Send us a caption, the dates you want and your links. We post it on TicketRoom's social media and tell you when it is live."],
+  ["Results you can trust", "Messages sent, clicks, tickets and revenue for every campaign, day by day. We only show what we can measure."],
+  ["Quick cash-out", "Pay by card, or straight from your available ticket balance. No invoice, no waiting."],
+];
+const PROMOTE_FAQ = (r) => [
+  ["Who gets my messages?", "Only people who bought tickets from you and ticked the box to hear from you. Every message has an unsubscribe or opt-out link, as POPIA requires."],
+  ["Is there really no limit?", `No limit on how many campaigns you send while Promote runs. To protect your crowd from floods, at most ${r.hourlyLimit || 6} campaigns go out per hour.`],
+  ["When does it end?", "When your event ends. It is a once-off payment: nothing renews and nothing is charged again."],
+  ["What if my event is cancelled?", "TicketRoom refunds the package to the card or balance you paid from."],
+];
+
+async function promoteTab(el, d, reload) {
+  const r = await get(`${base()}/events/${d.event.id}/promotion`);
+  const p = r.promotion;
+  const paid = p && p.paid_at;
+  if (!paid) return promoteOffer(el, d, r, reload);
+  render(el, html`${promoteStatus(r)}<div id="pm-tools"></div><div id="pm-social"></div><div id="pm-stats"></div>`);
+  if (p.status === "active") promoteTools($("#pm-tools", el), d, r, reload);
+  promoteSocial($("#pm-social", el), d, r, reload);
+  promoteStats($("#pm-stats", el), d, r);
+}
+
+function promoteOffer(el, d, r, reload) {
+  const p = r.promotion, price = moneyExact(r.priceCents).replace(/\.00$/, "");
+  const bal = r.methods.balance;
+  const balOk = bal && bal.availableCents >= r.priceCents;
+  const waiting = p?.status === "pending_payment" && r.payment?.status === "pending";
+  const declined = p?.status === "pending_payment" && ["failed", "cancelled"].includes(r.payment?.status);
+  render(el, html`<section class="promote-offer" aria-labelledby="pm-h">
+      <div class="promote-pitch"><span class="tk-label">Promote</span><h2 id="pm-h">Let your crowd know, loud and clear</h2>
+        <p class="lead mb-0">Reach the right people in the right numbers for <strong>${d.event.title}</strong>. One payment, everything included, until the event ends.</p>
+        <p class="small mb-0">${r.audience.emailOptIns} ${r.audience.emailOptIns === 1 ? "person has" : "people have"} opted in to your email${r.sms.ready ? html` and ${r.audience.smsOptIns} to SMS` : ""} for this event so far. Everyone who books from now on can opt in too.</p></div>
+      <div class="promote-price"><div class="promote-amount">${price}</div><div class="small">once off, until ${fmtDate(d.event.ends_at)}</div>
+        ${r.methods.cardTest ? html`<p class="promote-test small mb-0"><strong>Test mode.</strong> A practice payment: no real money moves and the package is marked TEST.</p>` : ""}
+        <div class="stack" data-buy>
+          ${r.canBuy && r.methods.card ? html`<button class="btn btn-primary btn-block" data-pay="card">Pay ${price} by card</button>` : ""}
+          ${r.canBuy && bal ? html`<button class="btn ${r.methods.card ? "btn-outline-light" : "btn-primary"} btn-block" data-pay="balance" ${raw(balOk ? "" : "disabled")}>Pay from my balance</button>
+            <span class="tiny">${balOk ? `${moneyExact(bal.availableCents)} available to pay out. ${price} comes off it straight away.` : `Your available balance is ${moneyExact(bal.availableCents)}. Money from an event becomes available after it ends.`}</span>` : ""}
+        </div></div>
+    </section>
+    ${waiting ? html`<p class="callout mt" role="status">We're waiting for the payment provider to confirm your payment. This page updates by itself.</p>` : ""}
+    ${declined ? html`<p class="callout warn mt" role="status">Your last payment didn't go through, so nothing was charged. You can try again.</p>` : ""}
+    ${r.blocked ? html`<p class="callout warn mt">${r.blocked.message}</p>` : !r.canBuy ? html`<p class="callout mt">Ask your organisation's owner, a manager or a marketing team member to buy Promote.</p>`
+      : !r.methods.card && !bal ? html`<p class="callout warn mt">Card payments aren't switched on yet. Ask TicketRoom, or the owner can pay from the balance.</p>` : ""}
+    <section class="card mt"><h3>What's included</h3><ul class="promote-includes">${PROMOTE_INCLUDES(r.sms.ready).map(([t, s]) => html`<li><strong>${t}</strong><span>${s}</span></li>`)}</ul></section>
+    <section class="card mt"><h3>Good to know</h3><dl class="promote-faq">${PROMOTE_FAQ(r).map(([q, a]) => html`<dt>${q}</dt><dd>${a}</dd>`)}</dl>
+      <p class="small muted mb-0">Without Promote you can still send up to 10 email campaigns a day from Marketing, free.</p></section>`);
+  $$("[data-pay]", el).forEach((b) => b.addEventListener("click", async () => {
+    const method = b.dataset.pay;
+    if (method === "balance" && !(await confirmDialog("Pay from your balance?", `${price} comes off your available balance now and Promote starts straight away.`, { confirm: `Pay ${price}` }))) return;
+    $$("[data-pay]", el).forEach((x) => { x.disabled = true; });
+    b.setAttribute("aria-busy", "true");
+    try {
+      const res = await post(`${base()}/events/${d.event.id}/promotion/checkout`, { method });
+      if (res.payment?.redirectUrl) { location.href = res.payment.redirectUrl; return; }
+      toast("Promote is on. Your receipt is on its way by email.", "good"); reload();
+    } catch (err) { toast(err.message, "bad"); $$("[data-pay]", el).forEach((x) => { x.disabled = false; }); b.removeAttribute("aria-busy"); }
+  }));
+  // Back from the payment page before the provider's confirmation: look again shortly.
+  if (waiting) setTimeout(() => { if (location.hash.endsWith(`/events/${d.event.id}/promote`)) reload(); }, 3000);
+}
+
+function promoteStatus(r) {
+  const p = r.promotion;
+  const how = p.paid_with === "balance" ? "from your balance" : "by card";
+  const state = p.status === "active" ? html`Promoted until <strong>${fmtDateTime(p.ends_at)}</strong>` : p.status === "refunded" ? html`Refunded${p.refunded_at ? ` on ${fmtDate(p.refunded_at)}` : ""}` : html`Ended ${fmtDate(p.ends_at)}`;
+  return html`<section class="card promote-status" aria-label="Promote status"><div class="row between"><div class="row">${badge(p.status)}${p.test ? html`<span class="badge amber" title="Paid in test mode: no real money moved">TEST</span>` : ""}<span>${state}</span></div>
+      <span class="small muted">Ref <span class="mono">${p.reference}</span> · ${moneyExact(p.price_cents)} paid ${how} on ${fmtDate(p.paid_at)}</span></div>
+    ${p.test ? html`<p class="small muted mb-0 mt">This package was bought with a practice payment. Everything works, but no real money moved and it is not counted as revenue.</p>` : ""}
+    ${p.refund_status && p.refund_status !== "completed" ? html`<p class="callout mt mb-0">A refund of this package is in progress.</p>` : ""}</section>`;
+}
+
+function promoteTools(el, d, r, reload) {
+  const editable = can("owner", "manager", "marketing");
+  const smsOk = r.sms.ready;
+  render(el, html`<section class="card mt"><div class="card-title"><h3>Campaigns for this event</h3><a href="#/marketing" class="small">All campaigns</a></div>
+    <p class="small muted">Goes to the ${r.audience.emailOptIns} ${r.audience.emailOptIns === 1 ? "person" : "people"} who opted in to your email${smsOk ? ` and ${r.audience.smsOptIns} to SMS` : ""} for ${d.event.title}. No daily limit while Promote runs. Each campaign gets its own tracking link, so you can see what it sold.</p>
+    ${editable ? html`<div class="row"><button class="btn btn-primary" data-new="email">New email campaign</button>${smsOk ? html`<button class="btn btn-dark" data-new="sms">New SMS campaign</button>` : ""}</div>` : html`<p class="muted mb-0">Your role can view results but not send campaigns.</p>`}
+    ${smsOk ? html`<p class="tiny muted mt mb-0">${r.sms.costPerSegmentCents ? `Each SMS segment (160 characters) costs about ${moneyExact(r.sms.costPerSegmentCents)}. You see the estimate before you send.` : "SMS sending is on. The cost per SMS isn't set on this site yet, so no cost estimate is shown. Check with TicketRoom before a big send."}</p>`
+      : html`<p class="tiny muted mt mb-0">SMS campaigns open up here as soon as TicketRoom switches SMS on.</p>`}</section>`);
+  $$("[data-new]", el).forEach((b) => b.addEventListener("click", () => campaignDialog(null, [d.event], reload, { eventId: d.event.id, channel: b.dataset.new, promoted: true })));
+}
+
+function promoteSocial(el, d, r, reload) {
+  const p = r.promotion, req = p.social_request;
+  const steps = [["requested", "Request sent"], ["scheduled", "Scheduled"], ["posted", "Live"]];
+  const at = steps.findIndex(([k]) => k === p.social_status);
+  const canAsk = p.status === "active" && p.social_status !== "posted" && can("owner", "manager", "marketing");
+  render(el, html`<section class="card mt" aria-labelledby="soc-h"><div class="card-title"><h3 id="soc-h">TicketRoom socials</h3>${p.social_status ? badge(p.social_status) : ""}</div>
+    ${p.social_status ? html`<ol class="promote-steps">${steps.map(([k, l], i) => html`<li class="${i <= at ? "done" : ""}">${l}</li>`)}</ol>` : html`<p class="small muted">Tell us what to post and when. We use your event poster unless you add other pictures.</p>`}
+    ${p.social_notes ? html`<p class="small"><strong>From TicketRoom:</strong> ${p.social_notes}</p>` : ""}
+    ${p.social_links?.length ? html`<p class="small mb-0">Your post: ${p.social_links.map((u) => html`<a href="${u}" target="_blank" rel="noopener">${u}</a> `)}</p>` : ""}
+    ${canAsk ? html`<form class="stack mt" id="socf">
+      <div class="field"><label for="sc">Caption</label><textarea id="sc" name="caption" required maxlength="2200" rows="4" placeholder="What should the post say? Keep it short and lively.">${req?.caption || ""}</textarea></div>
+      <div class="grid-2"><div class="field"><label for="sd">Preferred dates <span class="muted">(optional)</span></label><input id="sd" name="preferredDates" maxlength="200" value="${req?.preferredDates || ""}" placeholder="e.g. Friday 7 Nov, and again the day before"></div>
+        <div class="field"><label for="sl">Links <span class="muted">(optional, one per line)</span></label><textarea id="sl" name="links" rows="2" placeholder="https://instagram.com/yourpage">${(req?.links || []).join("\n")}</textarea></div></div>
+      <div class="row">${r.poster ? html`<img class="promote-thumb" src="${r.poster}" alt="Your event poster">` : ""}
+        <label class="check"><input type="checkbox" name="usePoster" ${raw(r.poster ? "checked" : "disabled")}><span>${r.poster ? "Use my event poster" : "No poster on this event yet. Add one under Details, or add pictures here."}</span></label></div>
+      <div class="field"><label for="si">More pictures <span class="muted">(optional, up to 3)</span></label><input id="si" type="file" accept="image/png,image/jpeg,image/webp" multiple><span class="hint">PNG, JPEG or WebP, up to 2 MB each.</span></div>
+      <button class="btn btn-dark">${p.social_status ? "Update my request" : "Send my request"}</button></form>` : ""}</section>`);
+  const f = $("#socf", el);
+  if (!f) return;
+  onSubmit(f, async (v) => {
+    const ids = [];
+    for (const file of [...$("#si", f).files].slice(0, 3)) {
+      if (file.size > 2 * 1024 * 1024) throw Object.assign(new Error(`${file.name} is larger than 2 MB.`), { details: {} });
+      ids.push((await api("POST", `${base()}/uploads`, undefined, { raw: file, headers: { "content-type": file.type } })).uploadId);
+    }
+    const links = String(v.links || "").split(/\s+/).map((x) => x.trim()).filter(Boolean);
+    await post(`${base()}/events/${d.event.id}/promotion/social`, { caption: v.caption, preferredDates: v.preferredDates || undefined, links, usePoster: !!v.usePoster, imageUploadIds: ids });
+    toast("Request sent. We'll let you know when it is scheduled.", "good"); reload();
+  });
+}
+
+function promoteStats(el, d, r) {
+  const a = r.analytics, t = a.totals;
+  render(el, html`<section class="card mt" aria-labelledby="pst-h"><div class="card-title"><h3 id="pst-h">Results</h3><span class="small muted">From the campaigns sent with Promote</span></div>
+    <div class="kpis"><div class="kpi"><div class="k">Messages sent</div><div class="v">${(t.emailsSent + t.smsSent).toLocaleString("en-ZA")}</div><div class="s">${t.campaignsSent} campaign${t.campaignsSent === 1 ? "" : "s"} · ${t.emailsSent} email${r.sms.ready ? `, ${t.smsSent} SMS` : ""}</div></div>
+      <div class="kpi"><div class="k">Clicks</div><div class="v">${t.clicks.toLocaleString("en-ZA")}</div><div class="s">on campaign links</div></div>
+      <div class="kpi"><div class="k">Tickets</div><div class="v">${t.tickets.toLocaleString("en-ZA")}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"} through campaign links</div></div>
+      <div class="kpi"><div class="k">Revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">ticket sales through campaign links</div></div></div>
+    <p class="tiny muted mt mb-0">Opens are not tracked: TicketRoom doesn't hide tracking pixels in emails. Clicks count each time someone opens a campaign link.${t.testOrders ? ` ${t.testOrders} test order${t.testOrders === 1 ? "" : "s"} came through campaign links and ${t.testOrders === 1 ? "is" : "are"} left out of these figures.` : ""}${t.notDelivered ? ` ${t.notDelivered} message${t.notDelivered === 1 ? " was" : "s were"} not delivered (unsubscribed or bounced).` : ""}</p>
+    <div class="grid-2 mt"><div><h4 class="small">Messages sent per day</h4><div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.messages, title: "Messages sent per day, last 30 days", tickEvery: 5, height: 150 })}</div></div>
+      <div><h4 class="small">Tickets per day</h4><div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.allTickets, title: "Tickets sold per day for this event, last 30 days", tickEvery: 5, height: 150 })}</div><p class="tiny muted mb-0">All sales for the event. ${a.daily.reduce((s, x) => s + x.campaignTickets, 0)} of them in this period came through campaign links.</p></div></div>
+    <h4 class="mt">Campaigns</h4>
+    ${a.campaigns.length ? html`<div class="table-wrap"><table><thead><tr><th>Campaign</th><th>Status</th><th class="num">Sent to</th><th class="num">Delivered</th><th class="num">Clicks</th><th class="num">Tickets</th><th class="num">Revenue</th></tr></thead><tbody>
+      ${a.campaigns.map((c) => html`<tr><td><strong>${c.name}</strong><div class="tiny muted">${c.channel.toUpperCase()}${c.sent_at ? ` · ${fmtDateTime(c.sent_at)}` : c.scheduled_at ? ` · scheduled ${fmtDateTime(c.scheduled_at)}` : ""}${c.code ? html` · <span class="mono">${c.code}</span>` : ""}</div></td>
+        <td>${badge(c.status)}</td><td class="num">${c.recipients_count}</td><td class="num">${c.delivered}</td><td class="num">${c.clicks}</td><td class="num">${c.tickets}</td><td class="num">${moneyExact(c.revenue_cents)}</td></tr>`)}</tbody></table></div>`
+      : html`<p class="muted mb-0">No campaigns yet. Send your first one above: results show up here as people click and book.</p>`}</section>`);
+}
+
+// Every event that can be promoted, with its status: the "Promote" page in the menu.
+async function promoteHome() {
+  const [list, { promotions, priceCents }] = await Promise.all([get(`${base()}/events`), get(`${base()}/promotions`)]);
+  const now = Date.now();
+  const byEvent = Object.fromEntries(promotions.filter((p) => p.status === "active").map((p) => [p.event_id, p]));
+  const open = list.filter((e) => ["published", "pending_approval"].includes(e.status) && new Date(e.ends_at || e.starts_at).getTime() > now);
+  render(main, html`${head("Promote", "Let your target audience know, loud and clear. Email and SMS campaigns that bring the right people in the right numbers, a post on TicketRoom's socials, and results for every message.")}
+    ${pendingBanner()}
+    <section class="promote-offer mb"><div class="promote-pitch"><span class="tk-label">One event, one price</span><h2>Everything included until your event ends</h2>
+      <ul class="promote-ticks">${PROMOTE_INCLUDES(FEATURES.sms).map(([t]) => html`<li>${t}</li>`)}</ul></div>
+      <div class="promote-price"><div class="promote-amount">${moneyExact(priceCents).replace(/\.00$/, "")}</div><div class="small">once off per event</div><p class="tiny mb-0">Pick an event below to see what's included and buy.</p></div></section>
+    <section class="card"><h2>Your events</h2>${open.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Promote</th><th></th></tr></thead><tbody>
+      ${open.map((e) => { const p = byEvent[e.id]; return html`<tr><td><a href="#/events/${e.id}/promote"><strong>${e.title}</strong></a></td><td>${fmtDate(e.starts_at)}</td>
+        <td>${p ? html`${badge("active")}${p.test ? html` <span class="badge amber">TEST</span>` : ""}<div class="tiny muted">until ${fmtDate(p.ends_at)}</div>` : html`<span class="badge plain">not promoted</span>`}</td>
+        <td><a class="btn ${p ? "btn-ghost" : "btn-primary"} btn-sm" href="#/events/${e.id}/promote">${p ? "Campaigns & results" : "Promote this event"}</a></td></tr>`; })}</tbody></table></div>`
+      : empty("No events to promote yet. An event can be promoted once it is published or waiting to be published.", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}</section>`);
+}
+
+// ---------------- refunds ----------------
+async function refunds() {
+  const { refunds: list } = await get(`${base()}/refunds`);
+  render(main, html`${head("Refunds", "Ticket refunds are approved by TicketRoom finance. You can approve vendor (POS) refunds for your own events, but not ones you asked for yourself.")}
+    ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Event</th><th>Type</th><th>Reason</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map((r) => html`<tr><td class="mono">${r.reference}</td><td>${r.event_title}${r.vendor_name ? html`<div class="small muted">${r.vendor_name}</div>` : ""}</td><td>${r.kind.replace("_", " ")}</td><td class="small">${r.reason}<div class="tiny muted">by ${r.requested_by_name || "system"}</div></td><td class="num">${moneyExact(r.amount_cents + r.fee_refund_cents)}</td><td>${badge(r.status)}</td>
+        <td>${r.kind === "pos_sale" && r.status === "requested" && !r.mine && can("owner", "manager") ? html`<div class="row"><button class="btn btn-good btn-sm" data-dec="${r.id}" data-ok="1">Approve</button><button class="btn btn-ghost btn-sm" data-dec="${r.id}" data-ok="">Reject</button></div>` : ""}</td></tr>`)}</tbody></table></div>` : empty("No refunds.")}`);
+  $$("[data-dec]").forEach((b) => b.addEventListener("click", async () => { try { await post(`${base()}/refunds/${b.dataset.dec}/decide`, { approve: !!b.dataset.ok }); toast("Done.", "good"); refunds(); } catch (err) { toast(err.message, "bad"); } }));
+}
+
+// ---------------- finance ----------------
+async function finance() {
+  if (!can("owner", "finance", "manager")) return render(main, html`${head("Finance")}<p class="muted">Your role can't view finance.</p>`);
+  const f = await get(`${base()}/finance`);
+  render(main, html`${head("Finance & payouts", `Revenue becomes available ${ORG.payoutHoldDays} day${ORG.payoutHoldDays === 1 ? "" : "s"} after each event ends, less refunds in progress.`)}
+    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${money(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts${f.promoteFromBalanceCents ? ` and ${money(f.promoteFromBalanceCents)} for Promote` : ""}</div></div>
+      <div class="kpi"><div class="k">Available now</div><div class="v">${money(f.availableCents)}</div><div class="s">can be paid out</div></div>
+      <div class="kpi"><div class="k">Payouts in progress</div><div class="v">${money(f.inFlightCents)}</div><div class="s">awaiting approval / transfer</div></div>
+      <div class="kpi"><div class="k">Refunds pending</div><div class="v">${money(f.pendingRefundsCents)}</div><div class="s">held back from payouts</div></div></div>
+    <div class="grid-2 mt"><section class="card"><h2>Request a payout</h2>
+      ${!ORG.bank?.last4 ? html`<p class="callout warn">Add your bank details in Settings first.</p>` : html`<p class="small muted">Paid by EFT to ${ORG.bank.bankName} ••••${ORG.bank.last4} after TicketRoom finance approves it.</p>`}
+      ${VERIF && !VERIF.gates.payouts.ok ? html`<p class="callout warn small">Payouts are blocked until your bank account is verified. Still needed: ${VERIF.gates.payouts.missing.join(", ")}. <a href="#/verification">Go to Verification</a></p>` : ""}
+      ${can("owner", "finance") ? html`<form class="stack" id="po"><div class="field"><label for="pa">Amount (R)</label><input id="pa" name="amount" inputmode="decimal" required value="${f.availableCents ? (f.availableCents / 100).toFixed(2) : ""}"><span class="hint">Minimum R100.</span></div><button class="btn btn-primary" ${raw(!f.availableCents || !ORG.bank?.last4 ? "disabled" : "")}>Request payout</button></form>` : html`<p class="muted">Only owners and finance members can request payouts.</p>`}</section>
+      <section class="card"><h2>By event</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Ends</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>
+        ${f.events.map((e) => html`<tr><td>${e.title}${e.desk_cash_cents || e.desk_card_cents ? html`<div class="tiny muted">Wristband top-ups you took at your desks (already yours): ${moneyExact(e.desk_cash_cents)} cash, ${moneyExact(e.desk_card_cents)} card. Taken off the balance.</div>` : ""}</td><td>${fmtDate(e.ends_at)}</td><td class="num">${moneyExact(e.balance_cents)}</td><td>${e.releasable ? badge("available") : e.status === "cancelled" ? badge("cancelled") : html`<span class="badge plain">on hold</span>`}</td></tr>`)}</tbody></table></div></section></div>
+    <section class="card mt"><h2>Payout history</h2>${f.payouts.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>For</th><th class="num">Amount</th><th>Status</th><th>Requested</th><th>Bank ref</th></tr></thead><tbody>
+      ${f.payouts.map((p) => html`<tr><td class="mono">${p.reference}</td><td>${p.vendor_name ? `Vendor: ${p.vendor_name}` : "You"}</td><td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td><td>${fmtDate(p.created_at)}</td><td class="mono">${p.bank_reference || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No payouts yet.</p>`}</section>`);
+  if ($("#po")) onSubmit($("#po"), async (v) => { const c = parseRand(v.amount); const r = await post(`${base()}/payouts`, { amountCents: c }); toast(`Payout ${r.payout.reference} requested.`, "good"); finance(); });
+}
+
+// ---------------- verification (FICA) ----------------
+// What TicketRoom needs to know about this organiser, worked out from the
+// kind of organiser, whether they sell paid tickets and how risky each event
+// is. Each item says why. Documents are private: only owners and TicketRoom
+// staff can open them, and every view is logged here.
+const KYC_TYPES = { "application/pdf": "PDF", "image/jpeg": "JPG", "image/png": "PNG" };
+const verifTodo = () => (VERIF ? VERIF.requirements.filter((i) => i.required && ["missing", "rejected"].includes(i.status)).length : 0);
+const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+function verifBanner() {
+  if (!VERIF || VERIF.overall === "complete") return "";
+  const n = verifTodo();
+  return html`<p class="callout ${n ? "warn" : ""}"><strong>${n ? `Verification: ${n} item${n === 1 ? "" : "s"} to do.` : "Verification: waiting for TicketRoom to check your documents."}</strong> ${n ? "Your events can't go live until your ID and signed terms are approved." : "We'll email you when it's done."} <a href="#/verification">Open Verification</a></p>`;
+}
+const OVERALL_TEXT = { complete: "Everything we need has been checked and approved.", in_review: "Everything is uploaded. TicketRoom is checking it, usually within one working day.", action_needed: "Some items still need something from you." };
+function kycProvider(doc) {
+  const p = doc?.provider;
+  if (!p || p.name === "manual") return "";
+  return html`<div class="tiny ${p.simulated ? "callout warn" : "muted"}">${p.simulated ? html`<strong>Sandbox (simulated):</strong> ` : html`${p.label}: `}${badge(p.outcome)} ${p.message || ""}</div>`;
+}
+// One checklist row. eventId set for an event's permits.
+function kycItem(it, own, eventId = "") {
+  const d = it.document;
+  const act = own && it.kind === "document"
+    ? html`<label class="btn btn-ghost btn-sm kyc-up">${d && !d.deleted ? "Replace" : "Upload"}<input type="file" class="sr-only" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" data-up="${it.key}" data-ev="${eventId}" aria-label="${d ? "Replace" : "Upload"} ${it.label}"></label>`
+    : own && it.kind === "terms" && it.status !== "approved" ? html`<button class="btn btn-primary btn-sm" data-terms>Read and sign</button>`
+    : own && it.key === "phone" && it.status === "missing" ? html`<button class="btn btn-primary btn-sm" data-phone>Confirm by SMS</button>` : "";
+  return html`<li class="kyc-item" data-req="${it.key}"><div class="grow kyc-body">
+      <div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${!it.required && !it.recommended && it.key !== "phone" ? html`<span class="badge plain">optional</span>` : ""}</div>
+      <div class="small muted">${it.reason}</div>
+      ${it.status === "rejected" ? html`<div class="callout bad small mb-0">Not accepted: ${it.rejectReason || "no reason given"}. Please upload a new copy.</div>` : ""}
+      ${it.signed ? html`<div class="tiny muted">Signed by ${it.signed.name} on ${fmtDateTime(it.signed.at)}.</div>` : ""}
+      ${d && !d.deleted ? html`<div class="tiny muted">${KYC_TYPES[d.mimeType] || "File"}, ${kb(d.sizeBytes)}, uploaded ${fmtDateTime(d.uploadedAt)}${d.reviewedAt && d.status !== "submitted" ? ` · checked ${fmtDate(d.reviewedAt)}` : ""}${own ? html` · <a href="/api/verification/documents/${d.id}/file" target="_blank" rel="noopener">View</a>` : ""}</div>` : ""}
+      ${kycProvider(d)}</div>${act ? html`<div>${act}</div>` : ""}</li>`;
+}
+async function kycUpload(input, done) {
+  const file = input.files[0];
+  if (!file) return;
+  const type = file.type || ({ pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png" })[file.name.split(".").pop().toLowerCase()] || "";
+  const max = VERIF?.limits?.maxBytes || 10485760;
+  if (!KYC_TYPES[type]) { toast("Upload a PDF, JPG or PNG file.", "bad"); input.value = ""; return; }
+  if (file.size > max) { toast(`That file is larger than ${kb(max)}.`, "bad"); input.value = ""; return; }
+  const ev = input.dataset.ev;
+  const lbl = input.closest("label");
+  lbl?.setAttribute("aria-busy", "true");
+  try {
+    const r = await api("POST", `${base()}/verification/documents?requirement=${encodeURIComponent(input.dataset.up)}${ev ? `&eventId=${encodeURIComponent(ev)}` : ""}`, undefined,
+      { raw: file, headers: { "content-type": type, "x-file-name": encodeURIComponent(file.name.slice(0, 120)) }, timeoutMs: 120000 });
+    const p = r.document.provider;
+    toast(r.document.status === "approved" ? "Uploaded and approved by the identity check." : r.document.status === "rejected" ? "Uploaded, but the identity check did not accept it." : p && p.simulated ? "Uploaded. The sandbox check sent it to staff review." : "Uploaded. TicketRoom will check it.", r.document.status === "rejected" ? "bad" : "good");
+    await done();
+  } catch (err) { toast(err.message, "bad"); input.value = ""; } finally { lbl?.removeAttribute("aria-busy"); }
+}
+function kycTermsDialog(done) {
+  const d = dialog("Organiser terms", html`<form class="stack" id="kt">
+    <p class="mb-0">By signing, you agree to the <a href="/legal/terms" target="_blank" rel="noopener">TicketRoom Terms and Conditions</a> (the organiser sections) for this organisation. In short, you will:</p>
+    <ul class="small"><li>describe every event honestly and run it as described, or refund buyers;</li><li>hold the permits, licences and insurance your events need;</li><li>honour every valid ticket and treat buyers' personal information lawfully (POPIA);</li><li>tell TicketRoom straight away if anything material changes.</li></ul>
+    <div class="field"><label for="kt-n">Your full name</label><input id="kt-n" name="fullName" required minlength="2" maxlength="120" autocomplete="name"><span class="hint">Typing your name is your signature. We record it with the date and time.</span></div>
+    <label class="check"><input type="checkbox" name="accept" required><span>I have read the terms and I am allowed to sign them for this organisation.</span></label>
+    <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Sign the terms</button></div></form>`);
+  onSubmit($("#kt", d), async (v) => { await post(`${base()}/verification/terms`, { fullName: v.fullName, accept: !!v.accept }); d.close(); toast("Terms signed.", "good"); await done(); });
+}
+function kycWire(root, done) {
+  $$("[data-up]", root).forEach((i) => i.addEventListener("change", () => kycUpload(i, done)));
+  $("[data-terms]", root)?.addEventListener("click", () => kycTermsDialog(done));
+  $("[data-phone]", root)?.addEventListener("click", async () => phoneVerifyDialog((await me())?.phone, done));
+}
+function gateRow(ok, title, text) {
+  return html`<li class="${ok ? "ok" : "no"}"><span class="tick" aria-hidden="true">${ok ? "✓" : "✕"}</span><span><strong>${title}</strong><br><span class="small muted">${text}</span></span><span class="sr-only">${ok ? " (allowed)" : " (blocked)"}</span></li>`;
+}
+async function verification() {
+  await loadVerif();
+  nav();
+  const v = VERIF;
+  if (!v) return render(main, html`${head("Verification")}<p class="muted">Verification could not be loaded right now.</p>`);
+  const own = v.canManage;
+  const p = v.profile;
+  const g = v.gates;
+  const need = (m) => (m.length ? `Still needed: ${m.join(", ")}.` : "");
+  const evItems = v.events.filter((e) => e.requirements.length);
+  render(main, html`${head("Verification", "FICA requires us to know who sells tickets on TicketRoom. We only ask for what applies to you, and we say why.")}
+    <p class="callout ${v.overall === "complete" ? "good" : v.overall === "in_review" ? "" : "warn"}"><strong>${badge(v.overall)}</strong> ${OVERALL_TEXT[v.overall]}</p>
+    ${v.provider.simulated ? html`<p class="callout warn small"><strong>Test mode:</strong> identity checks are simulated by the TicketRoom sandbox. ${v.provider.rule}</p>` : ""}
+    <section class="card"><h2>What each step opens up</h2><ol class="steps-list gates">
+      ${gateRow(g.freeSubmit.ok && g.paidSubmit.ok, "Submit events for review", g.freeSubmit.ok ? "Your ID and signed terms are in." : `Upload your ID and sign the terms first. ${need(g.freeSubmit.missing)}`)}
+      ${gateRow(g.freePublish.ok && g.paidPublish.ok, "Events go live and on sale", g.paidPublish.ok ? "Approved. Free and paid events can go live once we approve each event." : `Free events go live, and paid events go on sale, only after your ID and signed terms are approved. ${need(g.paidPublish.missing)}`)}
+      ${gateRow(g.payouts.ok, "Payouts", g.payouts.ok ? "Your bank account is verified." : v.sellsPaid ? `Blocked until your bank account is verified. ${need(g.payouts.missing)}` : "Only for paid events. Tick \"We will sell paid tickets\" below to see what payouts need.")}
+      ${(() => { const ph = v.requirements.find((r) => r.key === "phone"); return ph?.status === "approved" ? gateRow(true, "Mobile number", "Confirmed by SMS.")
+        : ph?.status === "missing" ? gateRow(false, "Mobile number", "Confirm your mobile number with a code we SMS you. Events go live once it is confirmed.")
+        : gateRow(true, "Mobile number", "Phone confirmation switches on when TicketRoom's SMS is set up. It does not hold anything up."); })()}
+    </ol></section>
+    ${own ? html`<section class="card mt"><h2>About you</h2><form class="stack" id="kp">
+      <fieldset class="field"><legend class="label">Who is selling tickets?</legend><div class="row">${Object.entries(v.entityNames).map(([k, l]) => html`<label class="check"><input type="radio" name="entityType" value="${k}" ${raw(p.entityType === k ? "checked" : "")}><span>${l}</span></label>`)}</div></fieldset>
+      <div class="grid-2"><div class="field"><label for="kp-nat" data-who>Identity document</label><select id="kp-nat" name="nationality"><option value="sa" ${raw(p.nationality === "sa" ? "selected" : "")}>South African ID or Smart ID (citizen or permanent resident)</option><option value="foreign" ${raw(p.nationality === "foreign" ? "selected" : "")}>Passport (foreign national)</option></select></div>
+        <div class="field"><label for="kp-name">Full name as on the ID</label><input id="kp-name" name="legalName" required maxlength="120" value="${p.legalName || ""}" autocomplete="off"></div></div>
+      <div class="grid-2"><div class="field"><label for="kp-id">ID or passport number</label><input id="kp-id" name="idNumber" inputmode="text" maxlength="20" autocomplete="off" placeholder="${p.hasIdNumber ? `Saved (${p.idNumberMasked}). Leave blank to keep it.` : ""}"><span class="hint">Checked on this page (date of birth, citizenship and check digit) and stored encrypted.</span></div>
+        <div class="field" data-org><label for="kp-reg">Registration number</label><input id="kp-reg" name="registrationNumber" maxlength="20" value="${p.registrationNumber || ""}" placeholder="2019/123456/07 or 123-456 NPO"></div></div>
+      <label class="check" data-company><input type="checkbox" name="repIsDirector" ${raw(p.repIsDirector ? "checked" : "")}><span>I am a director of the company</span></label>
+      <label class="check"><input type="checkbox" name="plansPaid" ${raw(p.plansPaid || v.sellsPaid ? "checked" : "")} ${raw(v.sellsPaid && !p.plansPaid ? "disabled" : "")}><span>We will sell paid tickets<br><span class="small muted">Paid sellers also need a bank confirmation letter${p.entityType !== "npo" ? " and proof of address" : ""} before the first payout.</span></span></label>
+      <div><button class="btn btn-dark">Save</button></div></form></section>` : html`<p class="callout small mt">Only the organisation's owners can upload documents and sign the terms. You can see what is still needed.</p>`}
+    <section class="card mt"><div class="card-title"><h2>Your checklist</h2><span class="small muted">PDF, JPG or PNG, up to ${kb(v.limits.maxBytes)} each</span></div>
+      <ul class="kyc-list">${v.requirements.map((it) => kycItem(it, own))}</ul>
+      ${v.sellsPaid && !v.bank.last4 ? html`<p class="small mb-0">Bank details are entered under <a href="#/settings">Settings</a>; then upload the letter for that account here.</p>` : ""}</section>
+    <section class="card mt"><h2>Event documents</h2>
+      <p class="small muted">Asked for only when an event needs them: alcohol on sale, 2 000 or more people, a public space, someone else's show, or a high-risk event (very large, high value, festivals, or a new organiser selling a lot).</p>
+      ${evItems.length ? evItems.map((e) => html`<div class="kyc-event"><div class="row between"><span><a href="#/events/${e.id}/checks"><strong>${e.title}</strong></a> <span class="small muted">${fmtDate(e.startsAt)}</span></span>
+          <span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : ""} ${badge(e.status_overall)}</span></div>
+          <ul class="small mb-0">${e.requirements.map((r) => html`<li>${r.label}: ${r.recommended ? "recommended" : r.status.replace(/_/g, " ")}</li>`)}</ul></div>`)
+        : html`<p class="mb-0">None of your current events needs extra documents.</p>`}</section>
+    ${own ? html`<section class="card mt"><h2>What we hold about you</h2>
+      <p class="small">We keep verification records for ${v.retention.years} years after your organiser account closes, as FICA requires, then delete them. Replaced or rejected copies are deleted after ${v.retention.discardRejectedDays} days. Documents are stored encrypted, outside the website, and only your organisation's owners and TicketRoom staff can open them.</p>
+      ${p.hasIdNumber ? html`<p class="small">ID or passport number: ${p.idNumberMasked}${p.dateOfBirth ? `, born ${p.dateOfBirth}` : ""}.</p>` : ""}
+      ${v.held.length ? html`<div class="table-wrap"><table><thead><tr><th>Document</th><th>Status</th><th>Uploaded</th><th class="num">Size</th></tr></thead><tbody>
+        ${v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No documents yet.</p>`}
+      <h3 class="mt">Who opened your documents</h3>
+      ${v.accessLog.length ? html`<ul class="small">${v.accessLog.map((x) => html`<li>${fmtDateTime(x.at)}: ${x.who}, ${x.action.toLowerCase()}</li>`)}</ul>` : html`<p class="muted small mb-0">Nobody yet.</p>`}</section>` : ""}`);
+  const f = $("#kp");
+  if (f) {
+    const sync = () => {
+      const t = f.querySelector("input[name=entityType]:checked")?.value || "individual";
+      $("[data-org]", f).classList.toggle("hidden", t === "individual");
+      $("[data-company]", f).classList.toggle("hidden", t !== "company");
+      $("[data-who]", f).textContent = t === "individual" ? "Identity document" : "The representative's identity document";
+      $("#kp-name").previousElementSibling.textContent = t === "individual" ? "Full name as on the ID" : "Representative's full name as on the ID";
+    };
+    $$("input[name=entityType]", f).forEach((r) => r.addEventListener("change", sync)); sync();
+    onSubmit(f, async (x) => {
+      const t = x.entityType || "individual";
+      await put(`${base()}/verification/profile`, { entityType: t, nationality: x.nationality, legalName: x.legalName, idNumber: x.idNumber || undefined,
+        registrationNumber: t === "individual" ? undefined : x.registrationNumber, repIsDirector: t === "company" ? !!x.repIsDirector : true, plansPaid: !!x.plansPaid });
+      toast("Saved.", "good"); verification();
+    });
+  }
+  kycWire(main, verification);
+}
+
+// An event's permits and checks: what the organiser declares about it, its
+// risk level and the documents those call for.
+async function checksTab(el, d, reload) {
+  await loadVerif();
+  const e = VERIF?.events.find((x) => x.id === d.event.id);
+  if (!e) return render(el, html`<section class="card"><p class="mb-0 muted">${["cancelled", "completed"].includes(d.event.status) ? "This event is over, so no documents are needed." : "Checks could not be loaded."}</p></section>`);
+  const own = VERIF.canManage;
+  const edit = can("owner", "manager") && ["draft", "pending_approval", "published"].includes(d.event.status);
+  const dc = e.risk.declared;
+  render(el, html`<section class="card"><h3>About this event</h3>
+      <p class="small muted">Your answers decide which permits we ask for. Nothing else is needed for a small event without alcohol.</p>
+      <form class="stack" id="rk">
+        <label class="check"><input type="checkbox" name="sellsAlcohol" ${raw(dc.sellsAlcohol ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>Alcohol will be sold</span></label>
+        <label class="check"><input type="checkbox" name="publicSpace" ${raw(dc.publicSpace ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>It is in a public space (a park, street or beach)</span></label>
+        <label class="check"><input type="checkbox" name="thirdParty" ${raw(dc.thirdParty ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>It is someone else's show (I am promoting an artist or another owner's event)</span></label>
+        ${edit ? html`<div><button class="btn btn-dark btn-sm">Save answers</button></div>` : ""}</form></section>
+    <section class="card mt"><div class="card-title"><h3>Documents for this event</h3><span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : html`<span class="badge good">standard</span>`}</span></div>
+      ${e.risk.reasons.length ? html`<p class="small">Why: ${e.risk.reasons.join("; ")}.</p>` : ""}
+      ${e.requirements.length ? html`<ul class="kyc-list">${e.requirements.map((it) => kycItem(it, own, e.id))}</ul>
+        <p class="small muted mb-0">Required documents must be uploaded before you submit the event, and approved before it goes live. Recommended ones never hold anything up.</p>` : html`<p class="mb-0">No extra documents are needed for this event.</p>`}
+      ${!own && e.requirements.some((r) => r.kind === "document") ? html`<p class="small mb-0">Only the organisation's owners can upload documents.</p>` : ""}</section>`);
+  const f = $("#rk", el);
+  if (edit) onSubmit(f, async (v) => { await put(`${base()}/events/${d.event.id}/risk`, { sellsAlcohol: !!v.sellsAlcohol, publicSpace: !!v.publicSpace, thirdParty: !!v.thirdParty }); toast("Saved.", "good"); reload(); });
+  kycWire(el, reload);
+}
+
+// ---------------- customer queries ----------------
+// Questions TicketRoom customer care has passed on. Replies are emailed to
+// the customer from TicketRoom, with your name and organisation.
+async function queries() {
+  const { queries: list, open } = await get(`${base()}/queries`);
+  QUERIES = open; nav();
+  render(main, html`${head("Customer queries", "Questions from your ticket buyers that TicketRoom customer care has passed to you. Please reply within two working days.")}
+    ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Customer</th><th>Question</th><th>Event</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map((q) => html`<tr><td class="mono">${q.reference}</td><td>${q.full_name || ""}<div class="tiny muted">${q.email}</div></td><td><strong>${q.subject}</strong></td><td class="small">${q.event_title || "–"}</td>
+        <td>${q.handled_by === "organiser" ? badge(q.status) : html`<span class="badge plain">back with TicketRoom</span>`}</td><td><a class="btn btn-ghost btn-sm" href="#/queries/${q.id}">Open</a></td></tr>`)}</tbody></table></div>`
+      : empty("No customer queries. When TicketRoom passes you a question from a ticket buyer, it appears here and we email you.")}`);
+}
+async function query({ id }) {
+  const { query: q, messages } = await get(`${base()}/queries/${id}`);
+  const mine = q.handled_by === "organiser";
+  const who = { customer: "Customer", ticketroom: "TicketRoom", organiser: "You", system: "TicketRoom" };
+  render(main, html`${head(q.subject, html`${q.reference}${q.event_title ? ` · ${q.event_title}` : ""}`, "", html`<a href="#/queries">Customer queries</a>`)}
+    <div class="grid-2"><section class="card stack"><h3>Conversation</h3>
+      <div class="thread"><div class="msg-row customer"><div class="tiny muted">${q.full_name || q.email} · ${fmtDateTime(q.created_at)}</div><p class="prose mb-0">${q.body}</p></div>
+        ${messages.map((m) => html`<div class="msg-row ${m.author_kind}"><div class="tiny muted">${who[m.author_kind]}${m.author_name && m.author_kind !== "system" ? ` · ${m.author_name}` : ""} · ${fmtDateTime(m.created_at)}</div><p class="prose mb-0">${m.body}</p></div>`)}</div></section>
+      <div class="stack">${mine ? html`<section class="card"><form class="stack" id="qr"><div class="field"><label for="qm">Reply to ${q.full_name || "the customer"}</label><textarea id="qm" name="message" required minlength="2" rows="6" placeholder="Answer their question. We email it to ${q.email} from TicketRoom, signed with your name and organisation."></textarea></div>
+          <label class="check"><input type="checkbox" name="resolve" checked><span>This answers it: mark resolved</span></label><button class="btn btn-primary">Send reply</button></form></section>
+        <section class="card"><form class="stack" id="qb"><div class="field"><label for="qn">Not yours to answer?</label><textarea id="qn" name="note" required minlength="3" placeholder="Tell TicketRoom why, e.g. it's about a payment."></textarea></div><button class="btn btn-ghost">Send back to TicketRoom</button></form></section>`
+        : html`<p class="callout">This query is back with TicketRoom customer care.</p>`}
+        <section class="card"><h3>Customer</h3><dl class="dl"><dt>Name</dt><dd>${q.full_name || "–"}</dd><dt>Email</dt><dd>${q.email}</dd>${q.phone ? html`<dt>Phone</dt><dd>${q.phone}</dd>` : ""}</dl>
+          <p class="tiny muted mb-0">Use these details only to answer this question (POPIA).</p></section></div></div>`);
+  if ($("#qr")) onSubmit($("#qr"), async (v) => { await post(`${base()}/queries/${id}/reply`, { message: v.message, resolve: !!v.resolve }); toast("Reply emailed to the customer.", "good"); query({ id }); });
+  if ($("#qb")) onSubmit($("#qb"), async (v) => { await post(`${base()}/queries/${id}/return`, { note: v.note }); toast("Sent back to TicketRoom.", "good"); location.hash = "#/queries"; });
+}
+
+// ---------------- team & settings ----------------
+async function team() {
+  const { members } = await get(`${base()}/members`);
+  render(main, html`${head("Team", "Give colleagues their own login with only the access they need.")}
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${members.map((m) => html`<tr><td>${m.full_name}</td><td>${m.email}</td><td>${m.role}</td><td>${can("owner") && m.role !== "owner" ? html`<button class="btn btn-ghost btn-sm" data-rm="${m.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>
+    ${can("owner") ? html`<section class="card mt"><h3>Add a team member</h3><form class="stack" id="tm"><div class="grid-2"><div class="field"><label for="me">Their work email</label><input id="me" name="email" type="email" required><span class="hint">Someone new gets an organiser login and an email to set their password. Customer accounts can't be added: team members use a separate work email.</span></div>
+      <div class="field"><label for="mr">Role</label><select id="mr" name="role"><option value="manager">Manager: events, staff, vendors</option><option value="marketing">Marketing: campaigns, promos</option><option value="finance">Finance: payouts, refunds</option><option value="viewer">Viewer: read only</option></select></div></div><button class="btn btn-dark">Add</button></form></section>` : ""}`);
+  if ($("#tm")) onSubmit($("#tm"), async (v) => { const r = await post(`${base()}/members`, v); toast(r.invited ? `Added. ${v.email} will get an email to set a password.` : "Added. They'll see your organisation when they next sign in.", "good"); team(); });
+  $$("[data-rm]").forEach((b) => b.addEventListener("click", async () => { await del(`${base()}/members/${b.dataset.rm}`); team(); }));
+}
+
+async function settings() {
+  const { organiser: o } = await get(`${base()}`);
+  render(main, html`${head("Settings")}<div class="grid-2">
+    <section class="card"><h2>Organisation</h2>${o.ref ? html`<p class="small">Organiser ID <strong class="mono">${o.ref}</strong>. Quote it when you contact TicketRoom.</p>` : ""}<form class="stack" id="of">
+      <div class="field"><label for="on">Name</label><input id="on" name="name" required value="${o.name}"></div>
+      <div class="field"><label for="oe">Contact email</label><input id="oe" name="contactEmail" type="email" required value="${o.contactEmail}"></div>
+      <div class="field"><label for="op">Contact number</label><input id="op" name="contactPhone" value="${o.contactPhone || ""}"></div>
+      <div class="field"><label for="od">About</label><textarea id="od" name="description">${o.description || ""}</textarea></div>
+      <button class="btn btn-dark" ${raw(can("owner", "manager") ? "" : "disabled")}>Save</button></form></section>
+    <section class="card"><h2>Bank details for payouts</h2>${o.bank ? html`
+      ${o.bank.last4 ? html`<p class="small">Current: ${o.bank.bankName} · ${o.bank.accountHolder} · ••••${o.bank.last4} · branch ${o.bank.branchCode}</p>` : ""}
+      <form class="stack" id="bf"><div class="field"><label for="bn">Bank</label><select id="bn" name="bankName">${["ABSA", "African Bank", "Capitec", "Discovery Bank", "FNB", "Investec", "Nedbank", "Standard Bank", "TymeBank", "Other"].map((b) => html`<option ${raw(b === o.bank.bankName ? "selected" : "")}>${b}</option>`)}</select></div>
+        <div class="field"><label for="bh">Account holder</label><input id="bh" name="accountHolder" required value="${o.bank.accountHolder || ""}"></div>
+        <div class="grid-2"><div class="field"><label for="ba">Account number</label><input id="ba" name="accountNumber" inputmode="numeric" required autocomplete="off"></div><div class="field"><label for="bb">Branch code</label><input id="bb" name="branchCode" inputmode="numeric" required value="${o.bank.branchCode || ""}"></div></div>
+        <button class="btn btn-dark">Save bank details</button><p class="tiny muted mb-0">Stored encrypted. Changes are logged. A new account needs a new bank confirmation letter under <a href="#/verification">Verification</a> before the next payout.</p></form>` : html`<p class="muted">Only owners and finance members can see bank details.</p>`}</section></div>`);
+  onSubmit($("#of"), async (v) => { await patch(`${base()}`, v); toast("Saved.", "good"); });
+  if ($("#bf")) onSubmit($("#bf"), async (v, f) => { await put(`${base()}/bank`, v); toast("Bank details saved.", "good"); f.elements.accountNumber.value = ""; await loadOrg(); settings(); });
+}
+
+async function loadOrg() {
+  ORGS = (await get("/api/organiser/orgs")).organisers;
+  const want = localStorage.getItem("tr_org");
+  const pick = ORGS.find((o) => o.id === want) || ORGS[0];
+  ORG = pick ? (await get(`/api/organiser/${pick.id}`)).organiser : null;
+  if (ORG && can("owner", "manager")) try { QUERIES = (await get(`/api/organiser/${ORG.id}/queries`)).open; } catch { QUERIES = 0; }
+  await loadVerif();
+}
+async function loadVerif() {
+  if (!ORG) { VERIF = null; return; }
+  try { VERIF = (await get(`/api/organiser/${ORG.id}/verification`)).verification; } catch { VERIF = null; }
+}
+
+(async () => {
+  await header($("#header"), { portal: "organiser" });
+  // Links from emails work signed out: choose a new password, confirm an email.
+  if (emailLinkPage("organiser")) return;
+  // Signed out: a welcome, not a bare sign-in box.
+  const u = await me();
+  // One account, one portal: customer and staff accounts never get in here.
+  if (u && accountType(u) !== "organiser") return wrongAccountPage(u, "organiser");
+  if (!u) {
+    render($("#sidenav"), "");
+    render(main, html`<section class="welcome card"><span class="tk-label">Organiser portal</span><h1>Sell tickets, scan people in, get paid</h1>
+      <p class="lead">Sign in to manage your events. New to TicketRoom? Create your organiser account in one step: listing free events costs nothing.</p>
+      <div class="row"><button class="btn btn-primary" data-in>Sign in</button><button class="btn btn-ghost" data-start>Start selling</button></div>
+      <p class="small muted mb-0">Buying tickets instead? <a href="/">Browse events</a></p></section>`);
+    $("[data-in]").addEventListener("click", () => authDialog("signin", { onDone: () => location.reload(), portal: "organiser" }));
+    $("[data-start]").addEventListener("click", () => organiserSignupDialog());
+    return;
+  }
+  await header($("#header"), { portal: "organiser" });
+  FEATURES = await features();
+  await loadOrg();
+  nav();
+  if (!ORG) { render($("#sidenav"), ""); return apply(); }
+  router([
+    ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)],
+    ["/verification", verification], ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/promote", promoteHome], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
+  ], () => { location.hash = "#/"; });
+})();

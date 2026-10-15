@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /api/
+Disallow: /account
+Disallow: /organisers
+Disallow: /scan
+Disallow: /pos
+Disallow: /orders/
+Disallow: /unsubscribe
+Disallow: /pass
+Disallow: /pay
