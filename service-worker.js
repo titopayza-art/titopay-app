@@ -1,14 +1,14 @@
-const CACHE_NAME = "titopay-pwa-v166-ui-refinement";
+const CACHE_NAME = "titopay-pwa-v193-chat-surface";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=166",
+  "./styles.css?v=193",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=166",
-  "./services-default.json?v=154",
-  "./manifest.webmanifest?v=166",
+  "./app.js?v=193",
+  "./services-default.json?v=193",
+  "./manifest.webmanifest?v=193",
   "./offline.html",
-  "./assets/titopay-logo.jpg",
+  "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
   "./assets/maskable-512.png?v=165",

@@ -12,6 +12,7 @@ const TITOPAY_CHAT_INVITES_KEY = "titopay_chat_invites_v1";
 const TITOPAY_CHAT_BLOCKS_KEY = "titopay_chat_blocks_v1";
 const TITOPAY_CALL_HISTORY_KEY = "titopay_call_history_v1";
 const IN_APP_NOTIFICATIONS_KEY = "titopay_in_app_notifications_v1";
+const TITOPAY_CHAT_CLEARED_KEY = "titopay_chat_cleared_at_v1";
 const PWA_REVIEW_QUEUE_KEY = "titopay_pending_pwa_reviews_v1";
 const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
@@ -81,13 +82,18 @@ const state = {
   sessionWarningTimer: null,
   sessionWarningShown: false,
   modalScrollY: 0,
+  modalOpener: null,
+  modalOpenerSelector: "",
   profilePhotoCrop: null,
   notifications: [],
   merchantSale: null,
   receiptFilters: { search: "", range: "all", merchant: "" },
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
-  ticketing: { eligibility: null, events: [], loading: false },
+  stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
+  ticketing: { eligibility: null, events: [], loading: false, search: "" },
+  pendingTicketPurchase: null,
+  learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
   publicEvent: null,
   installPrompt: null,
@@ -115,14 +121,124 @@ const navItems = [
   ["profile", "Profile", "user"]
 ];
 
+// ---------------------------------------------------------------------------
+// App chrome: fixed header state and per-route scroll memory
+//
+// render() replaces the whole screen, so the browser has nothing to restore
+// and every navigation used to land at the top -- including going back to a
+// list the user had scrolled halfway down. The position is remembered per
+// route and restored after the new screen has been painted.
+// ---------------------------------------------------------------------------
+
+const routeScrollPositions = new Map();
+
+function currentScrollY() {
+  return window.scrollY || document.documentElement.scrollTop || 0;
+}
+
+function rememberRouteScroll(route) {
+  if (!route) return;
+  if (document.body.classList.contains("modal-open")) return;
+  routeScrollPositions.set(route, currentScrollY());
+}
+
+function restoreRouteScroll(route) {
+  const target = routeScrollPositions.get(route) || 0;
+  // Two frames: the first lets the new screen lay out, the second lets the
+  // browser settle its own scroll anchoring before we override it.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: target, behavior: "auto" });
+      syncTopbarScrollState();
+    });
+  });
+}
+
+function syncTopbarScrollState() {
+  const bar = document.querySelector("[data-app-topbar]");
+  if (!bar) return;
+  bar.classList.toggle("is-scrolled", currentScrollY() > 2);
+}
+
+window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
+
+// ---------------------------------------------------------------------------
+// Landing: swipeable account segment
+//
+// The segment was two buttons that swapped colour. It now carries a thumb that
+// slides between them, and the landing accepts a horizontal swipe so the two
+// account types behave like a pager rather than a pair of toggles.
+// ---------------------------------------------------------------------------
+
+const LANDING_ACCOUNTS = ["personal", "business"];
+const SWIPE_MIN_DISTANCE = 48;
+// A gesture only counts as a swipe when it is clearly sideways, so a vertical
+// scroll or a tap never switches the account by accident.
+const SWIPE_MAX_VERTICAL_RATIO = 0.6;
+
+function switchLandingAccount(account) {
+  if (!LANDING_ACCOUNTS.includes(account) || state.accountType === account) return;
+  state.accountType = account;
+  state.authMode = "landing";
+  render();
+}
+
+function stepLandingAccount(direction) {
+  const index = LANDING_ACCOUNTS.indexOf(state.accountType === "business" ? "business" : "personal");
+  switchLandingAccount(LANDING_ACCOUNTS[Math.min(Math.max(index + direction, 0), LANDING_ACCOUNTS.length - 1)]);
+}
+
+let landingSwipe = null;
+
+function landingSwipeStart(event) {
+  if (!document.body.classList.contains("landing-static")) return;
+  if (event.pointerType === "mouse") return;
+  const surface = event.target.closest("[data-landing-swipe]");
+  if (!surface) return;
+  // Horizontal strips and form controls own their own sideways gestures.
+  if (event.target.closest("input, textarea, select, .suggestion-row, .learn-categories, .statement-periods")) return;
+  landingSwipe = { x: event.clientX, y: event.clientY, done: false };
+}
+
+function landingSwipeMove(event) {
+  if (!landingSwipe || landingSwipe.done) return;
+  const dx = event.clientX - landingSwipe.x;
+  const dy = event.clientY - landingSwipe.y;
+  if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return;
+  if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_VERTICAL_RATIO) return;
+  landingSwipe.done = true;
+  stepLandingAccount(dx < 0 ? 1 : -1);
+}
+
+function landingSwipeEnd() {
+  landingSwipe = null;
+}
+
+window.addEventListener("pointerdown", landingSwipeStart, { passive: true });
+window.addEventListener("pointermove", landingSwipeMove, { passive: true });
+window.addEventListener("pointerup", landingSwipeEnd, { passive: true });
+window.addEventListener("pointercancel", landingSwipeEnd, { passive: true });
+
+// Left/right arrows move between the two tabs, which is what a tablist should do.
+window.addEventListener("keydown", (event) => {
+  if (!document.body.classList.contains("landing-static")) return;
+  if (!event.target.closest?.("[data-account-segment]")) return;
+  if (event.key === "ArrowRight") stepLandingAccount(1);
+  else if (event.key === "ArrowLeft") stepLandingAccount(-1);
+});
+
 window.addEventListener("hashchange", () => {
+  const previousRoute = state.route;
+  rememberRouteScroll(previousRoute);
   state.route = location.hash.replace("#", "") || "dashboard";
   render();
+  restoreRouteScroll(state.route);
 });
 
 document.addEventListener("submit", onSubmit);
 document.addEventListener("click", onClick);
 document.addEventListener("input", onInput);
+document.addEventListener("keydown", handleVasPickerKeydown, true);
 document.addEventListener("change", onChange);
 ["pointerdown", "keydown", "scroll", "touchstart"].forEach((eventName) => {
   window.addEventListener(eventName, resetSessionTimers, { passive: true });
@@ -144,7 +260,31 @@ window.addEventListener("error", (event) => {
     showToast("Unable to complete the request. Please try again.", "error");
   }
 });
+function renderConnectivityBanner() {
+  const existing = document.querySelector(".connectivity-banner");
+  if (navigator.onLine) {
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    return;
+  }
+  if (existing) return;
+  const banner = document.createElement("div");
+  banner.className = "connectivity-banner";
+  banner.setAttribute("role", "status");
+  banner.setAttribute("aria-live", "polite");
+  banner.innerHTML = `${icon("refresh")}<span>You are offline. TitoPay will reconnect automatically. Anything you have not submitted has not been sent.</span>`;
+  document.body.appendChild(banner);
+}
+
+function announceConnectivityRestored() {
+  const banner = document.querySelector(".connectivity-banner");
+  if (banner && banner.parentNode) banner.parentNode.removeChild(banner);
+  showToast("Connection restored.");
+}
+
+window.addEventListener("offline", renderConnectivityBanner);
+
 window.addEventListener("online", () => {
+  announceConnectivityRestored();
   if (!state.auth || !state.auth.accessToken) return;
   syncTitoPayAccountStatus({ silent: true }).catch(() => null);
   connectTitoPayChatSocket({ force: true });
@@ -176,6 +316,7 @@ boot();
 
 async function boot() {
   registerServiceWorker();
+  renderConnectivityBanner();
   await Promise.all([checkApiHealth(), loadServices(), loadMaintenanceMode(), loadPublicEventFromPath()]);
   if (state.auth && state.auth.accessToken) {
     await loadAccount();
@@ -404,6 +545,17 @@ function friendlyFormError(error, formName = "") {
     if (status === 429) return "Too many login attempts. Please wait a few minutes and try again.";
     return `Unable to sign in right now. Please try again shortly.${suffix}`;
   }
+  // api() falls back to "Request failed (NNN)" when the API sends no message of
+  // its own. That is a developer string and must never reach a customer.
+  if (/^request failed \(\d+\)$/i.test(rawMessage)) {
+    if (status === 400 || status === 422) return `Some of these details could not be accepted. Check what you entered and try again.${suffix}`;
+    if (status === 401 || status === 403) return `You are not authorised to complete this. Sign in again, or contact support if it continues.${suffix}`;
+    if (status === 404) return `TitoPay could not find what this request needs. Please try again, or contact support if it continues.${suffix}`;
+    if (status === 409) return `This request has already been received. Check Activity before trying again.${suffix}`;
+    if (status === 429) return `Too many attempts. Please wait a moment and try again.${suffix}`;
+    if (status >= 500) return `TitoPay or the provider could not complete this right now. Please try again shortly.${suffix}`;
+    return `Unable to complete the request. Please try again.${suffix}`;
+  }
   if (/something went wrong|internal server error/i.test(rawMessage)) {
     return `Unable to complete the request. Please try again.${suffix}`;
   }
@@ -470,7 +622,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=152", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=193", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -525,8 +677,12 @@ function commercialServiceIcon(item = {}) {
     "airtime-data": "sim-card",
     "airtime-and-data": "sim-card",
     airtime: "sim-card",
-    data: "signal",
-    electricity: "zap",
+    data: "data-bundle",
+    "mobile-data": "data-bundle",
+    sms: "sms-bundle",
+    "sms-bundle": "sms-bundle",
+    "sms-bundles": "sms-bundle",
+    electricity: "electricity",
     voucher: "voucher",
     "pay-bills": "bill-pay",
     stockvel: "stockvel",
@@ -684,6 +840,62 @@ function addInAppNotification(data = {}) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Transactions in the notification centre
+//
+// Every entry here is derived from /v1/transactions -- the same real data the
+// Activity tab shows. Nothing is invented: the API does not emit payment
+// notifications yet (documented in API-REQUIREMENTS.md P1-5), so the client
+// presents the transactions it already has. A per-user seen-list makes the
+// first sync a silent backfill -- old history must not arrive as 12 unread
+// alerts -- and everything after that lands unread, which is what moves the
+// bell badge when money moves.
+// ---------------------------------------------------------------------------
+
+function notificationSeenTxKey() {
+  const user = state.user || {};
+  return `titopay_tx_seen_v1_${user.id || user.username || "anon"}`;
+}
+
+function transactionNotificationItem(tx, unread) {
+  const credit = String(tx.direction || "").toLowerCase() === "credit";
+  const amount = Number(tx.amount ?? tx.total ?? 0);
+  const parts = [
+    tx.service_name || tx.serviceName || "Wallet transaction",
+    Number.isFinite(amount) && amount > 0 ? money(amount) : "",
+    tx.reference ? `Ref ${tx.reference}` : ""
+  ].filter(Boolean);
+  return {
+    id: `tx-${tx.id || tx.reference}`,
+    type: credit ? "payment-in" : "payment-out",
+    title: credit ? "Money received" : "Payment sent",
+    body: parts.join(" \u00b7 "),
+    unread,
+    createdAt: tx.created_at || tx.createdAt || new Date().toISOString(),
+    metadata: { txId: tx.id || "", txReference: tx.reference || "", direction: credit ? "credit" : "debit", category: "payment" }
+  };
+}
+
+function syncTransactionNotifications() {
+  if (!state.user || !Array.isArray(state.transactions) || !state.transactions.length) return false;
+  const seenKey = notificationSeenTxKey();
+  const stored = readJson(seenKey);
+  const firstSync = !Array.isArray(stored);
+  const seen = new Set(Array.isArray(stored) ? stored : []);
+  let changed = false;
+  // Oldest first, so the inbox reads in the order things happened.
+  [...state.transactions].reverse().forEach((tx) => {
+    const key = String(tx.id || tx.reference || "");
+    if (!key) return;
+    const isNew = !seen.has(key);
+    seen.add(key);
+    // Backfill quietly on first sync; only genuinely new movements are unread.
+    if (addInAppNotification(transactionNotificationItem(tx, isNew && !firstSync))) changed = true;
+  });
+  writeJson(seenKey, [...seen].slice(-300));
+  return changed;
+}
+
 async function syncTitoPayChatNotifications() {
   if (!state.auth || !state.auth.accessToken || !state.user) return false;
   const result = await api("/v1/chat/notifications");
@@ -720,13 +932,6 @@ function homeQuickServices() {
     "qr_pay",
     "qr_payments"
   ]);
-  const dataActions = new Set([
-    "data",
-    "airtime-data",
-    "airtime-&-data",
-    "airtime-and-data",
-    "mobile-data"
-  ]);
   const valuesFor = (service) => [
     service.id,
     service.action,
@@ -734,10 +939,15 @@ function homeQuickServices() {
     service.serviceCode,
     service.label
   ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
-  const sendMoney = activeServices().find((service) => valuesFor(service).some((value) => value === "send" || value === "send-money"));
-  const services = activeServices().filter((service) => {
+  // Quick services used to exclude the combined airtime-and-data product, which
+  // left the standalone "Airtime" entry to represent it here while the Services
+  // grid showed the combined "Airtime & Data" tile. One product, two names, two
+  // screens. Both lists now collapse the trio the same way.
+  const source = hideDuplicateAirtimeDataTiles(activeServices());
+  const sendMoney = source.find((service) => valuesFor(service).some((value) => value === "send" || value === "send-money"));
+  const services = source.filter((service) => {
     const values = valuesFor(service);
-    return !values.some((value) => repeatedActions.has(value) || dataActions.has(value));
+    return !values.some((value) => repeatedActions.has(value));
   });
   return [
     ...(sendMoney ? [sendMoney] : []),
@@ -749,10 +959,44 @@ function comingSoonServices() {
   return visibleServices().filter((service) => service.status === "coming_soon");
 }
 
+// Three rows. Two rows left ~200px of height to absorb on a 6.9" screen, and
+// stretching six cards to swallow it made them tall and empty. A third row of
+// real services fills the same space with something worth looking at.
+const LANDING_PREVIEW_COUNT = 9;
+
+// Each entry is a list of aliases, because the live catalogue does not always
+// use the same code as the fallback. The airtime slot in particular was a
+// single "airtime" key, and a catalogue that only publishes the combined
+// "Airtime & Data" product matched none of it -- which is how the landing came
+// to render five tiles in a three-column grid, with a hole where the sixth
+// should be.
+const LANDING_PREVIEW_KEYS = {
+  personal: [
+    ["top-up"],
+    ["withdraw"],
+    ["send-money", "send"],
+    ["airtime-data", "airtime-and-data", "airtime-&-data", "airtime"],
+    ["pay-bills"],
+    ["tickets"],
+    ["electricity", "prepaid-electricity"],
+    ["payment-request", "request-payment"],
+    ["vouchers", "voucher"]
+  ],
+  business: [
+    ["top-up"],
+    ["receive-money", "receive"],
+    ["payouts"],
+    ["ticketing"],
+    ["invoice"],
+    ["statements", "transactions"],
+    ["payment-request", "request-payment"],
+    ["quote", "quotes"],
+    ["learn", "business-learn"]
+  ]
+};
+
 function landingPreviewServices() {
-  const preferred = state.accountType === "business"
-    ? ["top-up", "receive-money", "payouts", "ticketing", "invoice", "transactions"]
-    : ["top-up", "withdraw", "send-money", "airtime", "pay-bills", "tickets"];
+  const groups = LANDING_PREVIEW_KEYS[state.accountType === "business" ? "business" : "personal"];
   const valuesFor = (service) => [
     service.id,
     service.action,
@@ -760,19 +1004,61 @@ function landingPreviewServices() {
     service.serviceCode,
     service.label
   ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
-  const services = activeServices();
+  const services = hideDuplicateAirtimeDataTiles(activeServices());
   const selected = [];
-  preferred.forEach((key) => {
-    const match = services.find((service) => valuesFor(service).includes(key));
-    if (match && !selected.some((service) => service.id === match.id || service.serviceCode === match.serviceCode || service.action === match.action)) {
-      selected.push(match);
+  const taken = (candidate) => selected.some((service) =>
+    service.id === candidate.id || service.serviceCode === candidate.serviceCode || service.action === candidate.action);
+
+  groups.forEach((aliases) => {
+    for (const key of aliases) {
+      const match = services.find((service) => valuesFor(service).includes(key));
+      if (match && !taken(match)) {
+        selected.push(match);
+        return;
+      }
     }
   });
-  return selected.slice(0, 6);
+
+  // The grid is three columns wide, so a short list leaves a visible hole in
+  // the last row. Top up from whatever else the catalogue offers so the block
+  // is always complete.
+  services.forEach((service) => {
+    if (selected.length >= LANDING_PREVIEW_COUNT) return;
+    if (!taken(service)) selected.push(service);
+  });
+
+  // Never leave an orphan: show a full row rather than one stranded tile.
+  const complete = Math.floor(selected.length / 3) * 3;
+  return selected.slice(0, Math.min(selected.length >= 3 ? complete : selected.length, LANDING_PREVIEW_COUNT));
+}
+
+// The catalogue has no enterprise-distribution row, so an approved
+// organisation had no tile in Services and could only reach Bulk Distribution
+// through the profile. The tile is synthesised client-side, gated on the
+// eligibility the API itself returns -- it never appears for anyone the
+// server would turn away.
+function enterpriseDistributionTileService() {
+  return {
+    id: "enterprise-distribution",
+    label: "Bulk Distribution",
+    icon: "bulk-distribution",
+    service_icon: "bulk-distribution",
+    action: "enterprise-distribution",
+    type: "enterpriseDistribution",
+    status: "active",
+    description: "Pay many TitoPay wallets from one validated batch."
+  };
+}
+
+function enterpriseDistributionTileVisible() {
+  return state.accountType === "business" && Boolean(state.enterpriseDistribution?.eligibility?.eligible);
 }
 
 function serviceById(id) {
-  return state.services.find((service) => service.id === id || service.action === id);
+  const found = state.services.find((service) => service.id === id || service.action === id);
+  if (found) return found;
+  if (id === "enterprise-distribution" && enterpriseDistributionTileVisible()) return enterpriseDistributionTileService();
+  return undefined;
 }
 
 async function loadAccount() {
@@ -794,6 +1080,7 @@ async function loadAccount() {
     state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
     state.accountType = profile.user && (profile.user.accountType || profile.user.account_type) || state.accountType;
     loadInAppNotifications();
+    syncTransactionNotifications();
   } catch (error) {
     showToast(error.message || "Session expired", "error");
     clearAuth();
@@ -825,10 +1112,47 @@ function startTitoPayAccountSync() {
   }, 15000);
 }
 
+// Rewrites only the bell badge. A full render() here would replace the whole
+// screen and wipe whatever form the user is typing into, fifteen seconds in.
+function refreshNotificationBadge() {
+  const bell = document.querySelector("[data-app-topbar] .notification-avatar");
+  if (!bell) return;
+  const unread = unreadNotificationCount();
+  const existing = bell.querySelector(".notification-count");
+  if (!unread) {
+    if (existing) existing.remove();
+    return;
+  }
+  const label = unread > 9 ? "9+" : String(unread);
+  if (existing) {
+    existing.textContent = label;
+    existing.setAttribute("aria-label", `${unread} unread notifications`);
+    return;
+  }
+  const badge = document.createElement("span");
+  badge.className = "notification-count";
+  badge.setAttribute("aria-label", `${unread} unread notifications`);
+  badge.textContent = label;
+  bell.appendChild(badge);
+}
+
 async function syncTitoPayAccountStatus(options = {}) {
   if (!state.auth || !state.auth.accessToken) return false;
   const wasLocked = isWalletLocked();
   const previousStatus = String(state.user?.status || state.user?.accountStatus || "").toLowerCase();
+  // Money movements should reach the bell without waiting for a manual
+  // refresh. Same endpoint the Activity tab uses; any failure is ignored so a
+  // flaky poll can never break the session heartbeat below.
+  try {
+    const latest = await api("/v1/transactions");
+    if (Array.isArray(latest.items)) {
+      state.transactions = latest.items;
+      if (syncTransactionNotifications()) refreshNotificationBadge();
+    }
+  } catch (error) {
+    // Auth failures fall through to the profile call below, which owns
+    // session-expiry handling; anything else is just a missed poll.
+  }
   try {
     const profile = await api("/v1/auth/me");
     const nextUser = hydrateAccountMedia(Object.assign({}, state.user || {}, profile.user || {}));
@@ -909,13 +1233,14 @@ function render() {
   document.body.classList.remove("landing-static");
   app.innerHTML = appView();
   renderInstallButton();
+  syncTopbarScrollState();
 }
 
 function maintenanceView(maintenance = {}) {
   return `
     <main class="screen auth-screen landing-flow">
       <header class="topbar">
-        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
       <section class="panel empty-state maintenance-state">
@@ -933,24 +1258,26 @@ function authView() {
   const isBusiness = state.accountType === "business";
   const previewServices = landingPreviewServices();
   return `
-    <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}">
+    <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}" data-landing-swipe>
       <header class="topbar">
-        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
 
       <section class="hero landing-hero">
-        <div class="segment" role="tablist" aria-label="Account type">
-          <button type="button" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
-          <button type="button" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
+        <div class="segment${isBusiness ? " is-business" : ""}" role="tablist" aria-label="Account type" data-account-segment>
+          <span class="segment-thumb" aria-hidden="true"></span>
+          <button type="button" role="tab" aria-selected="${!isBusiness}" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
+          <button type="button" role="tab" aria-selected="${isBusiness}" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
         </div>
-        <h1>${isBusiness ? "Accept payments. Grow your business." : "Smart Payments. Simplified."}</h1>
+        <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
+        <p class="landing-tagline">Smart Payments. Simplified.</p>
       </section>
 
       <section class="trust-strip" aria-label="TitoPay trust features">
         ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
-        ${trustItem(isBusiness ? "chart" : "check-circle", isBusiness ? "Business Growth" : "No Monthly Fees")}
-        ${trustItem("shield", isBusiness ? "Secure Transactions" : "Secure Wallet")}
+        ${trustItem(isBusiness ? "sale" : "check-circle", isBusiness ? "Sales & Payouts" : "No Monthly Fees")}
+        ${trustItem("shield", "Secure Payments")}
       </section>
 
       <section class="service-grid preview-grid">
@@ -959,20 +1286,23 @@ function authView() {
 
       <section class="auth-actions">
         <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign In</button>
-        <button class="btn secondary" data-auth-tab="register">${icon("lock")} ${isBusiness ? "Create Business Account" : "Create Account"}</button>
+        <button class="btn secondary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
       </section>
 
-      <section class="scan-card">
+      <footer class="scan-card landing-cta-footer" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
         <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
-        <div>
+        <div class="landing-cta-copy">
+          <p class="landing-cta-eyebrow">TitoPay QR</p>
           <h3>${isBusiness ? "Accept Payment" : "Scan To Pay"}</h3>
-          <p>${isBusiness ? "Show your TitoPay QR and accept customer payments instantly." : "Scan a TitoPay QR code and pay instantly."}</p>
-          <button class="btn secondary" data-auth-tab="login">${isBusiness ? "Sign in to show QR" : "Sign in to scan QR"}</button>
+          <p class="landing-cta-lead">${isBusiness ? "Take payment straight into your business wallet." : "Pay straight from your wallet, in seconds."}</p>
+          <ul class="landing-cta-points">
+            ${(isBusiness
+              ? ["One QR for every customer", "Money lands in your wallet", "Every sale receipted"]
+              : ["Scan any TitoPay QR", "See the amount before you pay", "Paid in seconds"]
+            ).map((point) => `<li>${icon("check-circle")}<span>${esc(point)}</span></li>`).join("")}
+          </ul>
         </div>
-      </section>
-
-      <footer class="landing-site-footer" aria-label="TitoPay website">
-        <a href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a>
+        <button class="btn primary landing-cta-btn" data-auth-tab="login" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">${icon(isBusiness ? "qr" : "scan")} ${isBusiness ? "Show my QR" : "Scan to pay"}</button>
       </footer>
 
     </main>
@@ -1125,9 +1455,12 @@ function otpForm(challenge) {
 
 function appView() {
   const route = state.route;
+  // The top bar sits outside .screen so it is not part of the scrolling flow
+  // and does not re-run the route fade on every navigation. The screen reserves
+  // its height as padding, which is what keeps content from passing under it.
   return `
+    ${topbar()}
     <main class="screen">
-      ${topbar()}
       ${route === "services" ? servicesView() : ""}
       ${route === "qr" ? qrView() : ""}
       ${route === "activity" ? activityView() : ""}
@@ -1141,8 +1474,8 @@ function appView() {
 function topbar() {
   const unread = unreadNotificationCount();
   return `
-    <header class="topbar">
-      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+    <header class="topbar app-topbar" data-app-topbar>
+      <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
       <div>
         <button class="icon-btn" type="button" data-action="chatbot" aria-label="Open TitoPay chatbot">${icon("chatbot")}</button>
         <button class="avatar notification-avatar" type="button" data-action="notifications" aria-label="Open notifications">
@@ -1160,7 +1493,7 @@ function dashboardView() {
   return `
     <section class="dashboard-grid">
       <div>
-        <section class="wallet-card">
+        <section class="wallet-card${state.accountType === "business" ? " wallet-card-business" : ""}">
           <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"}</p>
           <div class="wallet-balance-line">
             <div class="wallet-balance">${state.loading && !state.wallets.length ? '<span class="skeleton skeleton-balance" aria-hidden="true"></span>' : displayMoney(wallet ? wallet.available_balance : undefined)}</div>
@@ -1187,34 +1520,36 @@ function dashboardView() {
         </section>
       </div>
       <aside>
-        <section class="panel">
-          <p class="eyebrow">Today</p>
-          <h2>Transaction summary</h2>
+        <section class="panel home-summary-card">
+          <div class="home-summary-head">
+            <h2>Transaction summary</h2>
+            <p class="eyebrow">Today</p>
+          </div>
           <div class="stats-grid">
             <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : state.transactions.length}</strong><span>Records</span></div>
             <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("credit"))}</strong><span>In</span></div>
             <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("debit"))}</strong><span>Out</span></div>
           </div>
         </section>
-        <section class="section-head">
-          <div>
-            <h2>Recent activity</h2>
-          </div>
-        </section>
-        ${activityList(state.transactions.slice(0, 5))}
       </aside>
     </section>
   `;
 }
 
 function servicesView() {
-  const hiddenServiceTiles = new Set(["transactions", "profile-security"]);
+  // Pure navigation entries. Each of these routes to a tab that already exists
+  // in the bottom navigation, so a tile for them is a duplicate of the nav, not
+  // a service. Business Profile was the one still leaking into the grid.
+  const hiddenServiceTiles = new Set(["transactions", "profile-security", "business-profile"]);
   const shouldShowServiceTile = (service) => {
     const action = String(service.action || "").toLowerCase();
     const id = String(service.id || service.serviceCode || service.service_code || "").toLowerCase();
     return !hiddenServiceTiles.has(action) && !hiddenServiceTiles.has(id);
   };
   const active = hideDuplicateAirtimeDataTiles(activeServices().filter(shouldShowServiceTile));
+  if (enterpriseDistributionTileVisible() && !active.some((service) => String(service.action || service.id) === "enterprise-distribution")) {
+    active.push(enterpriseDistributionTileService());
+  }
   const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
   return `
     ${state.serviceError ? promoCarousel() : ""}
@@ -1345,7 +1680,7 @@ function profileView() {
       <div>
         <h2>${esc(displayName)}</h2>
         <p class="lead">${esc(displayUsername(user.username))} ${user.email ? "· " + esc(user.email) : ""}</p>
-        <span class="badge">${icon("shield")} FICA ${esc(ficaStatus)}</span>
+        <button class="badge badge-btn" type="button" data-action="fica-verification" aria-label="FICA status ${esc(ficaStatus)}. Open FICA verification.">${icon("shield")} FICA ${esc(ficaStatus)}</button>
       </div>
     </section>
     <section class="profile-summary-card panel" aria-label="Profile summary">
@@ -1359,7 +1694,9 @@ function profileView() {
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
       ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
-      ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bank", "enterprise-distribution") : ""}
+      ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
+      ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
+      ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
       ${profileFeature("Support", "Get help from TitoPay Customer Care.", "send", "support")}
     </section>
     <section class="section-head compact"><h2>Security & Verification</h2></section>
@@ -1456,19 +1793,137 @@ function activityList(items) {
     const statusBadge = ["pending", "processing", "failed", "declined", "reversed"].includes(statusValue)
       ? ` <em class="tx-status ${statusValue === "pending" || statusValue === "processing" ? "" : "failed"}">${esc(statusValue)}</em>`
       : "";
-    return `<article class="activity-item">
+    const label = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
+    const amountText = `${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}`;
+    return `<button class="activity-item" type="button" data-transaction-open="${esc(transactionKey(item))}" aria-label="${esc(`${label}, ${direction === "credit" ? "money in" : "money out"} ${amountText}. View transaction details.`)}">
       <span class="icon-bubble">${icon(direction === "credit" ? "download" : "upload")}</span>
       <div>
-        <p><strong>${esc(item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction")}</strong></p>
+        <p><strong>${esc(label)}</strong></p>
         <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}${statusBadge}</small>
       </div>
-      <strong class="amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}</strong>
-    </article>`;
+      <strong class="amount ${direction === "credit" ? "credit" : ""}">${amountText}</strong>
+    </button>`;
   }).join("")}</section>`;
 }
 
-function settingsRow(label, value, iconName) {
-  return `<article class="activity-item">
+// Identify a transaction across the filtered/sliced arrays the lists render
+// from, using only fields the payload already provides.
+function transactionKey(item = {}) {
+  return String(
+    item.id || item.transaction_id || item.transactionId || item.reference ||
+    item.created_at || item.createdAt || ""
+  );
+}
+
+function findTransactionByKey(key) {
+  if (!key) return null;
+  return (state.transactions || []).find((item) => transactionKey(item) === key) || null;
+}
+
+function transactionStatusMeaning(status) {
+  const map = {
+    completed: "This transaction has been processed.",
+    success: "This transaction has been processed.",
+    successful: "This transaction has been processed.",
+    paid: "This transaction has been processed.",
+    pending: "TitoPay is waiting for confirmation. This transaction is not final yet.",
+    processing: "This transaction is being processed.",
+    failed: "This transaction did not go through.",
+    declined: "This transaction was declined.",
+    reversed: "This transaction was reversed."
+  };
+  return map[String(status || "").toLowerCase()] || "";
+}
+
+function transactionStatusLabel(status) {
+  const raw = String(status || "").toLowerCase();
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Recorded";
+}
+
+function transactionNeedsSupport(status) {
+  return ["failed", "declined", "reversed"].includes(String(status || "").toLowerCase());
+}
+
+// A receipt is only linked when one already exists locally for this transaction.
+function receiptForTransaction(item = {}) {
+  const keys = [item.id, item.transaction_id, item.transactionId, item.reference]
+    .filter(Boolean).map(String);
+  if (!keys.length) return null;
+  return titoPayReceipts().find((receipt) =>
+    keys.includes(String(receipt.transactionId || "")) ||
+    keys.includes(String(receipt.id || "")) ||
+    keys.includes(String(receipt.reference || ""))
+  ) || null;
+}
+
+function openTransactionDetailModal(key) {
+  const item = findTransactionByKey(key);
+  if (!item) {
+    showToast("This transaction is no longer available. Pull to refresh Activity.", "error");
+    return;
+  }
+  const direction = item.direction === "credit" ? "credit" : "debit";
+  const statusRaw = String(item.status || "").toLowerCase();
+  const meaning = transactionStatusMeaning(statusRaw);
+  const amountValue = item.total ?? item.amount;
+  const created = item.created_at || item.createdAt;
+  const dateObj = created ? new Date(created) : null;
+  const service = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
+  const reference = item.reference || "";
+  const txId = item.transaction_id || item.transactionId || item.id || "";
+  // Counterparty and fee are shown ONLY when the payload actually carries them.
+  const counterparty = item.recipient || item.recipient_name || item.recipientName ||
+    item.sender || item.sender_name || item.senderName ||
+    item.merchant || item.merchant_name || item.merchantName || "";
+  const feeRaw = item.fee ?? item.fee_amount ?? item.feeAmount;
+  const hasFee = feeRaw !== undefined && feeRaw !== null && feeRaw !== "" && Number.isFinite(Number(feeRaw));
+  const receipt = receiptForTransaction(item);
+
+  const rows = [
+    ["Type", service, "grid"],
+    ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"]
+  ];
+  if (hasFee) rows.push(["Fee", money(Number(feeRaw)), "shield"]);
+  if (dateObj && !Number.isNaN(dateObj.getTime())) {
+    rows.push(["Date", dateObj.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }), "list"]);
+    rows.push(["Time", dateObj.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }), "refresh"]);
+  }
+  if (counterparty) rows.push([direction === "credit" ? "From" : "To", counterparty, "user"]);
+  vasInfoCredentials(vasCredentials(item)).forEach((entry) => {
+    rows.push([entry.label, entry.value, entry.label === "Provider" ? "bank" : "tag"]);
+  });
+  if (reference) rows.push(["Reference", reference, "tag"]);
+  if (txId && String(txId) !== String(reference)) rows.push(["Transaction ID", txId, "copy"]);
+
+  const statusLabel = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : "Recorded";
+  const statusClass = ["failed", "declined", "reversed"].includes(statusRaw)
+    ? "failed"
+    : ["pending", "processing"].includes(statusRaw) ? "" : "settled";
+
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Transaction</p><h2>${esc(service)}</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="tx-detail-summary" aria-label="Transaction amount and status">
+      <p class="tx-detail-amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${esc(money(amountValue))}</p>
+      <p class="tx-detail-status"><span class="tx-status ${statusClass}">${esc(statusLabel)}</span></p>
+      ${meaning ? `<p class="tx-detail-meaning">${esc(meaning)}</p>` : ""}
+    </section>
+    ${vasCredentialPanel(vasCredentials(item))}
+    <section class="panel tx-detail-rows">
+      ${rows.map(([label, value, iconName]) => settingsRow(label, value, iconName)).join("")}
+    </section>
+    <div class="tx-detail-actions">
+      ${receipt ? `<button class="btn secondary" type="button" data-receipt-open="${esc(receipt.id)}">${icon("receipt-list")} View receipt</button>` : ""}
+      ${transactionNeedsSupport(statusRaw) ? `<button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>` : ""}
+      <button class="btn secondary" type="button" data-close>${icon("check-circle")} Done</button>
+    </div>
+  `);
+}
+
+function settingsRow(label, value, iconName, emphasis = "") {
+  return `<article class="activity-item${emphasis ? ` row-emphasis row-emphasis-${emphasis}` : ""}">
     <span class="icon-bubble">${icon(iconName)}</span>
     <div><p><strong>${esc(label)}</strong></p><small>${esc(value)}</small></div>
   </article>`;
@@ -1476,29 +1931,108 @@ function settingsRow(label, value, iconName) {
 
 function notificationActionAttributes(item = {}) {
   const metadata = item.metadata || {};
-  if (metadata.receiptId) return `data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
+  const idAttr = `data-notice-id="${esc(item.id || "")}"`;
+  if (metadata.receiptId) return `${idAttr} data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
   const ticketRef = metadata.ticketRef || metadata.ticketId;
-  if (ticketRef) return `data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
+  if (ticketRef) return `${idAttr} data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
+  if (metadata.txId || metadata.txReference) return `${idAttr} data-notification-tx="${esc(metadata.txId || metadata.txReference)}" role="button" tabindex="0"`;
+  // A chat notification opens the conversation it is about. The server does
+  // not always name the thread; when it does not, the chat home is still the
+  // right landing, not a dead row.
+  if (notificationCategory(item) === "messages") {
+    const threadRef = metadata.threadId || metadata.thread_id || metadata.chatThreadId || metadata.conversationId || "";
+    return `${idAttr} data-notification-chat="${esc(threadRef)}" role="button" tabindex="0"`;
+  }
   return "";
 }
 
-function notificationListHtml() {
-  const items = state.notifications || [];
-  if (!items.length) {
-    return `<section class="empty-state">${icon("bell")}<strong>No unread messages</strong><p>Notifications, support updates and chat alerts will appear here.</p></section>`;
+// A tapped notification is a read notification, whatever it opened.
+function markNotificationReadById(noticeId) {
+  if (!noticeId) return;
+  let changed = false;
+  state.notifications = (state.notifications || []).map((item) => {
+    if (item.id === noticeId && item.unread) {
+      changed = true;
+      return { ...item, unread: false };
+    }
+    return item;
+  });
+  if (changed) {
+    persistInAppNotifications();
+    refreshNotificationBadge();
   }
-  return `<section class="notification-list">${items.map((item) => `
-    <article class="notification-item ${item.unread ? "unread" : ""}" ${notificationActionAttributes(item)}>
-      <span class="icon-bubble">${icon(item.critical ? "shield" : "bell")}</span>
+}
+
+// Which drawer of the inbox a notification belongs in. Payments come from the
+// transaction sync; messages are chat and support; everything security-marked
+// or critical is security; the rest is account noise.
+function notificationCategory(item = {}) {
+  const metadata = item.metadata || {};
+  if (metadata.category === "payment" || String(item.type || "").startsWith("payment-")) return "payments";
+  const serverType = String(metadata.notificationType || item.type || "").toLowerCase();
+  if (/chat|support|message/.test(serverType) || metadata.ticketRef || metadata.ticketId) return "messages";
+  if (item.critical || /security|otp|pin|password|lock/.test(serverType)) return "security";
+  return "account";
+}
+
+const NOTIFICATION_FILTERS = [
+  ["all", "All"],
+  ["payments", "Payments"],
+  ["messages", "Messages"],
+  ["security", "Security"]
+];
+
+function notificationItemIcon(item) {
+  const category = notificationCategory(item);
+  if (category === "payments") return item.metadata?.direction === "credit" ? "qr-receive" : "send";
+  if (category === "messages") return "chat";
+  if (category === "security") return "shield";
+  return "bell";
+}
+
+// "2 min ago" for the recent past, a dated stamp beyond a week -- the same
+// convention every wallet inbox uses, because "29/07/2026 10:41" tells you
+// nothing at a glance about whether the money moved just now.
+function notificationTimeLabel(value) {
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return "";
+  const minutes = Math.round((Date.now() - then) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return formatDate(value);
+}
+
+function notificationListHtml() {
+  const filter = state.notificationFilter || "all";
+  const all = state.notifications || [];
+  const items = filter === "all" ? all : all.filter((item) => notificationCategory(item) === filter);
+  const chips = `<div class="notification-filters" role="tablist" aria-label="Notification filters">${NOTIFICATION_FILTERS.map(([id, label]) => {
+    const count = id === "all" ? all.length : all.filter((item) => notificationCategory(item) === id).length;
+    return `<button type="button" role="tab" aria-selected="${filter === id}" class="chip ${filter === id ? "is-active" : ""}" data-notification-filter="${id}">${esc(label)}${count ? ` (${count})` : ""}</button>`;
+  }).join("")}</div>`;
+  if (!items.length) {
+    return `${chips}<section class="empty-state">${icon("bell")}<strong>${filter === "all" ? "Nothing here yet" : "Nothing in this view"}</strong><p>${filter === "payments" ? "Money in and out will appear here as it happens." : "Notifications, support updates and chat alerts will appear here."}</p></section>`;
+  }
+  return `${chips}<section class="notification-list">${items.map((item) => {
+    const category = notificationCategory(item);
+    const credit = item.metadata?.direction === "credit";
+    return `
+    <article class="notification-item ${item.unread ? "unread" : ""} notice-${category}" ${notificationActionAttributes(item)}>
+      <span class="icon-bubble ${category === "payments" ? (credit ? "notice-bubble-credit" : "notice-bubble-debit") : ""}">${icon(notificationItemIcon(item))}</span>
       <div>
         <div class="notification-meta">
           <strong>${esc(item.title)}</strong>
           ${item.unread ? `<span class="notification-dot" aria-label="Unread"></span>` : ""}
         </div>
         <p>${esc(item.body)}</p>
-        <small>${esc(formatDate(item.createdAt))}</small>
+        <small>${esc(notificationTimeLabel(item.createdAt))}</small>
       </div>
-    </article>`).join("")}</section>`;
+    </article>`;
+  }).join("")}</section>`;
 }
 
 function openNotificationsModal() {
@@ -1507,7 +2041,7 @@ function openNotificationsModal() {
   const unread = unreadNotificationCount();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Unread Messages</p><h2>Notifications</h2><p class="lead">Support updates, chat alerts and important TitoPay messages.</p></div>
+      <div><p class="eyebrow">Notification Centre</p><h2>Notifications</h2><p class="lead">Payments, chat, support and security -- everything that happened on your account.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="notification-inbox-summary">
@@ -1541,9 +2075,9 @@ function openSmsNotificationPreview() {
       ${settingsRow("In-app notifications", "Free and always available inside TitoPay.", "bell")}
       ${settingsRow("SMS notifications", "R0.30 per SMS for optional non-critical SMS alerts that you choose to enable.", "phone")}
       ${settingsRow("Free critical SMS", "PIN reset, password reset, OTP reset and important security notifications are free.", "shield")}
-      ${settingsRow("Current SMS status", enabled ? "Enabled" : "Not enabled", enabled ? "shield" : "phone")}
+      ${settingsRow("Current SMS status", enabled ? "Enabled on this device" : "Not enabled", enabled ? "shield" : "phone")}
     </section>
-    <p class="field-hint">You will see applicable SMS fees before enabling paid SMS alerts. SMS is optional; in-app notifications remain free.</p>
+    <p class="field-hint">Your choice is saved on this device now. Payment SMS alerts start going out the moment TitoPay's SMS notification service is switched on for customer accounts, and you will see the R0.30 fee before any paid SMS is sent. In-app notifications are free and always on.</p>
     <div class="auth-actions">
       <button class="btn secondary" data-action="notifications">${icon("bell")} Back</button>
       <button class="btn primary" data-action="${enabled ? "disable-sms-notifications" : "enable-sms-notifications"}">${icon("phone")} ${enabled ? "Turn off SMS alerts" : "Enable SMS alerts"}</button>
@@ -1556,7 +2090,7 @@ function setSmsNotifications(enabled) {
   addInAppNotification({
     title: enabled ? "SMS alerts enabled" : "SMS alerts disabled",
     body: enabled
-      ? "Optional SMS notifications are enabled. Non-critical SMS alerts cost R0.30 per SMS. Critical OTP, PIN and password reset SMS messages remain free."
+      ? "SMS alerts are enabled on this device. Payment SMS messages begin once TitoPay activates the SMS notification service for customer accounts; non-critical SMS then cost R0.30 each, while OTP, PIN and password reset SMS stay free."
       : "Optional SMS notifications are off. In-app notifications remain free and active.",
     critical: false
   });
@@ -1714,7 +2248,11 @@ async function onSubmit(event) {
     if (form.dataset.form === "reset") await requestReset(data);
     if (form.dataset.form === "reset-confirm") await confirmReset(data);
     if (form.dataset.form === "otp") await verifyOtp(data);
-    if (form.dataset.form === "transaction") await processTransaction(data);
+    if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
+    else if (form.dataset.form === "stockvel-add-members") await submitStockvelAddMembers(data);
+    else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
+    else if (form.dataset.form === "stockvel-close") await submitStockvelClose(data);
+    else if (form.dataset.form === "transaction") await processTransaction(data);
     if (form.dataset.form === "qr-pay") await processQrPayment(data);
     if (form.dataset.form === "receive") await generateQr(data);
     if (form.dataset.form === "merchant-sale-note") saveMerchantSaleNote(data);
@@ -1763,9 +2301,7 @@ async function onClick(event) {
   }
   const account = event.target.closest("[data-account]");
   if (account) {
-    state.accountType = account.dataset.account;
-    state.authMode = "landing";
-    render();
+    switchLandingAccount(account.dataset.account);
     return;
   }
   const authTab = event.target.closest("[data-auth-tab]");
@@ -1784,8 +2320,236 @@ async function onClick(event) {
     await pickPhoneContact(action);
     return;
   }
+  const verifyRetry = event.target.closest("[data-verify-recipient-retry]");
+  if (verifyRetry) {
+    // Re-run the same check the panel came from, rather than making the user
+    // find the Verify button again.
+    const form = verifyRetry.closest("form");
+    const trigger = form && form.querySelector('[data-action="verify-recipient-field"]');
+    verifyRetry.closest(".recipient-verify-result")?.remove();
+    if (trigger) await verifyRecipientField(trigger);
+    return;
+  }
   if (action && action.dataset.action === "verify-recipient-field") {
     await verifyRecipientField(action);
+    return;
+  }
+  const stockvelOpen = event.target.closest("[data-stockvel-open]");
+  if (stockvelOpen) {
+    openStockvelDashboard(stockvelOpen.dataset.stockvelOpen);
+    return;
+  }
+  const stockvelSection = event.target.closest("[data-stockvel-section]");
+  if (stockvelSection) {
+    state.stockvel.section = stockvelSection.dataset.stockvelSection;
+    state.stockvel.search = "";
+    renderStockvelSection();
+    return;
+  }
+  const stockvelFilter = event.target.closest("[data-stockvel-activity-filter]");
+  if (stockvelFilter) {
+    state.stockvel.activityFilter = stockvelFilter.dataset.stockvelActivityFilter;
+    renderStockvelSection();
+    return;
+  }
+  const stockvelNext = event.target.closest("[data-stockvel-next]");
+  if (stockvelNext) {
+    advanceStockvelStep(1);
+    return;
+  }
+  const stockvelBack = event.target.closest("[data-stockvel-back]");
+  if (stockvelBack) {
+    advanceStockvelStep(-1);
+    return;
+  }
+  const stockvelRetry = event.target.closest("[data-stockvel-retry]");
+  if (stockvelRetry) {
+    if (stockvelRetry.dataset.stockvelRetry === "detail") await refreshStockvelDashboard(state.stockvel.activeId);
+    else await refreshStockvelHub({ force: true });
+    return;
+  }
+  const quickAmount = event.target.closest("[data-quick-amount]");
+  if (quickAmount) {
+    applyQuickAmount(quickAmount);
+    return;
+  }
+  const splitRemove = event.target.closest("[data-split-remove]");
+  if (splitRemove) {
+    removeBillSplitParticipant(splitRemove);
+    return;
+  }
+  const statementPeriod = event.target.closest("[data-statement-period]");
+  if (statementPeriod) {
+    applyStatementPeriod(statementPeriod.dataset.statementPeriod);
+    return;
+  }
+  const documentOpen = event.target.closest("[data-document-open]");
+  if (documentOpen) {
+    openSavedBusinessDocument(documentOpen.dataset.documentOpen);
+    return;
+  }
+  const docRemoveItem = event.target.closest("[data-doc-remove-item]");
+  if (docRemoveItem) {
+    removeDocumentItemRow(docRemoveItem);
+    return;
+  }
+  const docTerm = event.target.closest("[data-doc-term]");
+  if (docTerm) {
+    applyDocumentTerm(docTerm);
+    return;
+  }
+  const learnToggle = event.target.closest("[data-learn-toggle]");
+  if (learnToggle) {
+    toggleLearnLesson(learnToggle.dataset.learnToggle);
+    return;
+  }
+  const learnCategory = event.target.closest("[data-learn-category]");
+  if (learnCategory) {
+    selectLearnCategory(learnCategory.dataset.learnCategory);
+    return;
+  }
+  const giftOccasion = event.target.closest("[data-gift-occasion]");
+  if (giftOccasion) {
+    selectGiftOccasion(giftOccasion);
+    return;
+  }
+  const giftTiming = event.target.closest("[data-gift-timing]");
+  if (giftTiming) {
+    selectGiftTiming(giftTiming);
+    return;
+  }
+  const ticketRefresh = event.target.closest("[data-ticket-refresh]");
+  if (ticketRefresh) {
+    await refreshPublicTickets();
+    return;
+  }
+  const stockvelInviteAccept = event.target.closest("[data-stockvel-invite-accept]");
+  if (stockvelInviteAccept) {
+    await respondToStockvelInvitation(stockvelInviteAccept.dataset.stockvelInviteAccept, true);
+    return;
+  }
+  const stockvelInviteDecline = event.target.closest("[data-stockvel-invite-decline]");
+  if (stockvelInviteDecline) {
+    await respondToStockvelInvitation(stockvelInviteDecline.dataset.stockvelInviteDecline, false);
+    return;
+  }
+  const stockvelAddMembers = event.target.closest("[data-stockvel-add-members]");
+  if (stockvelAddMembers) {
+    openStockvelAddMembersModal(stockvelAddMembers.dataset.stockvelAddMembers);
+    return;
+  }
+  const stockvelWithdraw = event.target.closest("[data-stockvel-withdraw]");
+  if (stockvelWithdraw) {
+    openStockvelWithdrawalRequestModal(stockvelWithdraw.dataset.stockvelWithdraw);
+    return;
+  }
+  const stockvelApprove = event.target.closest("[data-stockvel-withdrawal-approve]");
+  if (stockvelApprove) {
+    await respondToStockvelWithdrawal(stockvelApprove.dataset.stockvelWithdrawalApprove, true);
+    return;
+  }
+  const stockvelDecline = event.target.closest("[data-stockvel-withdrawal-decline]");
+  if (stockvelDecline) {
+    await respondToStockvelWithdrawal(stockvelDecline.dataset.stockvelWithdrawalDecline, false);
+    return;
+  }
+  const stockvelClose = event.target.closest("[data-stockvel-close]");
+  if (stockvelClose) {
+    openStockvelCloseModal(stockvelClose.dataset.stockvelClose);
+    return;
+  }
+  const stockvelPrint = event.target.closest("[data-stockvel-statement-print]");
+  if (stockvelPrint) {
+    printStockvelStatement();
+    return;
+  }
+  const stockvelContribute = event.target.closest("[data-stockvel-contribute]");
+  if (stockvelContribute) {
+    openStockvelContributionModal(stockvelContribute.dataset.stockvelContribute);
+    return;
+  }
+  const stockvelMemberMenu = event.target.closest("[data-stockvel-member-menu]");
+  if (stockvelMemberMenu) {
+    openStockvelMemberSheet(stockvelMemberMenu.dataset.stockvelMemberMenu);
+    return;
+  }
+  const stockvelMemberAction = event.target.closest("[data-stockvel-member-action]");
+  if (stockvelMemberAction) {
+    await runStockvelMemberAction(stockvelMemberAction.dataset.stockvelMemberAction, stockvelMemberAction.dataset.stockvelMemberId);
+    return;
+  }
+  const stockvelLeave = event.target.closest("[data-stockvel-leave]");
+  if (stockvelLeave) {
+    openStockvelLeaveModal(stockvelLeave.dataset.stockvelLeave);
+    return;
+  }
+  const stockvelLeaveConfirm = event.target.closest("[data-stockvel-leave-confirm]");
+  if (stockvelLeaveConfirm) {
+    await confirmStockvelLeave(stockvelLeaveConfirm.dataset.stockvelLeaveConfirm);
+    return;
+  }
+  const stockvelInvite = event.target.closest("[data-stockvel-invite]");
+  if (stockvelInvite) {
+    openStockvelInviteModal(stockvelInvite.dataset.stockvelInvite);
+    return;
+  }
+  const stockvelStatement = event.target.closest("[data-stockvel-statement]");
+  if (stockvelStatement) {
+    openStockvelStatementModal(stockvelStatement.dataset.stockvelStatement);
+    return;
+  }
+  const vasKind = event.target.closest("[data-vas-kind]");
+  if (vasKind) {
+    switchVasProductType(vasKind);
+    return;
+  }
+  const vasProduct = event.target.closest("[data-vas-product]");
+  if (vasProduct) {
+    selectVasProduct(vasProduct);
+    return;
+  }
+  const vasRetry = event.target.closest("[data-vas-retry]");
+  if (vasRetry) {
+    const form = vasRetry.closest("form");
+    if (form) await refreshVasCatalogue(form, { force: true }).catch(() => {});
+    return;
+  }
+  const vasValidate = event.target.closest("[data-vas-validate]");
+  if (vasValidate) {
+    await validateVasIdentifier(vasValidate);
+    return;
+  }
+  const vasPickerOption = event.target.closest("[data-vas-picker-value]");
+  if (vasPickerOption) {
+    const form = vasPickerOption.closest("form");
+    if (form) chooseVasPickerOption(form, vasPickerOption.dataset.vasPickerValue);
+    return;
+  }
+  const vasPickerClear = event.target.closest("[data-vas-picker-clear]");
+  if (vasPickerClear) {
+    const form = vasPickerClear.closest("form");
+    const input = form && form.querySelector(".vas-picker-input");
+    if (form && input) {
+      input.value = "";
+      renderVasPickerList(form, "");
+      openVasPickerList(form, true);
+      input.focus();
+    }
+    return;
+  }
+  const vasSelf = event.target.closest("[data-vas-self]");
+  if (vasSelf) {
+    applyVasSelfNumber(vasSelf);
+    return;
+  }
+  const vasReveal = event.target.closest("[data-vas-reveal]");
+  if (vasReveal) {
+    revealVasSecret(vasReveal);
+    return;
+  }
+  const vasCopy = event.target.closest("[data-vas-copy]");
+  if (vasCopy) {
+    await copyVasCredential(vasCopy);
     return;
   }
   if (action) {
@@ -1801,6 +2565,11 @@ async function onClick(event) {
     updateMerchantSaleAmount(posKey.dataset.posKey);
     return;
   }
+  const transactionOpen = event.target.closest("[data-transaction-open]");
+  if (transactionOpen) {
+    openTransactionDetailModal(transactionOpen.dataset.transactionOpen);
+    return;
+  }
   const receiptOpen = event.target.closest("[data-receipt-open]");
   if (receiptOpen) {
     openReceiptModal(receiptOpen.dataset.receiptOpen);
@@ -1811,13 +2580,45 @@ async function onClick(event) {
     await shareReceipt(receiptShare.dataset.receiptShare).catch((error) => showToast(error.message || "Receipt sharing failed.", "error"));
     return;
   }
+  const notificationFilterBtn = event.target.closest("[data-notification-filter]");
+  if (notificationFilterBtn) {
+    state.notificationFilter = notificationFilterBtn.dataset.notificationFilter || "all";
+    openNotificationsModal();
+    return;
+  }
+  const notificationChat = event.target.closest("[data-notification-chat]");
+  if (notificationChat) {
+    markNotificationReadById(notificationChat.dataset.noticeId);
+    const threadRef = notificationChat.dataset.notificationChat || "";
+    const thread = threadRef
+      ? titoPayChatThreads().find((item) => [item.id, item.apiThreadId, item.threadId, item.clientThreadId].map(String).includes(String(threadRef)))
+      : null;
+    if (thread) openTitoPayChatThread(thread.id);
+    else openTitoPayChatModal();
+    return;
+  }
+  const notificationTx = event.target.closest("[data-notification-tx]");
+  if (notificationTx) {
+    markNotificationReadById(notificationTx.dataset.noticeId);
+    const key = notificationTx.dataset.notificationTx;
+    const target = (state.transactions || []).find((tx) => String(tx.id) === key || String(tx.reference) === key);
+    if (target) {
+      openTransactionDetailModal(String(target.id || target.reference));
+    } else {
+      closeModal();
+      location.hash = "activity";
+    }
+    return;
+  }
   const notificationReceipt = event.target.closest("[data-notification-receipt]");
   if (notificationReceipt) {
+    markNotificationReadById(notificationReceipt.dataset.noticeId);
     openReceiptModal(notificationReceipt.dataset.notificationReceipt);
     return;
   }
   const notificationSupport = event.target.closest("[data-notification-support]");
   if (notificationSupport) {
+    markNotificationReadById(notificationSupport.dataset.noticeId);
     openChatbotModal();
     setTimeout(() => renderSupportRating(notificationSupport.dataset.notificationSupport), 0);
     return;
@@ -1861,12 +2662,93 @@ async function onClick(event) {
 }
 
 function onInput(event) {
+  const pickerInput = event.target.closest(".vas-picker-input");
+  if (pickerInput) {
+    const form = pickerInput.closest("form");
+    if (form) {
+      renderVasPickerList(form, pickerInput.value);
+      openVasPickerList(form, true);
+    }
+    return;
+  }
+  const giftMessage = event.target.closest("[data-gift-message]");
+  if (giftMessage) {
+    updateGiftCounter(giftMessage);
+    return;
+  }
+  const ticketSearch = event.target.closest("[data-ticket-search]");
+  if (ticketSearch) {
+    state.ticketing.search = ticketSearch.value;
+    renderPublicTickets();
+    const refocus = document.querySelector("[data-ticket-search]");
+    if (refocus) {
+      refocus.focus();
+      refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+    }
+    return;
+  }
+  const documentField = event.target.closest("[data-doc-desc], [data-doc-qty], [data-doc-unit], [data-doc-issue], [data-doc-due]");
+  if (documentField) {
+    syncDocumentTotals();
+    return;
+  }
+  if (event.target.closest("[data-split-form]")) syncBillSplit();
+  const statementRange = event.target.closest("[data-statement-from], [data-statement-to]");
+  if (statementRange) {
+    applyStatementCustomRange();
+    return;
+  }
+  const learnSearch = event.target.closest("[data-learn-search]");
+  if (learnSearch) {
+    state.learn.search = learnSearch.value;
+    state.learn.open = "";
+    renderLearnLessons();
+    const refocus = document.querySelector("[data-learn-search]");
+    if (refocus) {
+      refocus.focus();
+      refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+    }
+    return;
+  }
+  const amountField = event.target.closest('.money-form [name="amount"], .gift-form [name="amount"]');
+  if (amountField) {
+    // A typed amount is no longer one of the presets.
+    amountField.closest("form")?.querySelectorAll("[data-quick-amount]").forEach((chip) => {
+      chip.classList.toggle("is-active", chip.dataset.quickAmount === amountField.value);
+    });
+  }
+  const stockvelSearch = event.target.closest("[data-stockvel-search]");
+  if (stockvelSearch) {
+    state.stockvel.search = stockvelSearch.value;
+    renderStockvelSection();
+    const refocus = document.querySelector("[data-stockvel-search]");
+    if (refocus) {
+      refocus.focus();
+      refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+    }
+    return;
+  }
+  const productSearch = event.target.closest("[data-vas-product-search]");
+  if (productSearch) {
+    filterVasProducts(productSearch);
+    return;
+  }
+  const accountField = event.target.closest("[data-vas-account] [name]");
+  if (accountField) captureVasAccountValues(accountField.closest("form"));
   const recipientField = event.target.closest("input[name='recipient'], textarea[name='participants'], textarea[name='members']");
-  if (recipientField) updateRecipientAutoDetect(recipientField);
+  if (recipientField) {
+    updateRecipientAutoDetect(recipientField);
+    // Typing again withdraws a pending "replace what I typed" confirmation.
+    const selfButton = recipientField.closest("form")?.querySelector("[data-vas-self]");
+    if (selfButton) delete selfButton.dataset.confirmReplace;
+  }
   const chatLookupField = event.target.closest('form[data-form="titopay-chat-lookup"] input[name="identifier"]');
   if (chatLookupField) updateRecipientAutoDetect(chatLookupField);
   const chatMessage = event.target.closest('form[data-form="titopay-chat-message"] textarea[name="message"]');
   if (chatMessage) {
+    // Kept so an incoming message repainting the thread cannot discard a
+    // part-typed reply.
+    rememberChatDraft(chatMessage.closest("form")?.dataset.threadId || "");
     const thread = activeTitoPayChatThread();
     if (thread) {
       sendTitoPaySocketEvent("chat:typing", {
@@ -1900,6 +2782,8 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.closest("[data-document-form]")) syncDocumentTotals();
+  if (event.target.closest("[data-split-form]")) syncBillSplit();
   const recipientMethod = event.target.closest("select[name='recipientMethod'], select[name='participantMethod'], select[name='memberMethod']");
   if (recipientMethod) {
     const form = recipientMethod.closest("form");
@@ -1912,10 +2796,43 @@ function onChange(event) {
     const field = chatLookupMethod.closest("form")?.querySelector('input[name="identifier"]');
     if (field) updateRecipientAutoDetect(field);
   }
+  const fundingMethod = event.target.closest("[data-funding-method]");
+  if (fundingMethod) {
+    const hint = fundingMethod.closest("form")?.querySelector("[data-funding-hint]");
+    if (hint) {
+      hint.textContent = fundingMethod.value === "eft_bank_transfer"
+        ? "Transfer from your bank using the TitoPay reference shown after you confirm, so the money can be matched to your wallet."
+        : "Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.";
+    }
+  }
+  const withdrawalSpeed = event.target.closest("[data-withdrawal-speed]");
+  if (withdrawalSpeed) {
+    const hint = withdrawalSpeed.closest("form")?.querySelector("[data-withdrawal-hint]");
+    if (hint) {
+      hint.textContent = withdrawalSpeed.value === "instant_peach_withdrawal"
+        ? "Sent for immediate payout through Peach Payments. The exact fee is shown on the review screen before you confirm."
+        : "Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.";
+    }
+  }
+  const payoutSpeed = event.target.closest("[data-payout-speed]");
+  if (payoutSpeed) {
+    const hint = payoutSpeed.closest("form")?.querySelector("[data-payout-hint]");
+    if (hint) {
+      hint.textContent = payoutSpeed.value === "instant_peach_business_payout"
+        ? "Sent for immediate payout through Peach Payments. The exact fee is shown on the review screen before you confirm."
+        : "Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.";
+    }
+  }
+  const accountSelect = event.target.closest("[data-vas-account] select");
+  if (accountSelect) captureVasAccountValues(accountSelect.closest("form"));
+  const vasProvider = event.target.closest("[data-vas-provider]");
+  if (vasProvider) handleVasProviderChange(vasProvider);
   const occasion = event.target.closest("select[name='occasion']");
   if (occasion) toggleCustomOccasion(occasion);
   const profilePhotoInput = event.target.closest("input[data-profile-photo-input]");
   if (profilePhotoInput) prepareProfilePhotoCrop(profilePhotoInput);
+  const enterpriseCsvInput = event.target.closest("input[data-enterprise-csv-input]");
+  if (enterpriseCsvInput) loadEnterpriseCsvFile(enterpriseCsvInput.files && enterpriseCsvInput.files[0]);
   const receiptFilter = event.target.closest("[data-receipt-filter]");
   if (receiptFilter) {
     state.receiptFilters[receiptFilter.dataset.receiptFilter] = receiptFilter.value;
@@ -1987,10 +2904,13 @@ function displayUsername(value) {
 }
 
 function recipientMethodField(defaultMethod = "auto", name = "recipientMethod", label = "Send using") {
+  // The label had no `for` and did not wrap the select, so screen readers
+  // announced an unlabelled combo box on Send Money, Bill Split and Stockvel.
+  const id = `rmf-${String(name).replace(/[^a-zA-Z0-9]/g, "")}`;
   return `
     <div class="field">
-      <label>${esc(label)}</label>
-      <select name="${esc(name)}">
+      <label for="${id}">${esc(label)}</label>
+      <select id="${id}" name="${esc(name)}">
         <option value="auto"${defaultMethod === "auto" ? " selected" : ""}>Auto-detect</option>
         <option value="username"${defaultMethod === "username" ? " selected" : ""}>Username</option>
         <option value="cellphone"${defaultMethod === "cellphone" ? " selected" : ""}>Cellphone number</option>
@@ -2000,10 +2920,11 @@ function recipientMethodField(defaultMethod = "auto", name = "recipientMethod", 
 }
 
 function recipientAutoMethodField(name = "recipientMethod", label = "Detect recipients by") {
+  const id = `ramf-${String(name).replace(/[^a-zA-Z0-9]/g, "")}`;
   return `
     <div class="field">
-      <label>${esc(label)}</label>
-      <select name="${esc(name)}">
+      <label for="${id}">${esc(label)}</label>
+      <select id="${id}" name="${esc(name)}">
         <option value="auto">Auto-detect each line</option>
         <option value="username">Username</option>
         <option value="cellphone">Cellphone number</option>
@@ -2140,15 +3061,19 @@ function enhanceContactPickerControls(root = document) {
     const tools = document.createElement("div");
     tools.className = "recipient-tools";
     tools.appendChild(button);
-    const verifyButton = document.createElement("button");
-    verifyButton.type = "button";
-    verifyButton.className = "recipient-verify-btn";
-    verifyButton.dataset.action = "verify-recipient-field";
-    verifyButton.dataset.targetId = field.id;
-    verifyButton.setAttribute("aria-label", "Verify TitoPay user");
-    verifyButton.innerHTML = `${icon("shield")} <span>Verify TitoPay user</span>`;
-    tools.appendChild(verifyButton);
+    const userDestination = field.dataset.noUserVerify !== "true";
+    if (userDestination) {
+      const verifyButton = document.createElement("button");
+      verifyButton.type = "button";
+      verifyButton.className = "recipient-verify-btn";
+      verifyButton.dataset.action = "verify-recipient-field";
+      verifyButton.dataset.targetId = field.id;
+      verifyButton.setAttribute("aria-label", "Verify TitoPay user");
+      verifyButton.innerHTML = `${icon("shield")} <span>Verify TitoPay user</span>`;
+      tools.appendChild(verifyButton);
+    }
     field.insertAdjacentElement("afterend", tools);
+    if (!userDestination) return;
     const hint = document.createElement("div");
     hint.className = "recipient-detect-hint";
     hint.dataset.recipientDetectFor = field.id;
@@ -2216,7 +3141,16 @@ async function verifyRecipientField(button) {
   const form = field.closest("form");
   const methodName = field.name === "participants" ? "participantMethod" : field.name === "members" ? "memberMethod" : "recipientMethod";
   const method = form?.querySelector(`[name="${methodName}"]`)?.value || "auto";
-  const values = field.tagName === "TEXTAREA" ? normalizeRecipientList(field.value, method) : [normalizeRecipientInput(field.value, method)];
+  // Normalisation enforces the existing recipient rules and throws on invalid
+  // input. Surface that as feedback instead of an unhandled rejection, keeping
+  // the entered transaction state intact.
+  let values;
+  try {
+    values = field.tagName === "TEXTAREA" ? normalizeRecipientList(field.value, method) : [normalizeRecipientInput(field.value, method)];
+  } catch (error) {
+    showToast(error.message || "Enter a valid TitoPay username, +27 cellphone number or email address.", "error");
+    return;
+  }
   if (!values.length) {
     showToast("Enter a username, +27 cellphone or email first.", "error");
     return;
@@ -2228,10 +3162,68 @@ async function verifyRecipientField(button) {
       const result = await lookupRegisteredRecipient(value, "manual_verification");
       results.push({ value, result });
     }
-    openRecipientVerificationResults(results);
+    // Render the outcome inside the live form. Opening a modal here would
+    // call closeModal() first and destroy the in-progress transaction.
+    if (!renderInlineRecipientVerification(field, results)) {
+      openRecipientVerificationResults(results);
+    }
+  } catch (error) {
+    showToast(friendlyFormError(error, "verify-recipient"), "error");
   } finally {
     setButtonBusy(button, false);
   }
+}
+
+// Verification is a step inside the transaction, not a navigation event.
+// Returns false if there is no inline host, so callers can fall back.
+function renderInlineRecipientVerification(field, results) {
+  const form = field.closest("form");
+  if (!form) return false;
+  const anchor = form.querySelector(`[data-recipient-detect-for="${safeCssIdentifier(field.id)}"]`)
+    || field.parentElement;
+  if (!anchor) return false;
+
+  const existing = form.querySelector(`[data-recipient-verify-for="${safeCssIdentifier(field.id)}"]`);
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  const verified = results.filter((item) => item.result && item.result.registered);
+  // "Not found" and "could not check" are different answers. Reporting an
+  // outage as a missing user sends people chasing someone already on TitoPay.
+  const unchecked = results.filter((item) => item.result && !item.result.registered && item.result.lookupFailed);
+  const missing = results.filter((item) => (!item.result || !item.result.registered) && !(item.result && item.result.lookupFailed));
+
+  const rows = verified.map(({ value, result }) => {
+    const user = result.user || {};
+    const name = user.displayName || user.display_name || user.fullName || user.full_name || user.name || user.businessName || user.business_name || "TitoPay user";
+    const rawUsername = user.username || user.userName || user.user_name;
+    const username = rawUsername ? displayUsername(rawUsername) : "";
+    const contact = user.phone || user.mobile || user.msisdn || user.email || value;
+    return `<div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(name)}</strong><small>${esc(`${username ? `${username} · ` : ""}${contact}`)}</small></span></div>`;
+  }).join("");
+
+  const panel = document.createElement("div");
+  panel.className = `recipient-verify-result${missing.length && !verified.length ? " is-missing" : ""}${unchecked.length && !verified.length && !missing.length ? " is-unknown" : ""}`;
+  panel.dataset.recipientVerifyFor = field.id;
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+  panel.innerHTML = `
+    ${verified.length ? `
+      <p class="rv-head">${verified.length === 1 ? "Verified TitoPay user" : "Verified TitoPay users"}</p>
+      ${rows}
+      <p class="rv-note">Only continue if these details match the person or business you intend to pay.</p>
+    ` : ""}
+    ${missing.length ? `
+      <p class="rv-head rv-head-missing">${missing.length === 1 ? "User not found" : "Some users were not found"}</p>
+      <p class="rv-note">${esc(missing.map((item) => item.value).join(", "))} ${missing.length === 1 ? "is" : "are"} not currently detected as a registered TitoPay user. Your details are still here \u2014 correct the recipient or send an invitation.</p>
+    ` : ""}
+    ${unchecked.length ? `
+      <p class="rv-head rv-head-unknown">${unchecked.length === 1 ? "Could not check this recipient" : "Could not check some recipients"}</p>
+      <p class="rv-note">TitoPay could not reach the directory to confirm ${esc(unchecked.map((item) => item.value).join(", "))}. That says nothing about whether they are on TitoPay. Try again in a moment.</p>
+      <button class="btn secondary" type="button" data-verify-recipient-retry>${icon("refresh")} Try again</button>
+    ` : ""}
+  `;
+  anchor.insertAdjacentElement("afterend", panel);
+  return true;
 }
 
 function setButtonBusy(button, busy) {
@@ -2240,9 +3232,52 @@ function setButtonBusy(button, busy) {
   button.classList.toggle("is-busy", busy);
 }
 
+// Submit-time "recipient not registered" outcome, rendered inside the live form
+// so the amount, reference and other entered values are preserved.
+// Two different outcomes used to share one message. "We asked and this person
+// does not exist" justifies an invite; "we could not ask" does not, and telling
+// someone their contact is unregistered because the directory was unreachable
+// sends them chasing a person who is already on TitoPay.
+function renderInlineRecipientNotRegistered(identifier, invite = {}, lookupFailed = false) {
+  const form = document.querySelector(".modal-card form[data-form]");
+  if (!form) return false;
+  const field = form.querySelector('[name="recipient"], [name="participants"], [name="members"]');
+  const anchor = (field && (form.querySelector(`[data-recipient-detect-for="${safeCssIdentifier(field.id)}"]`) || field.parentElement))
+    || form.firstElementChild;
+  if (!anchor) return false;
+
+  const existing = form.querySelector("[data-recipient-not-registered]");
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  const panel = document.createElement("div");
+  panel.className = `recipient-verify-result ${lookupFailed ? "is-unknown" : "is-missing"}`;
+  panel.dataset.recipientNotRegistered = "true";
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+  panel.innerHTML = lookupFailed
+    ? `
+      <p class="rv-head rv-head-unknown">Could not check this recipient</p>
+      <p class="rv-note">TitoPay could not reach the directory to confirm ${esc(identifier)}. This is not a result about them, and nothing has been sent. Your details are still here \u2014 try again in a moment.</p>
+      <button class="btn secondary" type="button" data-verify-recipient-retry>${icon("refresh")} Try again</button>
+    `
+    : `
+      <p class="rv-head rv-head-missing">Recipient not registered</p>
+      <p class="rv-note">${esc(identifier)} is not yet registered on TitoPay, so this payment cannot be completed. Your details are still here \u2014 correct the recipient, or invite them and try again.</p>
+      <button class="btn secondary" type="button" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share invite</button>
+    `;
+  anchor.insertAdjacentElement("afterend", panel);
+  showToast(lookupFailed
+    ? `Could not check ${identifier}. Nothing was sent.`
+    : `${identifier} is not a registered TitoPay user.`, "error");
+  return true;
+}
+
 function openRecipientVerificationResults(results) {
   const verified = results.filter((item) => item.result && item.result.registered);
-  const missing = results.filter((item) => !item.result || !item.result.registered);
+  // "Not found" and "could not check" are different answers. Reporting an
+  // outage as a missing user sends people chasing someone already on TitoPay.
+  const unchecked = results.filter((item) => item.result && !item.result.registered && item.result.lookupFailed);
+  const missing = results.filter((item) => (!item.result || !item.result.registered) && !(item.result && item.result.lookupFailed));
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Recipient check</p><h2>TitoPay user verification</h2><p class="lead">Confirm the user before sending money, requesting payment or starting a chat.</p></div>
@@ -2265,6 +3300,13 @@ function openRecipientVerificationResults(results) {
         ${icon("user")}
         <strong>${missing.length === 1 ? "User not found" : "Some users were not found"}</strong>
         <p>${missing.map((item) => esc(item.value)).join(", ")} ${missing.length === 1 ? "is" : "are"} not currently detected as registered TitoPay users. Send an invitation before payment or chat.</p>
+      </section>
+    ` : ""}
+    ${unchecked.length ? `
+      <section class="empty-state compact-state">
+        ${icon("refresh")}
+        <strong>${unchecked.length === 1 ? "Could not check this recipient" : "Could not check some recipients"}</strong>
+        <p>TitoPay could not reach the directory to confirm ${unchecked.map((item) => esc(item.value)).join(", ")}. That says nothing about whether they are on TitoPay. Nothing has been sent. Try again in a moment.</p>
       </section>
     ` : ""}
   `);
@@ -2456,22 +3498,39 @@ async function lookupRegisteredRecipient(recipient, serviceCode) {
     () => api(`/v1/chat/users/lookup?identifier=${encodeURIComponent(recipient)}`)
   ];
   let invite = null;
+  // Every request below swallows its own error and falls through to the next.
+  // If they all error, the function still returned registered:false, which is
+  // the same answer it gives for "we asked and this person does not exist".
+  // Callers then tell the user their contact is not on TitoPay when the truth
+  // is that nothing could be checked. lookupFailed carries that distinction;
+  // registered keeps its existing meaning so current callers are unaffected.
+  let completedCleanly = false;
+  // The server states the difference directly when it can: outcome:"not_found"
+  // means it looked and there is nobody, which is a stronger signal than a
+  // request that merely came back without an error.
+  let serverSaidNotFound = false;
   for (let index = 0; index < lookupRequests.length; index += 1) {
     try {
       const result = await lookupRequests[index]();
+      completedCleanly = true;
       const user = resolvedTitoPayUserFromResult(result);
       const registered = Boolean(result.registered || result.exists || result.found || hasTitoPayUserIdentity(user));
       if (registered) {
         rememberLocalTitoPayUser(user);
         return { registered: true, user, source: "user_lookup" };
       }
+      if (result.outcome === "not_found") serverSaidNotFound = true;
       if (result.invite) invite = result.invite;
     } catch (error) {
       if (error.status === 401 || error.status === 403) throw error;
     }
   }
   if (localUser) return { registered: true, user: localUser, source: "local_lookup" };
-  return { registered: false, invite: invite || defaultRecipientInvite(recipient) };
+  return {
+    registered: false,
+    lookupFailed: !serverSaidNotFound && !completedCleanly,
+    invite: invite || defaultRecipientInvite(recipient)
+  };
 }
 
 async function register(data) {
@@ -2585,6 +3644,14 @@ async function handleAction(action) {
     await submitTicketingEvent(action.split(":")[1]);
     return;
   }
+  if (action === "confirm-ticket-purchase") {
+    await confirmTicketingPurchase();
+  }
+  if (action === "cancel-ticket-purchase") {
+    state.pendingTicketPurchase = null;
+    closeModal();
+    showToast("Ticket purchase cancelled. Nothing was charged.");
+  }
   if (action === "ticketing-create-event") {
     openTicketingEventForm();
     return;
@@ -2597,8 +3664,48 @@ async function handleAction(action) {
     await openEnterpriseDistributionDashboard();
     return;
   }
+  if (action === "qr-poster") {
+    await openQrPosterModal("payment");
+    return;
+  }
+  if (action === "tip-poster") {
+    await openQrPosterModal("tip");
+    return;
+  }
+  if (action === "print-qr-poster") {
+    printQrPoster();
+    return;
+  }
+  if (action === "download-qr-poster-pdf") {
+    await downloadQrPosterPdf();
+    return;
+  }
   if (String(action || "").startsWith("enterprise-fund:")) {
+    openEnterpriseFundingReview(action.split(":")[1]);
+    return;
+  }
+  if (String(action || "").startsWith("enterprise-fund-confirm:")) {
     await lockEnterpriseDistributionFunding(action.split(":")[1]);
+    return;
+  }
+  if (action === "enterprise-show-application") {
+    await openEnterpriseDistributionDashboard({ showForm: true });
+    return;
+  }
+  if (action === "enterprise-add-beneficiary") {
+    openEnterpriseBeneficiaryModal();
+    return;
+  }
+  if (action === "enterprise-new-batch") {
+    openEnterpriseBatchModal();
+    return;
+  }
+  if (action === "enterprise-csv-template") {
+    downloadEnterpriseCsvTemplate();
+    return;
+  }
+  if (action === "enterprise-csv-pick") {
+    pickEnterpriseCsvFile();
     return;
   }
   if (String(action || "").startsWith("open-chat-thread:")) {
@@ -2638,11 +3745,19 @@ async function handleAction(action) {
   if (action === "landing-menu") {
     openLandingMenu();
   }
+  if (action === "failure-view-activity") {
+    closeModal();
+    location.hash = "activity";
+    return;
+  }
   if (action === "confirm-transaction-review") {
     await confirmReviewedTransaction();
   }
   if (action === "edit-transaction-review") {
-    if (state.pendingTransactionReview) openTransactionEditModal(state.pendingTransactionReview);
+    const context = state.pendingTransactionReview;
+    // A VAS purchase goes back to its own journey with the provider, product
+    // and entered details intact, rather than to the generic edit form.
+    if (context && !reopenVasJourneyFromContext(context)) openTransactionEditModal(context);
   }
   if (action === "cancel-transaction-review") {
     state.pendingTransactionReview = null;
@@ -2748,8 +3863,49 @@ async function handleAction(action) {
   if (action === "open-stockvel-chat") {
     openStockvelChatModal();
   }
+  if (action === "ticketing-browse-public") {
+    await openPersonalTicketsDashboard();
+  }
+  if (action === "stockvel-create") {
+    openStockvelCreateWizard();
+  }
+  if (action === "stockvel-join") {
+    openStockvelJoinModal();
+  }
   if (action === "chat-back") {
+    sessionStorage.removeItem("titopay_active_chat_thread");
     openTitoPayChatModal();
+  }
+  if (action === "chat-clear-thread") {
+    openChatClearConfirm("thread");
+    return;
+  }
+  if (action === "chat-back-to-thread") {
+    const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+    if (threadId) openTitoPayChatThread(threadId);
+    else openTitoPayChatModal();
+    return;
+  }
+  if (action === "chat-clear-all") {
+    openChatClearConfirm("all");
+    return;
+  }
+  if (action === "chat-clear-thread-confirm") {
+    clearTitoPayChatHistory("thread");
+    return;
+  }
+  if (action === "chat-clear-all-confirm") {
+    clearTitoPayChatHistory("all");
+    return;
+  }
+  if (action === "chat-retry-lookup") {
+    const trigger = event.target.closest("[data-chat-identifier]");
+    if (trigger) {
+      await submitTitoPayChatLookup({
+        identifier: trigger.dataset.chatIdentifier,
+        lookupMethod: trigger.dataset.chatMethod || "auto"
+      });
+    }
   }
   if (action === "chat-call-start") {
     openCustomerCareCallOnlyModal();
@@ -2781,8 +3937,17 @@ async function handleAction(action) {
   if (action === "chat-block") {
     blockActiveChatThread();
   }
+  if (action === "business-documents") {
+    openBusinessDocumentHistory();
+  }
+  if (action === "doc-add-item") {
+    addDocumentItemRow();
+  }
+  if (action === "split-add-participant") {
+    addBillSplitParticipant();
+  }
   if (action === "invoice-link") {
-    showToast("Shareable document link prepared. Email sharing will use the customer email when provided.");
+    await shareBusinessDocument();
   }
   if (action === "start-qr-scan") {
     await startQrScanner();
@@ -2908,7 +4073,8 @@ function handleService(id) {
     location.hash = "activity";
     return;
   }
-  if (id === "transactions" || id === "statements") {
+  if (id === "statements") return openStatementsModal();
+  if (id === "transactions") {
     location.hash = "activity";
     return;
   }
@@ -2949,6 +4115,7 @@ function handleService(id) {
   if (service.action === "send-gift") return openSendGiftModal(service);
   if (service.action === "payouts") return openPayoutModal(service);
   if (service.action === "refund") return openRefundModal(service);
+  if (service.action === "statements") return openStatementsModal();
   if (["invoice", "quote", "proforma-invoice"].includes(service.action)) return openInvoiceDocumentModal(service);
   if (service.type === "learn") return openLearnModal();
   if (service.type === "stockvel") return openStockvelModal();
@@ -2958,62 +4125,103 @@ function handleService(id) {
 }
 
 async function openPersonalTicketsDashboard() {
+  // Open immediately with a loading state rather than leaving the customer on a
+  // dead tap while the events request is in flight.
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Tickets</p>
+        <h2>What's on</h2>
+        <p class="lead">Verified TitoPay events with secure digital tickets.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="ticket-list" data-ticket-list aria-live="polite">
+      ${[0, 1, 2].map(() => `<div class="ticket-card is-loading" aria-hidden="true">
+        <span class="skeleton skeleton-circle"></span>
+        <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
+      </div>`).join("")}
+    </section>
+  `);
+  await refreshPublicTickets();
+}
+
+async function refreshPublicTickets() {
+  const host = document.querySelector("[data-ticket-list]");
+  if (!host) return;
   try {
     const result = await api("/v1/ticketing/public/events", { auth: false });
-    const events = Array.isArray(result.items) ? result.items : [];
-    openModal(`
-      <div class="modal-head">
-        <div>
-          <p class="eyebrow">TitoPay Tickets</p>
-          <h2>Approved events</h2>
-          <p class="lead">Browse verified TitoPay events and buy secure digital tickets.</p>
-        </div>
-        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-      </div>
-      <section class="settings-list">
-        ${events.length ? events.map(ticketingPublicEventRow).join("") : `
-          <article class="empty-state compact-state">
-            ${icon("ticket")}
-            <strong>No public events yet</strong>
-            <p>Approved TitoPay events will appear here when ticket sales open.</p>
-          </article>
-        `}
-      </section>
-    `);
+    state.ticketing.events = Array.isArray(result.items) ? result.items : [];
+    state.ticketing.search = "";
+    renderPublicTickets();
   } catch (error) {
-    openModal(`
-      <div class="modal-head">
-        <div>
-          <p class="eyebrow">TitoPay Tickets</p>
-          <h2>Events opening soon</h2>
-          <p class="lead">Approved TitoPay events will appear here as soon as ticket sales open.</p>
-        </div>
-        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-      </div>
+    const current = document.querySelector("[data-ticket-list]");
+    if (!current) return;
+    const offline = Number(error?.status || 0) === 0;
+    current.innerHTML = `
       <section class="empty-state compact-state">
         ${icon("ticket")}
-        <strong>No public events are available right now</strong>
-        <p>Please check again later. If you expected an event to be live, contact TitoPay Customer Care.</p>
-        <button class="btn secondary" type="button" data-action="refresh">${icon("refresh")} Refresh</button>
-      </section>
-    `);
+        <strong>${offline ? "Cannot reach TitoPay" : "No events available right now"}</strong>
+        <p>${offline ? "Check your connection and try again." : "Approved TitoPay events appear here as soon as ticket sales open."}</p>
+        <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Try again</button>
+      </section>`;
   }
 }
+
+function renderPublicTickets() {
+  const host = document.querySelector("[data-ticket-list]");
+  if (!host) return;
+  const events = state.ticketing.events || [];
+  const needle = String(state.ticketing.search || "").trim().toLowerCase();
+  const matches = events.filter((event) => !needle || [event.eventName, event.venueName, event.city, event.category]
+    .filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
+
+  if (!events.length) {
+    host.innerHTML = `
+      <section class="empty-state compact-state">
+        ${icon("ticket")}
+        <strong>No events on sale yet</strong>
+        <p>Approved TitoPay events appear here as soon as ticket sales open. Check back soon.</p>
+        <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Refresh</button>
+      </section>`;
+    return;
+  }
+
+  host.innerHTML = `
+    ${events.length > 4 ? `<div class="ticket-search">
+      <label class="visually-hidden" for="ticket-search">Search events</label>
+      <input id="ticket-search" class="vas-search-input" type="search" autocomplete="off" data-ticket-search placeholder="Search events, venues or cities" value="${esc(state.ticketing.search || "")}">
+    </div>` : ""}
+    ${matches.length
+      ? matches.map(ticketingPublicEventRow).join("")
+      : `<section class="empty-state compact-state"><strong>No match</strong><p>Nothing matches "${esc(state.ticketing.search)}".</p></section>`}`;
+}
+
 
 function ticketingPublicEventRow(event = {}) {
   const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
   const prices = tickets.map((ticket) => Number(ticket.price || 0)).filter((price) => Number.isFinite(price));
   const lowestPrice = prices.length ? Math.min(...prices) : 0;
   const available = tickets.reduce((total, ticket) => total + Math.max(0, Number(ticket.quantityAvailable || 0) - Number(ticket.quantitySold || 0)), 0);
+  const date = event.eventDate ? new Date(event.eventDate) : null;
+  const validDate = date && !Number.isNaN(date.getTime());
+  const soldOut = tickets.length > 0 && available === 0;
   return `
-    <article class="settings-row">
-      <span class="icon-bubble">${icon("ticket")}</span>
-      <div>
-        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
-        <small>${event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date to be confirmed"} · ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
-        <small>${prices.length ? `From ${money(lowestPrice)}` : "Ticket price to be confirmed"} · ${available} available</small>
+    <article class="ticket-card${soldOut ? " is-sold-out" : ""}">
+      <div class="ticket-date" aria-hidden="true">
+        <span>${esc(validDate ? date.toLocaleDateString("en-ZA", { month: "short" }) : "TBC")}</span>
+        <strong>${esc(validDate ? String(date.getDate()) : "--")}</strong>
       </div>
-      <button class="btn secondary mini" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}">View</button>
+      <div class="ticket-body">
+        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
+        <small>${esc(validDate ? date.toLocaleDateString("en-ZA", { weekday: "short", day: "2-digit", month: "long", year: "numeric" }) : "Date to be confirmed")}</small>
+        <small>${icon("globe")} ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
+        <div class="ticket-meta">
+          <span class="ticket-price">${prices.length ? `From ${esc(money(lowestPrice))}` : "Price to be confirmed"}</span>
+          ${soldOut ? `<em class="sv-chip failed">Sold out</em>` : available ? `<em class="sv-chip settled">${available} available</em>` : ""}
+        </div>
+      </div>
+      <button class="btn secondary ticket-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"${soldOut ? " disabled" : ""}>${soldOut ? "Sold out" : "View"}</button>
     </article>
   `;
 }
@@ -3098,7 +4306,7 @@ function publicTicketingEventView(event = {}) {
   return `
     <main class="screen auth-screen">
       <header class="topbar">
-        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
       <section class="panel">
@@ -3146,29 +4354,150 @@ function publicTicketingEventView(event = {}) {
   `;
 }
 
-async function submitTicketingPurchase(data) {
-  const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase`, {
-    method: "POST",
-    body: {
-      ticketTypeId: data.ticketTypeId,
-      quantity: Number(data.quantity || 1),
-      buyerDetails: {
-        name: state.user?.fullName || state.user?.full_name || "",
-        phone: state.user?.phone || "",
-        email: state.user?.email || ""
-      }
-    }
-  });
-  showToast(`Ticket confirmed. Ref: ${result.order.orderReference}`);
+// Buying a ticket charged the wallet the moment the form was submitted. Every
+// other money flow in TitoPay shows what is about to happen and waits for a
+// second, deliberate confirmation. This brings ticketing into line: the request
+// itself is unchanged, it just no longer fires until the buyer has seen it.
+function openTicketingPurchaseReview(data) {
+  const event = state.publicEvent || {};
+  const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  const chosen = tickets.find((ticket) => String(ticket.id) === String(data.ticketTypeId)) || tickets[0] || {};
+  const quantity = Math.max(1, Number(data.quantity || 1));
+  const unit = Number(chosen.price) || 0;
+  const total = unit * quantity;
+  state.pendingTicketPurchase = { data, quantity, unit, total, ticketName: chosen.ticketName || "Ticket", eventName: event.eventName || "TitoPay event" };
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Ticket Confirmed</p><h2>Payment successful</h2></div>
+      <div>
+        <p class="eyebrow">Confirm purchase</p>
+        <h2>Review your tickets</h2>
+        <p class="lead">Nothing has been charged yet. Check the details before you pay.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    <section class="review-transaction-list activity-list">
+      ${settingsRow("Event", state.pendingTicketPurchase.eventName, "ticket")}
+      ${settingsRow("Ticket", state.pendingTicketPurchase.ticketName, "ticket")}
+      ${settingsRow("Quantity", String(quantity), "list")}
+      ${settingsRow("Price each", money(unit), "wallet")}
+      ${settingsRow("Total to pay", money(total), "wallet")}
+    </section>
+    <p class="field-hint">Paid from your TitoPay wallet. Tickets are issued by the organiser once payment succeeds.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="cancel-ticket-purchase">Cancel</button>
+      <button class="btn primary" type="button" data-action="confirm-ticket-purchase">${icon("ticket")} Pay ${esc(money(total))}</button>
+    </div>
+  `);
+}
+
+async function submitTicketingPurchase(data) {
+  openTicketingPurchaseReview(data);
+}
+
+async function confirmTicketingPurchase() {
+  const context = state.pendingTicketPurchase;
+  if (!context) {
+    showToast("Ticket selection expired. Please choose again.", "error");
+    return;
+  }
+  const button = document.querySelector('[data-action="confirm-ticket-purchase"]');
+  setButtonBusy(button, true);
+  try {
+    const data = context.data;
+    const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase`, {
+      method: "POST",
+      body: {
+        ticketTypeId: data.ticketTypeId,
+        quantity: Number(data.quantity || 1),
+        buyerDetails: {
+          name: state.user?.fullName || state.user?.full_name || "",
+          phone: state.user?.phone || "",
+          email: state.user?.email || ""
+        }
+      }
+    });
+    state.pendingTicketPurchase = null;
+    const order = result.order || {};
+    showToast(`Ticket confirmed. Ref: ${order.orderReference}`);
+    openTicketConfirmation(result, order);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing-purchase"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+// Renders the tickets the purchase response actually returned. Previously the
+// confirmation showed only an order reference and a delivery status, so a buyer
+// never saw the thing they had bought. Nothing here is invented: if the response
+// carries no ticket records, the screen says the ticket is being issued instead
+// of drawing a ticket that does not exist.
+function ticketRecordsFromResult(result = {}, order = {}) {
+  const candidates = [result.tickets, order.tickets, result.data?.tickets, order.items];
+  const list = candidates.find((value) => Array.isArray(value) && value.length);
+  return Array.isArray(list) ? list : [];
+}
+
+function ticketStub(ticket = {}, order = {}, event = {}) {
+  const holder = ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name
+    || state.user?.fullName || state.user?.full_name || "";
+  const code = ticket.ticketCode || ticket.ticket_code || ticket.reference || ticket.serial || "";
+  const qrImage = ticket.qrImageDataUrl || ticket.qr_image_url || ticket.qrImage || ticket.qr_url || "";
+  const seat = ticket.seat || ticket.seatNumber || ticket.seat_number || "";
+  const typeName = ticket.ticketTypeName || ticket.ticket_type_name || ticket.typeName || ticket.name || "";
+  const eventName = ticket.eventName || event.eventName || order.eventName || "TitoPay event";
+  const eventDate = ticket.eventDate || event.eventDate || order.eventDate || "";
+  const venue = ticket.venueName || event.venueName || order.venueName || "";
+  const city = ticket.city || event.city || "";
+  return `
+    <article class="ticket-stub">
+      <header class="ticket-stub-head">
+        <p class="eyebrow">TitoPay Ticket</p>
+        <strong>${esc(eventName)}</strong>
+        <span>${esc(eventDate ? formatDate(eventDate) : "Date to be confirmed")}</span>
+        ${venue ? `<span>${esc([venue, city].filter(Boolean).join(", "))}</span>` : ""}
+      </header>
+      <div class="ticket-stub-body">
+        <div class="ticket-stub-meta">
+          ${typeName ? `<div><span>Ticket</span><strong>${esc(typeName)}</strong></div>` : ""}
+          ${holder ? `<div><span>Holder</span><strong>${esc(holder)}</strong></div>` : ""}
+          ${seat ? `<div><span>Seat</span><strong>${esc(seat)}</strong></div>` : ""}
+          ${code ? `<div><span>Ticket code</span><strong class="ticket-code">${esc(code)}</strong></div>` : ""}
+          ${order.orderReference ? `<div><span>Order</span><strong>${esc(order.orderReference)}</strong></div>` : ""}
+        </div>
+        <div class="ticket-stub-scan">
+          ${qrImage
+            ? `<img src="${esc(qrImage)}" alt="Entry QR code for ${esc(eventName)}">`
+            : `<div class="ticket-stub-nocode">${icon("qr")}<span>Entry code is issued by the organiser</span></div>`}
+        </div>
+      </div>
+      <footer class="ticket-stub-foot">Present this ticket at the entrance. Do not share the code publicly.</footer>
+    </article>`;
+}
+
+function openTicketConfirmation(result = {}, order = {}) {
+  const tickets = ticketRecordsFromResult(result, order);
+  const event = result.event || order.event || {};
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Ticket confirmed</p>
+        <h2>${tickets.length > 1 ? `${tickets.length} tickets issued` : "Your ticket"}</h2>
+        <p class="lead">Paid from your TitoPay wallet. Keep this reference: ${esc(order.orderReference || "pending")}.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${tickets.length
+      ? `<section class="ticket-stub-list">${tickets.map((ticket) => ticketStub(ticket, order, event)).join("")}</section>`
+      : `<section class="empty-state compact-state">
+          ${icon("ticket")}
+          <strong>Ticket is being issued</strong>
+          <p>Payment succeeded. The organiser issues the entry code, and it will appear here and in your activity once it is ready.</p>
+        </section>`}
     <div class="settings-list">
-      ${settingsRow("Order Reference", result.order.orderReference, "ticket")}
-      ${settingsRow("Total Paid", money(result.order.total), "wallet")}
-      ${settingsRow("Delivery", result.order.deliveryStatus || "queued", "send")}
+      ${settingsRow("Order reference", order.orderReference || "Pending", "ticket")}
+      ${settingsRow("Total paid", money(order.total), "wallet")}
+      ${settingsRow("Delivery", ticketingStatusLabel(order.deliveryStatus || "queued"), "send")}
     </div>
   `);
 }
@@ -3182,13 +4511,48 @@ async function openBusinessTicketingDashboard(options = {}) {
     openInfoModal("Business ticketing", "Switch to Business to create and manage TitoPay events.");
     return;
   }
-  const [eligibilityResult, eventsResult] = await Promise.all([
-    api("/v1/ticketing/eligibility"),
-    api("/v1/ticketing/business/events")
-  ]);
-  state.ticketing.eligibility = eligibilityResult.eligibility;
+  // Both requests used to be awaited before anything appeared, so the tile
+  // looked dead on a slow connection, and a rejection meant no modal opened at
+  // all. Open first, then fill in.
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Loading your events.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list" aria-busy="true">
+      ${[0, 1, 2].map(() => `<article class="ticket-event is-loading"><span class="skeleton skeleton-line" aria-hidden="true"></span><span class="skeleton skeleton-line short" aria-hidden="true"></span></article>`).join("")}
+    </section>
+  `);
+  let eligibilityResult = null;
+  let eventsResult = null;
+  try {
+    [eligibilityResult, eventsResult] = await Promise.all([
+      api("/v1/ticketing/eligibility"),
+      api("/v1/ticketing/business/events")
+    ]);
+  } catch (error) {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Business Ticketing</p><h2>Events could not be loaded</h2><p class="lead">${esc(friendlyFormError(error, "ticketing"))}</p></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="empty-state compact-state">
+        ${icon("refresh")}
+        <strong>Nothing was changed</strong>
+        <p>Your events and ticket sales are unaffected. Check your connection and try again.</p>
+      </section>
+      <div class="auth-actions">
+        <button class="btn primary" type="button" data-action="ticketing-refresh">${icon("refresh")} Try again</button>
+      </div>
+    `);
+    return;
+  }
+  state.ticketing.eligibility = eligibilityResult.eligibility || null;
   state.ticketing.events = eventsResult.items || [];
-  const eligibility = state.ticketing.eligibility;
+  // A missing eligibility payload previously threw on eligibility.eligible and
+  // took the whole modal down with it.
+  const eligibility = state.ticketing.eligibility || { eligible: false, blockers: [] };
+  const blockers = Array.isArray(eligibility.blockers) ? eligibility.blockers : [];
   const events = state.ticketing.events;
   const counts = events.reduce((acc, event) => {
     acc[event.status] = (acc[event.status] || 0) + 1;
@@ -3218,7 +4582,7 @@ async function openBusinessTicketingDashboard(options = {}) {
       <section class="empty-state compact-state">
         ${icon("shield")}
         <strong>Business verification required</strong>
-        <p>${eligibility.blockers.map(esc).join(" ")}</p>
+        <p>${blockers.length ? blockers.map(esc).join(" ") : "Complete business verification in Profile to create and sell tickets."}</p>
         <button class="btn primary" type="button" data-route="profile">${icon("shield")} Open Profile</button>
       </section>
     `}
@@ -3229,17 +4593,56 @@ function metricCard(label, value) {
   return `<article class="metric-card"><strong>${esc(value)}</strong><span>${esc(label)}</span></article>`;
 }
 
+const TICKETING_STATUS_TONE = {
+  approved: "is-approved",
+  submitted: "is-pending",
+  under_review: "is-pending",
+  additional_information_required: "is-attention",
+  rejected: "is-rejected",
+  draft: "is-draft"
+};
+
+// Everything here is read from what the events endpoint returns. Where a count
+// is absent it is left out rather than shown as zero, because "0 sold" and "we
+// were not told" are different facts to an organiser.
 function ticketingEventRow(event) {
   const canSubmit = ["draft", "additional_information_required", "rejected"].includes(event.status);
+  const types = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  const sold = types.reduce((total, type) => total + (Number(type.quantitySold ?? type.quantity_sold) || 0), 0);
+  const capacity = types.reduce((total, type) => total + (Number(type.quantityAvailable ?? type.quantity_available) || 0), 0);
+  const revenue = types.reduce((total, type) => total + (Number(type.quantitySold ?? type.quantity_sold) || 0) * (Number(type.price) || 0), 0);
+  const prices = types.map((type) => Number(type.price) || 0).filter((value) => value > 0);
+  const hasCounts = types.length > 0 && capacity > 0;
+  const remaining = Math.max(capacity - sold, 0);
+  const pct = hasCounts ? Math.round((sold / capacity) * 100) : 0;
   return `
-    <article class="settings-row">
-      <span class="icon-bubble">${icon("ticket")}</span>
-      <div>
-        <strong>${esc(event.eventName)}</strong>
-        <small>${ticketingStatusLabel(event.status)} · ${event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date not set"}</small>
-        ${event.marketingLink ? `<small><a href="${esc(event.marketingLink)}" target="_blank" rel="noopener">Public event page</a></small>` : ""}
+    <article class="ticket-event">
+      <div class="ticket-event-head">
+        <div class="ticket-event-title">
+          <strong>${esc(event.eventName || "Untitled event")}</strong>
+          <small>${esc(event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date not set")}${event.venueName ? ` · ${esc(event.venueName)}` : ""}</small>
+        </div>
+        <span class="ticket-status ${TICKETING_STATUS_TONE[event.status] || "is-draft"}">${esc(ticketingStatusLabel(event.status))}</span>
       </div>
-      ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit</button>` : ""}
+      ${types.length ? `
+        <div class="ticket-event-figures">
+          <div><span>Ticket types</span><strong>${types.length}</strong></div>
+          ${prices.length ? `<div><span>From</span><strong>${esc(money(Math.min(...prices)))}</strong></div>` : ""}
+          ${hasCounts ? `<div><span>Sold</span><strong>${sold} of ${capacity}</strong></div>` : ""}
+          ${hasCounts ? `<div><span>Revenue</span><strong>${esc(money(revenue))}</strong></div>` : ""}
+        </div>
+        ${hasCounts ? `
+          <div class="ticket-progress" role="img" aria-label="${sold} of ${capacity} tickets sold">
+            <span data-ticket-progress="${pct}"></span>
+          </div>
+          <p class="ticket-event-note">${remaining ? `${remaining} still available` : "Sold out"}</p>
+        ` : ""}
+      ` : `<p class="ticket-event-note">No ticket types added yet.</p>`}
+      <div class="ticket-event-actions">
+        ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit for approval</button>` : ""}
+        ${event.slug ? `<button class="btn ghost mini" type="button" data-action="ticketing-open-event:${esc(event.slug)}">${icon("eye")} Preview ticket</button>` : ""}
+        ${event.marketingLink ? `<a class="btn ghost mini" href="${esc(event.marketingLink)}" target="_blank" rel="noopener">${icon("share")} Public page</a>` : ""}
+      </div>
     </article>
   `;
 }
@@ -3362,14 +4765,65 @@ async function submitTicketingScan(data) {
 function enterpriseDistributionStatusCopy(eligibility = {}) {
   if (eligibility?.eligible) return "Approved organisation. Phase 1 tools are active.";
   if (state.accountType !== "business") return "Enterprise Bulk Distribution is available to approved TitoPay Business accounts only.";
+  if (eligibility?.approved || eligibility?.organisation) return "Licence approved. Complete the outstanding account checks to activate the tools.";
+  if (localStorage.getItem(enterpriseApplicationKey())) return "Application submitted. Awaiting TitoPay approval.";
   return "Submit an organisation application. TitoPay must approve your licence before bulk distribution tools are enabled.";
 }
 
-async function openEnterpriseDistributionDashboard() {
+function enterpriseApplicationKey() {
+  const user = state.user || {};
+  return `titopay_ed_application_v1_${user.id || user.username || "anon"}`;
+}
+
+async function openEnterpriseDistributionDashboard(options = {}) {
   const eligibilityResult = await api("/v1/enterprise-distribution/eligibility");
   state.enterpriseDistribution.eligibility = eligibilityResult.eligibility;
   const eligibility = state.enterpriseDistribution.eligibility || {};
   if (!eligibility.eligible) {
+    // Three different situations used to share one screen -- the application
+    // form -- and an approved organisation blocked by a FICA or merchant
+    // check read it as "the feature is broken". Each state now says what is
+    // actually true and what to do next.
+    const licenceApproved = Boolean(eligibility.approved || eligibility.organisation);
+    const appliedAt = localStorage.getItem(enterpriseApplicationKey());
+    const blockers = (eligibility.blockers || []).filter((item) => item !== "Enterprise Bulk Distribution licence is not active." || !licenceApproved);
+    if (licenceApproved) {
+      return openModal(`
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Bulk Distribution</p>
+            <h2>Licence approved -- checks outstanding</h2>
+            <p class="lead">${esc(eligibility.organisation?.organisation_name || "Your organisation")} holds an active Bulk Distribution licence. The tools unlock as soon as every account check below passes.</p>
+          </div>
+          <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+        </div>
+        <section class="activity-list review-transaction-list">
+          ${blockers.length ? blockers.map((blocker) => settingsRow("Outstanding", blocker, "shield")).join("") : settingsRow("Checks", "Re-checking your account now. Pull refresh if this persists.", "refresh")}
+        </section>
+        <section class="auth-actions">
+          ${blockers.some((b) => /FICA/i.test(b)) ? `<button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} Complete FICA verification</button>` : ""}
+          <button class="btn secondary" type="button" data-action="enterprise-distribution">${icon("refresh")} Re-check now</button>
+        </section>
+        <p class="field-hint">Merchant profile and wallet checks are completed by TitoPay once your business verification is through. If every item above looks done and this screen persists, contact Customer Care with your organisation name.</p>
+      `);
+    }
+    if (appliedAt && !options.showForm) {
+      return openModal(`
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Bulk Distribution</p>
+            <h2>Application submitted</h2>
+            <p class="lead">Your organisation application went to TitoPay on ${esc(formatDate(appliedAt))}. Approval is manual; the tools unlock here the moment it is granted.</p>
+          </div>
+          <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+        </div>
+        ${blockers.length ? `<section class="activity-list review-transaction-list">${blockers.map((blocker) => settingsRow("To resolve meanwhile", blocker, "shield")).join("")}</section>` : ""}
+        <section class="auth-actions">
+          <button class="btn secondary" type="button" data-action="enterprise-distribution">${icon("refresh")} Check approval status</button>
+          <button class="btn ghost" type="button" data-action="enterprise-show-application">${icon("list")} Submit a new application</button>
+        </section>
+      `);
+    }
     return openModal(`
       <div class="modal-head">
         <div>
@@ -3379,7 +4833,7 @@ async function openEnterpriseDistributionDashboard() {
         </div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
-      ${eligibility.blockers?.length ? `<section class="empty-state">${icon("shield")}<strong>Readiness checks</strong><p>${eligibility.blockers.map(esc).join("<br>")}</p></section>` : ""}
+      ${blockers.length ? `<section class="empty-state">${icon("shield")}<strong>Readiness checks</strong><p>${blockers.map(esc).join("<br>")}</p></section>` : ""}
       <form class="form-grid" data-form="enterprise-distribution-application">
         <div class="field"><label>Organisation name</label><input name="organisationName" value="${esc(eligibility.business?.business_name || eligibility.business?.full_name || "")}" required></div>
         <div class="field"><label>Registration number</label><input name="registrationNumber" required></div>
@@ -3398,50 +4852,333 @@ async function openEnterpriseDistributionDashboard() {
   ]);
   state.enterpriseDistribution.beneficiaries = beneficiaryResult.items || [];
   state.enterpriseDistribution.batches = batchResult.items || [];
+  const beneficiaries = state.enterpriseDistribution.beneficiaries;
+  const batches = state.enterpriseDistribution.batches;
+  const awaitingFunding = batches.filter((batch) => batch.status === "draft_validated");
+  const lockedTotal = batches.reduce((sum, batch) => sum + (Number(batch.locked_total) || 0), 0);
   openModal(`
     <div class="modal-head">
       <div>
-        <p class="eyebrow">Enterprise Bulk Distribution</p>
-        <h2>${esc(eligibility.organisation?.organisation_name || "Approved Organisation")}</h2>
-        <p class="lead">Enterprise Distribution is active for TitoPay wallet recipients. Bank withdrawals and external payouts must use TitoPay’s existing Payouts service.</p>
+        <p class="eyebrow">Bulk Distribution</p>
+        <h2>${esc(eligibility.organisation?.organisation_name || "Approved organisation")}</h2>
+        <p class="lead">Pay many TitoPay wallets from one batch. Bank accounts are not covered here &mdash; use Payouts for those.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+
+    ${enterpriseHowItWorks()}
+
     <section class="stats-grid">
-      <div class="stat"><strong>${state.enterpriseDistribution.beneficiaries.length}</strong><span>Beneficiaries</span></div>
-      <div class="stat"><strong>${state.enterpriseDistribution.batches.length}</strong><span>Batches</span></div>
-      <div class="stat"><strong>Live</strong><span>Wallet payout control</span></div>
+      <div class="stat"><strong>${beneficiaries.length}</strong><span>Beneficiaries</span></div>
+      <div class="stat"><strong>${batches.length}</strong><span>Batches</span></div>
+      <div class="stat"><strong>${esc(money(lockedTotal))}</strong><span>Funds locked</span></div>
     </section>
-    <section class="panel">
-      <h3>Add beneficiary</h3>
-      <form class="form-grid" data-form="enterprise-beneficiary">
-        <div class="field"><label>Unique Beneficiary ID</label><input name="uniqueBeneficiaryId" required></div>
-        <div class="field"><label>First name</label><input name="firstName" required></div>
-        <div class="field"><label>Surname</label><input name="surname" required></div>
-        <div class="field"><label>Phone</label><input name="phone" inputmode="tel"></div>
-        <div class="field"><label>TitoPay wallet number</label><input name="walletNumber" inputmode="numeric"></div>
-        <button class="btn secondary" type="submit">${icon("user")} Save beneficiary</button>
-      </form>
+
+    ${awaitingFunding.length ? `<section class="integration-note" aria-label="Batches awaiting funding">
+      <strong>${awaitingFunding.length} validated batch${awaitingFunding.length === 1 ? "" : "es"} waiting for funding</strong>
+      <p>Nothing is paid until you lock funding and TitoPay Admin releases the batch.</p>
+    </section>` : ""}
+
+    <section class="section-head compact"><h2>Batches</h2></section>
+    <section class="auth-actions">
+      <button class="btn primary" type="button" data-action="enterprise-new-batch">${icon("plus")} Build a batch</button>
     </section>
-    <section class="panel">
-      <h3>Validate draft batch</h3>
-      <p class="muted">Paste CSV rows with headers such as uniqueBeneficiaryId, firstName, surname, walletNumber, amount, reference. First validate, then lock funding. Admin must release the batch before TitoPay wallet payouts are processed. Use Payouts for bank beneficiaries.</p>
-      <form class="form-grid" data-form="enterprise-batch">
-        <div class="field"><label>Batch name</label><input name="batchName" required></div>
-        <div class="field"><label>Distribution type</label><select name="distributionType"><option value="student_allowance">Student Allowance</option><option value="payroll">Payroll</option><option value="vendor_payment">Vendor Payment</option><option value="grant">Grant</option><option value="rental">Rental</option><option value="refund">Refund</option><option value="custom">Custom</option></select></div>
-        <div class="field"><label>CSV rows</label><textarea name="csvText" rows="7" required placeholder="uniqueBeneficiaryId,firstName,surname,walletNumber,amount,reference"></textarea></div>
-        <button class="btn primary" type="submit">${icon("list")} Validate batch</button>
-      </form>
+    ${batches.length ? `<section class="ed-list">
+      ${batches.slice(0, 8).map(enterpriseBatchRow).join("")}
+    </section>` : `<section class="empty-state">${icon("bulk-distribution")}<strong>No batches yet</strong><p>Build a batch to validate rows before any money is reserved.</p></section>`}
+
+    <section class="section-head compact"><h2>Beneficiaries</h2></section>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="enterprise-add-beneficiary">${icon("user")} Add beneficiary</button>
     </section>
-    <section class="panel">
-      <h3>Recent draft batches</h3>
-      ${state.enterpriseDistribution.batches.length ? state.enterpriseDistribution.batches.slice(0, 5).map((batch) => `<article class="list-row"><strong>${esc(batch.batch_name)}</strong><small>${esc(String(batch.status || "").replaceAll("_", " "))} · ${esc(batch.batch_reference)} · ${money(batch.valid_total || 0)}${Number(batch.locked_total || 0) > 0 ? ` · locked ${money(batch.locked_total)}` : ""}</small>${batch.status === "draft_validated" ? `<button class="btn secondary mini" type="button" data-action="enterprise-fund:${esc(batch.id)}">${icon("lock")} Lock Funding</button>` : ""}</article>`).join("") : `<p class="muted">No validation batches yet.</p>`}
+    ${beneficiaries.length ? `<section class="ed-list">
+      ${beneficiaries.slice(0, 12).map(enterpriseBeneficiaryRow).join("")}
+      ${beneficiaries.length > 12 ? `<p class="field-hint">Showing 12 of ${beneficiaries.length}.</p>` : ""}
+    </section>` : `<section class="empty-state">${icon("user")}<strong>No beneficiaries saved</strong><p>A beneficiary record links a person to a TitoPay wallet so batch rows can be checked against it.</p></section>`}
+  `);
+}
+
+// The sequence is the product: five states, and money only moves at the last
+// one. Numbering it is not decoration -- a batch cannot skip a step.
+function enterpriseHowItWorks() {
+  const steps = [
+    ["Add beneficiaries", "Store each recipient once, with their TitoPay wallet number."],
+    ["Build a batch", "Upload or paste the rows you want to pay, with an amount and reference each."],
+    ["Validate", "TitoPay checks every row and reports which ones it cannot match. Nothing is reserved yet."],
+    ["Lock funding", "You reserve the batch total from your business wallet. Still nothing is paid out."],
+    ["TitoPay Admin releases", "An approver at TitoPay releases the batch and the wallet payouts run."]
+  ];
+  return `
+    <section class="ed-steps" aria-label="How bulk distribution works">
+      <h3>How it works</h3>
+      <ol>
+        ${steps.map(([title, body]) => `<li><strong>${esc(title)}</strong><span>${esc(body)}</span></li>`).join("")}
+      </ol>
+    </section>
+  `;
+}
+
+// The API's status vocabulary, said in words a person can act on rather than
+// raw snake_case.
+const ENTERPRISE_BATCH_STATUS = {
+  draft: "Draft",
+  draft_validated: "Validated",
+  draft_validation_failed: "Rejected rows",
+  funding_locked: "Funds locked",
+  released: "Released",
+  processing: "Paying out",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled"
+};
+
+function enterpriseBatchStatusLabel(status) {
+  const key = String(status || "draft");
+  return ENTERPRISE_BATCH_STATUS[key] || key.replaceAll("_", " ");
+}
+
+// Where the money is, in one line. An organisation that has locked six figures
+// should not have to phone TitoPay to find out whether the batch has gone out.
+function enterpriseBatchProgress(batch = {}) {
+  const status = String(batch.status || "draft");
+  if (batch.released_at) return `Released ${formatDate(batch.released_at)}`;
+  if (status === "funding_locked") return "Locked. Waiting for TitoPay Admin to release.";
+  if (status === "draft_validated") return "Validated. Nothing reserved yet.";
+  if (status === "draft_validation_failed") return "Fix the rejected rows and validate again.";
+  return "";
+}
+
+function enterpriseBatchRow(batch = {}) {
+  const status = String(batch.status || "draft");
+  const validated = status === "draft_validated";
+  const invalid = Number(batch.invalid_rows) || 0;
+  const progress = enterpriseBatchProgress(batch);
+  return `
+    <article class="ed-row">
+      <div class="ed-row-main">
+        <strong>${esc(batch.batch_name || "Untitled batch")}</strong>
+        <small>${esc(batch.batch_reference || "")}</small>
+        ${progress ? `<small class="ed-progress">${esc(progress)}</small>` : ""}
+      </div>
+      <div class="ed-row-meta">
+        <span class="ed-status ed-status-${esc(status)}">${esc(enterpriseBatchStatusLabel(status))}</span>
+        <strong>${esc(money(batch.valid_total || 0))}</strong>
+        ${Number(batch.locked_total || 0) > 0 ? `<small>${esc(money(batch.locked_total))} locked</small>` : ""}
+        ${invalid ? `<small class="ed-invalid">${invalid} row${invalid === 1 ? "" : "s"} rejected</small>` : ""}
+      </div>
+      ${validated ? `<button class="btn secondary" type="button" data-action="enterprise-fund:${esc(batch.id)}">${icon("lock")} Lock funding</button>` : ""}
+    </article>
+  `;
+}
+
+function enterpriseBeneficiaryRow(beneficiary = {}) {
+  const name = [beneficiary.first_name || beneficiary.firstName, beneficiary.surname].filter(Boolean).join(" ").trim();
+  const wallet = beneficiary.wallet_number || beneficiary.walletNumber || "";
+  const reference = beneficiary.unique_beneficiary_id || beneficiary.uniqueBeneficiaryId || "";
+  return `
+    <article class="ed-row">
+      <div class="ed-row-main">
+        <strong>${esc(name || reference || "Beneficiary")}</strong>
+        <small>${esc(reference)}</small>
+      </div>
+      <div class="ed-row-meta">
+        ${wallet ? `<strong>Wallet ${esc(wallet)}</strong>` : `<small class="ed-invalid">No wallet number</small>`}
+        ${beneficiary.phone ? `<small>${esc(beneficiary.phone)}</small>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+const ENTERPRISE_CSV_HEADERS = "uniqueBeneficiaryId,firstName,surname,walletNumber,amount,reference";
+
+function downloadEnterpriseCsvTemplate() {
+  const csv = `${ENTERPRISE_CSV_HEADERS}\n`;
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "titopay-bulk-distribution-template.csv");
+}
+
+function openEnterpriseBeneficiaryModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Bulk Distribution</p><h2>Add beneficiary</h2><p class="lead">Stored once, then referenced by every batch. Adding a beneficiary moves no money.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="enterprise-beneficiary">
+      <div class="field"><label for="ed-ben-id">Unique beneficiary ID</label><input id="ed-ben-id" name="uniqueBeneficiaryId" required><small class="field-hint">Your own reference &mdash; a student, employee or tenant number.</small></div>
+      <div class="field"><label for="ed-ben-first">First name</label><input id="ed-ben-first" name="firstName" required autocomplete="given-name"></div>
+      <div class="field"><label for="ed-ben-last">Surname</label><input id="ed-ben-last" name="surname" required autocomplete="family-name"></div>
+      <div class="field"><label for="ed-ben-phone">Phone <span class="field-optional">optional</span></label><input id="ed-ben-phone" name="phone" inputmode="tel" autocomplete="tel"></div>
+      <div class="field"><label for="ed-ben-wallet">TitoPay wallet number</label><input id="ed-ben-wallet" name="walletNumber" inputmode="numeric"><small class="field-hint">Rows without a matching wallet are rejected at validation.</small></div>
+      <button class="btn primary" type="submit">${icon("user")} Save beneficiary</button>
+    </form>
+  `);
+}
+
+function openEnterpriseBatchModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Bulk Distribution</p><h2>Build a batch</h2><p class="lead">Validation only checks the rows. No funds are reserved and nothing is paid at this step.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="integration-note" aria-label="CSV columns">
+      <strong>Columns, in this order</strong>
+      <p>${esc(ENTERPRISE_CSV_HEADERS.replaceAll(",", ", "))}</p>
+    </section>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="enterprise-csv-template">${icon("download")} Download template</button>
+      <button class="btn secondary" type="button" data-action="enterprise-csv-pick">${icon("upload")} Load a CSV file</button>
+    </section>
+    <input class="visually-hidden" type="file" accept=".csv,text/csv,text/plain" data-enterprise-csv-input aria-label="Choose a CSV file of batch rows">
+    <form class="form-grid" data-form="enterprise-batch">
+      <div class="field"><label for="ed-batch-name">Batch name</label><input id="ed-batch-name" name="batchName" required placeholder="March student allowances"></div>
+      <div class="field">
+        <label for="ed-batch-type">Distribution type</label>
+        <select id="ed-batch-type" name="distributionType">
+          <option value="student_allowance">Student allowance</option>
+          <option value="payroll">Payroll</option>
+          <option value="vendor_payment">Vendor payment</option>
+          <option value="grant">Grant</option>
+          <option value="rental">Rental</option>
+          <option value="refund">Refund</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="ed-batch-csv">CSV rows</label>
+        <textarea id="ed-batch-csv" name="csvText" rows="8" required placeholder="${esc(ENTERPRISE_CSV_HEADERS)}" data-enterprise-csv-text></textarea>
+        <small class="field-hint">Loading a file fills this box &mdash; you can still edit it before validating.</small>
+      </div>
+      <button class="btn primary" type="submit">${icon("list")} Validate batch</button>
+    </form>
+  `);
+}
+
+// The file never leaves the browser: it is read locally and dropped into the
+// same textarea, so the request body is byte-for-byte what a paste produces.
+function pickEnterpriseCsvFile() {
+  const input = document.querySelector("[data-enterprise-csv-input]");
+  if (input) input.click();
+}
+
+function loadEnterpriseCsvFile(file) {
+  const textarea = document.querySelector("[data-enterprise-csv-text]");
+  if (!file || !textarea) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    textarea.value = String(reader.result || "").trim();
+    const rows = textarea.value.split(/\r?\n/).filter((line) => line.trim()).length;
+    showToast(`Loaded ${rows} line${rows === 1 ? "" : "s"} from ${file.name}.`);
+  };
+  reader.onerror = () => showToast("Could not read that file.", "error");
+  reader.readAsText(file);
+}
+
+// Whatever the validator reports is what gets shown. Counts and per-row
+// reasons are rendered when the API returns them and simply omitted when it
+// does not -- this screen never invents a reason a row failed.
+// The validator's report is the deliverable. Each entry is
+// { rowNumber, row, errors[], status } and every rejection reason is already
+// spelled out -- "Active TitoPay wallet was not found", "Amount must be
+// greater than zero". Nothing here is inferred.
+function enterpriseRejectedRows(batch = {}, report = []) {
+  const fromReport = (Array.isArray(report) ? report : [])
+    .filter((item) => item && item.status === "invalid" && (item.errors || []).length)
+    .map((item) => ({
+      label: item.row?.uniqueBeneficiaryId || item.row?.beneficiaryNumber || item.row?.walletNumber
+        || item.row?.reference || `Row ${item.rowNumber}`,
+      rowNumber: item.rowNumber,
+      amount: item.row?.amount,
+      reasons: item.errors
+    }));
+  if (fromReport.length) return fromReport;
+  // Older responses carried only a flat list; keep reading it.
+  const legacy = batch.rows || batch.invalid_row_details || batch.errors || [];
+  return (Array.isArray(legacy) ? legacy : [])
+    .filter((row) => row && (row.error || row.reason || row.message))
+    .map((row) => ({
+      label: row.uniqueBeneficiaryId || row.unique_beneficiary_id || row.reference || `Row ${row.line || row.row || ""}`,
+      rowNumber: row.line || row.row,
+      amount: row.amount,
+      reasons: [row.error || row.reason || row.message]
+    }));
+}
+
+function openEnterpriseBatchResult(batch = {}, report = []) {
+  const invalid = Number(batch.invalid_rows) || 0;
+  const valid = Number(batch.valid_rows ?? batch.total_rows - invalid);
+  const rowList = enterpriseRejectedRows(batch, report);
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Bulk Distribution</p>
+        <h2>${invalid ? "Validated with rejections" : "Batch validated"}</h2>
+        <p class="lead">No funds have been reserved. Lock funding when the rows are right.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list review-transaction-list">
+      ${settingsRow("Batch", batch.batch_name || "Untitled batch", "list")}
+      ${batch.batch_reference ? settingsRow("Reference", batch.batch_reference, "receipt-list") : ""}
+      ${Number.isFinite(valid) ? settingsRow("Rows accepted", String(valid), "check-circle") : ""}
+      ${invalid ? settingsRow("Rows rejected", String(invalid), "shield") : ""}
+      ${settingsRow("Batch total", money(batch.valid_total || 0), "wallet")}
+    </section>
+    ${rowList.length ? `
+      <section class="section-head compact"><h2>Rejected rows</h2></section>
+      <section class="ed-list">
+        ${rowList.slice(0, 25).map((row) => `<article class="ed-row">
+          <div class="ed-row-main">
+            <strong>${esc(row.label)}${row.rowNumber ? ` <span class="ed-row-number">line ${esc(String(row.rowNumber))}</span>` : ""}</strong>
+            ${row.reasons.map((reason) => `<small class="ed-invalid">${esc(reason)}</small>`).join("")}
+          </div>
+          ${row.amount != null ? `<div class="ed-row-meta"><strong>${esc(money(row.amount))}</strong></div>` : ""}
+        </article>`).join("")}
+        ${rowList.length > 25 ? `<p class="field-hint">Showing 25 of ${rowList.length} rejected rows.</p>` : ""}
+      </section>
+    ` : invalid ? `<section class="integration-note"><strong>${invalid} row${invalid === 1 ? "" : "s"} rejected</strong><p>TitoPay reported the count but not which rows. Check the CSV against your beneficiary list, or ask TitoPay support for the validation report.</p></section>` : ""}
+    <section class="auth-actions">
+      <button class="btn primary" type="button" data-action="enterprise-distribution">${icon("bulk-distribution")} Back to batches</button>
+    </section>
+  `);
+}
+
+// Locking reserves real money, so it gets the same treatment as every other
+// debit in this app: a review that restates the amount, and an explicit
+// confirm. It replaced a browser confirm() dialog.
+function openEnterpriseFundingReview(batchId) {
+  const batch = (state.enterpriseDistribution.batches || []).find((item) => String(item.id) === String(batchId));
+  if (!batch) {
+    showToast("That batch is no longer in the list. Refresh and try again.", "error");
+    return;
+  }
+  const balance = walletAvailableBalance();
+  const total = Number(batch.valid_total) || 0;
+  const short = balance != null && balance < total;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Bulk Distribution</p>
+        <h2>Lock funding</h2>
+        <p class="lead">This reserves the batch total in your business wallet. It does not pay anyone &mdash; TitoPay Admin still has to release the batch.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list review-transaction-list">
+      ${settingsRow("Batch", batch.batch_name || "Untitled batch", "list")}
+      ${batch.batch_reference ? settingsRow("Reference", batch.batch_reference, "receipt-list") : ""}
+      ${settingsRow("Amount to reserve", money(total), "lock", "primary")}
+      ${balance != null ? settingsRow("Wallet available now", money(balance), "wallet") : ""}
+    </section>
+    ${short ? `<section class="integration-note" aria-label="Insufficient balance"><strong>Wallet is short of the batch total</strong><p>TitoPay will decline the lock. Top up the business wallet or reduce the batch first.</p></section>` : ""}
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-close>Cancel</button>
+      <button class="btn primary" type="button" data-action="enterprise-fund-confirm:${esc(batch.id)}">${icon("lock")} Lock ${esc(money(total))}</button>
     </section>
   `);
 }
 
 async function submitEnterpriseDistributionApplication(data) {
   await api("/v1/enterprise-distribution/applications", { method: "POST", body: data });
+  localStorage.setItem(enterpriseApplicationKey(), new Date().toISOString());
   showToast("Application submitted for TitoPay approval.");
   await loadAccount();
   closeModal();
@@ -3455,15 +5192,21 @@ async function submitEnterpriseBeneficiary(data) {
 
 async function submitEnterpriseBatch(data) {
   const result = await api("/v1/enterprise-distribution/batches", { method: "POST", body: data });
-  const invalidRows = result.batch?.invalid_rows || 0;
-  showToast(invalidRows ? `Batch validated with ${invalidRows} invalid row(s).` : "Batch validated successfully.");
-  await openEnterpriseDistributionDashboard();
+  const batch = result.batch || {};
+  const invalidRows = Number(batch.invalid_rows) || 0;
+  showToast(invalidRows ? `Batch validated with ${invalidRows} rejected row${invalidRows === 1 ? "" : "s"}.` : "Batch validated. No funds reserved yet.");
+  // Refresh the list behind the result so returning to the dashboard is current.
+  await api("/v1/enterprise-distribution/batches")
+    .then((res) => { state.enterpriseDistribution.batches = res.items || []; })
+    .catch(() => {});
+  // The validator returns a row-by-row report alongside the batch. It always
+  // did; this screen used to throw it away and show a bare count.
+  openEnterpriseBatchResult(batch, result.validationReport || result.validation_report || []);
 }
 
 async function lockEnterpriseDistributionFunding(batchId) {
-  if (!window.confirm("Lock funding for this validated batch? Funds will be reserved from the business wallet until Admin releases or resolves the batch.")) return;
   await api(`/v1/enterprise-distribution/batches/${batchId}/fund`, { method: "POST" });
-  showToast("Funding locked. Admin can now review and release the batch.");
+  showToast("Funding locked. TitoPay Admin can now review and release the batch.");
   await openEnterpriseDistributionDashboard();
 }
 
@@ -3493,31 +5236,72 @@ function openTransactionModal(service) {
   `);
 }
 
+// Available balance for the active wallet, or null when it has not loaded.
+// Never guessed: an absent balance is simply not shown.
+function walletAvailableBalance() {
+  const wallet = primaryWallet();
+  const raw = wallet ? (wallet.available_balance ?? wallet.availableBalance ?? wallet.balance) : null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+// Quick amounts save typing on the two actions people repeat most. They are
+// presets for an input the customer can always override, not products.
+const QUICK_AMOUNTS = [50, 100, 200, 500, 1000];
+
+function quickAmountLabel(amount) {
+  const value = Number(amount) || 0;
+  const whole = Number.isInteger(value);
+  return `R ${new Intl.NumberFormat("en-ZA", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 }).format(value)}`;
+}
+
+function quickAmountChips(amounts = QUICK_AMOUNTS, { includeAll = false } = {}) {
+  const balance = walletAvailableBalance();
+  return `<div class="quick-amounts" role="group" aria-label="Quick amounts">
+    ${amounts.map((amount) => `<button class="chip quick-amount" type="button" data-quick-amount="${amount}" aria-label="${esc(money(amount))}">${esc(quickAmountLabel(amount))}</button>`).join("")}
+    ${includeAll && balance != null && balance > 0 ? `<button class="chip quick-amount quick-amount-all" type="button" data-quick-amount="${balance}" aria-label="Withdraw the full available balance, ${esc(money(balance))}">All ${esc(quickAmountLabel(balance))}</button>` : ""}
+  </div>`;
+}
+
+function balanceContextRow(label) {
+  const balance = walletAvailableBalance();
+  if (balance == null) return "";
+  return `<p class="balance-context">${esc(label)} <strong>${esc(money(balance))}</strong></p>`;
+}
+
 function openTopUpModal(service) {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Top Up</p><h2>Add money to your wallet</h2><p class="lead">Card top ups are processed securely by Peach Payments. TitoPay will show the fee preview first.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid money-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="TitoPay Wallet">
       <input type="hidden" name="integrationFlow" value="wallet_top_up">
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      ${balanceContextRow("Wallet balance now")}
       <div class="field">
-        <label>Funding method</label>
-        <select name="fundingMethod">
-          <option value="peach_card">Card funding via Peach Payments</option>
-          <option value="eft_bank_transfer">EFT / bank transfer funding</option>
-        </select>
+        <label for="topup-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="topup-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips()}
       </div>
-      <section class="integration-note" aria-label="Top up funding options">
-        <p>${icon("wallet")} <span><strong>Peach Payments:</strong> card funding uses Peach checkout, card verification and payment-status callbacks.</span></p>
-        <p>${icon("bank")} <span><strong>EFT funding:</strong> use your TitoPay reference so the top up can be matched securely.</span></p>
-      </section>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Top up reference"></div>
+      <div class="field">
+        <label for="topup-method">How are you paying?</label>
+        <select id="topup-method" name="fundingMethod" data-funding-method>
+          <option value="peach_card">Card &middot; instant</option>
+          <option value="eft_bank_transfer">EFT or bank transfer</option>
+        </select>
+        <p class="field-hint" data-funding-hint>Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.</p>
+      </div>
+      <div class="field">
+        <label for="topup-reference">Reference <span class="field-optional">optional</span></label>
+        <input id="topup-reference" name="reference" placeholder="What is this top up for?">
+      </div>
       <button class="btn primary" type="submit">${icon("upload")} Preview top up</button>
     </form>
+    <section class="integration-note" aria-label="Top up security">
+      <p>${icon("shield")} <span><strong>You see the fee first.</strong> Nothing is charged until you confirm on the review screen.</span></p>
+    </section>
   `);
 }
 
@@ -3527,80 +5311,1230 @@ function openWithdrawModal(service) {
       <div><p class="eyebrow">Withdraw</p><h2>Withdraw funds</h2><p class="lead">Withdrawals are handled through Peach Payments-supported payout processing after wallet checks and confirmation.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid money-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="integrationFlow" value="wallet_withdrawal">
-      <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank account or account reference" required></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      ${balanceContextRow("Available to withdraw")}
       <div class="field">
-        <label>Withdrawal speed</label>
-        <select name="withdrawalSpeed">
-          <option value="standard_peach_withdrawal">Standard Peach Payments withdrawal</option>
-          <option value="instant_peach_withdrawal">Instant Peach Payments withdrawal</option>
-        </select>
+        <label for="wd-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="wd-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips(QUICK_AMOUNTS, { includeAll: true })}
       </div>
-      <section class="integration-note" aria-label="Withdrawal processing options">
-        <p>${icon("bank")} <span><strong>Peach Payments payout:</strong> confirm the beneficiary and review the fee before submitting.</span></p>
-        <p>${icon("shield")} <span><strong>Security:</strong> withdrawals are checked against wallet lock, fee preview and confirmation before processing.</span></p>
-      </section>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Withdrawal reference"></div>
+      <div class="field">
+        <label for="wd-account">Where should it go?</label>
+        <input id="wd-account" name="recipient" autocomplete="off" placeholder="Bank account number or saved beneficiary" required>
+        <p class="field-hint">Enter the account you have already given TitoPay, or its reference.</p>
+      </div>
+      <div class="field">
+        <label for="wd-speed">How soon do you need it?</label>
+        <select id="wd-speed" name="withdrawalSpeed" data-withdrawal-speed>
+          <option value="standard_peach_withdrawal">Standard</option>
+          <option value="instant_peach_withdrawal">Instant</option>
+        </select>
+        <p class="field-hint" data-withdrawal-hint>Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.</p>
+      </div>
+      <div class="field">
+        <label for="wd-reference">Reference <span class="field-optional">optional</span></label>
+        <input id="wd-reference" name="reference" placeholder="What is this withdrawal for?">
+      </div>
       <button class="btn primary" type="submit">${icon("withdraw")} Preview withdrawal</button>
     </form>
+    <section class="integration-note" aria-label="Withdrawal security">
+      <p>${icon("shield")} <span><strong>Checked before it leaves.</strong> Wallet lock, beneficiary and fee are all confirmed on the review screen.</span></p>
+    </section>
   `);
+}
+
+// ---------------------------------------------------------------------------
+// VAS (value-added service) purchase journey
+//
+// Airtime, data, electricity, vouchers and bill payments are provider products,
+// not free-form amounts. The authoritative product catalogue therefore belongs
+// to the TitoPay API, which resolves it from whichever VAS provider is
+// connected. This layer asks the API for that catalogue and renders exactly
+// what comes back.
+//
+// It never invents providers, bundles, denominations, meter owners or provider
+// references. When TitoPay has no catalogue to give, the journey says so and
+// keeps the open-value form production already relies on, so nothing that works
+// today stops working.
+// ---------------------------------------------------------------------------
+
+// Above these sizes a plain dropdown or an unfiltered grid stops being usable,
+// so the journey switches to a searchable picker. Below them the native select
+// is the better control on every platform.
+const VAS_PROVIDER_SEARCH_THRESHOLD = 8;
+const VAS_PRODUCT_SEARCH_THRESHOLD = 10;
+const VAS_CATALOGUE_PATH = "/v1/vas/catalogue";
+const VAS_VALIDATE_PATH = "/v1/vas/validate";
+const vasCatalogueCache = new Map();
+
+// Network and biller names below are selection labels that already shipped in
+// production, not a product catalogue. They carry no prices, bundles or SKUs.
+const VAS_JOURNEYS = {
+  airtime: {
+    vasKey: "airtime",
+    selfPurchase: true,
+    productLed: true,
+    eyebrow: "Airtime & Data",
+    title: "Buy airtime",
+    lead: "Choose the network and product, then confirm the fee preview before purchase.",
+    icon: "sim-card",
+    providerLabel: "Network",
+    productLabel: "Airtime product",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: ["MTN", "Vodacom", "Telkom", "Cell C"],
+    openValue: true,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "Airtime can be bought at any value.",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  data: {
+    vasKey: "data",
+    selfPurchase: true,
+    productLed: true,
+    eyebrow: "Airtime & Data",
+    title: "Buy data",
+    lead: "Choose the network and bundle, then confirm the fee preview before purchase.",
+    icon: "data-bundle",
+    providerLabel: "Network",
+    productLabel: "Data bundle",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: ["MTN", "Vodacom", "Telkom", "Cell C"],
+    openValue: true,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  electricity: {
+    vasKey: "electricity",
+    productLed: false,
+    eyebrow: "Electricity",
+    title: "Buy electricity",
+    lead: "Enter the prepaid meter number and amount, then confirm the fee preview before purchase.",
+    icon: "electricity",
+    providerLabel: "Utility",
+    productLabel: "Electricity product",
+    recipientLabel: "Meter number",
+    recipientPlaceholder: "Enter prepaid meter number",
+    recipientInputMode: "numeric",
+    fallbackProviders: ["Prepaid electricity"],
+    openValue: true,
+    amountLabel: "Purchase amount",
+    openValueLabel: "Purchase amount",
+    openValueNote: "Prepaid electricity is bought by value.",
+    validate: true,
+    validateLabel: "Verify meter",
+    validateHeading: "Meter",
+    submitLabel: "Preview purchase"
+  },
+  voucher: {
+    vasKey: "voucher",
+    productLed: true,
+    eyebrow: "Vouchers",
+    title: "Buy voucher",
+    lead: "Choose the voucher and value, then confirm the fee preview before purchase.",
+    icon: "voucher",
+    providerLabel: "Voucher category",
+    productLabel: "Voucher",
+    recipientLabel: "Voucher recipient",
+    recipientPlaceholder: "Email, phone or self",
+    recipientInputMode: "text",
+    fallbackProviders: ["Shopping", "Gaming", "Entertainment", "Food"],
+    openValue: true,
+    amountLabel: "Value",
+    openValueLabel: "Other value",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  sms: {
+    vasKey: "sms",
+    selfPurchase: true,
+    productLed: true,
+    eyebrow: "SMS Bundles",
+    title: "Buy an SMS bundle",
+    lead: "Choose the network and bundle, then confirm the fee preview before purchase.",
+    icon: "sms-bundle",
+    providerLabel: "Network",
+    productLabel: "SMS bundle",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: [],
+    openValue: false,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  voice: {
+    vasKey: "voice",
+    selfPurchase: true,
+    productLed: true,
+    eyebrow: "Voice Bundles",
+    title: "Buy a voice bundle",
+    lead: "Choose the network and bundle, then confirm the fee preview before purchase.",
+    icon: "voice-bundle",
+    providerLabel: "Network",
+    productLabel: "Voice bundle",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: [],
+    openValue: false,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  bill: {
+    vasKey: "bill_payment",
+    productLed: false,
+    eyebrow: "Pay Bills",
+    title: "Pay account bills",
+    lead: "Choose the biller, enter the account number and confirm the fee preview before payment.",
+    icon: "bill-pay",
+    providerLabel: "Biller",
+    productLabel: "Bill product",
+    recipientLabel: "Account or customer number",
+    recipientPlaceholder: "Smartcard, municipal account or bill reference",
+    recipientInputMode: "text",
+    fallbackProviders: ["DStv", "Municipal bill", "Water", "Rates", "Utilities", "School fees", "Insurance", "Other biller"],
+    openValue: true,
+    amountLabel: "Payment amount",
+    openValueLabel: "Payment amount",
+    openValueNote: "",
+    validate: true,
+    validateLabel: "Verify account",
+    validateHeading: "Account",
+    integrationFlow: "vas_bill_payment",
+    providerReady: "ott_or_vas_provider",
+    submitLabel: "Preview bill payment"
+  }
+};
+
+// The live journey. Modals are single-instance, so one record is enough and it
+// keeps the selected provider/product out of the DOM round-trip.
+let activeVasJourney = null;
+
+// The signed-in customer's own cellphone number, when the profile carries one.
+// Nothing is guessed: an absent number simply means no self-purchase shortcut.
+function vasSelfNumber() {
+  const user = state.user || {};
+  const raw = vasText(user, ["phone", "mobile", "msisdn", "cellphone", "cell_number", "cellNumber", "phoneNumber", "phone_number"]);
+  if (!raw) return "";
+  const normalized = normalizeSouthAfricanPhone(raw);
+  return isSouthAfricanPhone(normalized) ? normalized : "";
+}
+
+function vasJourneyKind(service) {
+  const action = String(service.action || "").toLowerCase();
+  if (action === "pay-bills") return "bill";
+  if (action === "electricity") return "electricity";
+  if (action === "voucher") return "voucher";
+  if (action === "data") return "data";
+  if (action === "sms" || action === "sms-bundle" || action === "sms-bundles") return "sms";
+  if (action === "voice" || action === "voice-bundle" || action === "voice-bundles") return "voice";
+  return "airtime";
+}
+
+function vasText(source, keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = source[keys[index]];
+    if (value != null && String(value).trim() !== "") return String(value).trim();
+  }
+  return "";
+}
+
+function vasNumber(source, keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = Number(source[keys[index]]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+function normalizeVasProduct(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const name = vasText(source, ["name", "productName", "product_name", "label", "title", "description"]);
+  const code = vasText(source, ["code", "productCode", "product_code", "sku", "id", "productId", "product_id"]);
+  if (!name && !code) return null;
+  const amount = vasNumber(source, ["amount", "price", "value", "sellPrice", "sell_price", "retailPrice", "retail_price"]);
+  return {
+    code,
+    name: name || code,
+    description: vasText(source, ["description", "detail", "details", "subtitle"]),
+    validity: vasText(source, ["validity", "validityPeriod", "validity_period", "expiry", "duration"]),
+    size: vasText(source, ["size", "dataSize", "data_size", "volume", "bundleSize", "bundle_size"]),
+    amount,
+    minAmount: vasNumber(source, ["minAmount", "min_amount", "minimum", "minValue", "min_value"]),
+    maxAmount: vasNumber(source, ["maxAmount", "max_amount", "maximum", "maxValue", "max_value"])
+  };
+}
+
+// A provider may publish the fields it needs (a DStv smartcard, a municipal
+// account plus a sub-account, and so on). TitoPay renders exactly those fields.
+// Nothing is assumed about which fields any provider requires.
+const VAS_FIELD_TYPES = { text: "text", string: "text", number: "number", numeric: "number", tel: "tel", phone: "tel", msisdn: "tel", email: "email", select: "select", enum: "select", list: "select", date: "date" };
+
+function normalizeVasFieldOption(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== "object") return { value: String(raw), label: String(raw) };
+  const value = vasText(raw, ["value", "code", "id"]);
+  const label = vasText(raw, ["label", "name", "title", "description"]) || value;
+  if (!value && !label) return null;
+  return { value: value || label, label: label || value };
+}
+
+function normalizeVasField(raw, index) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const key = vasText(source, ["name", "key", "field", "fieldName", "field_name", "id", "code"]);
+  const label = vasText(source, ["label", "title", "displayName", "display_name", "prompt", "caption"]) || key;
+  if (!key && !label) return null;
+  const optionSource = source.options || source.values || source.choices || source.allowedValues || source.allowed_values || [];
+  const options = (Array.isArray(optionSource) ? optionSource : []).map(normalizeVasFieldOption).filter(Boolean);
+  const declaredType = String(vasText(source, ["type", "inputType", "input_type", "dataType", "data_type", "format"]) || "").toLowerCase();
+  return {
+    key: key || `field${index + 1}`,
+    label: label || key,
+    type: options.length ? "select" : (VAS_FIELD_TYPES[declaredType] || "text"),
+    options,
+    placeholder: vasText(source, ["placeholder", "example", "sample", "hint"]),
+    help: vasText(source, ["help", "helpText", "help_text", "description", "note", "guidance"]),
+    required: source.required === true || source.mandatory === true || source.isRequired === true || source.is_required === true,
+    primary: source.primary === true || source.isAccountIdentifier === true || source.is_account_identifier === true || source.identifier === true || source.isPrimary === true,
+    pattern: vasText(source, ["pattern", "regex", "validationPattern", "validation_pattern"]),
+    maxLength: vasNumber(source, ["maxLength", "max_length", "length"]),
+    inputMode: vasText(source, ["inputMode", "input_mode", "keyboard"])
+  };
+}
+
+// Exactly one field carries the account identifier, because that value is what
+// the existing transaction contract sends as `recipient`.
+function normalizeVasFields(raw) {
+  const list = (Array.isArray(raw) ? raw : []).map(normalizeVasField).filter(Boolean);
+  if (!list.length) return [];
+  const primaryIndex = list.findIndex((field) => field.primary);
+  list.forEach((field, index) => {
+    field.primary = index === (primaryIndex >= 0 ? primaryIndex : 0);
+    if (field.primary) field.required = true;
+  });
+  return list;
+}
+
+function normalizeVasProvider(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const name = vasText(source, ["name", "providerName", "provider_name", "label", "billerName", "biller_name", "title", "network"]);
+  const code = vasText(source, ["code", "providerCode", "provider_code", "id", "providerId", "provider_id", "billerCode", "biller_code"]);
+  if (!name && !code) return null;
+  const productSource = source.products || source.items || source.bundles || source.denominations || source.tariffs || [];
+  const products = (Array.isArray(productSource) ? productSource : []).map(normalizeVasProduct).filter(Boolean);
+  return {
+    code: code || name,
+    name: name || code,
+    note: vasText(source, ["note", "description", "hint"]),
+    requiresValidation: source.requiresValidation === true || source.requires_validation === true,
+    allowsOpenValue: source.allowsOpenValue !== false && source.allows_open_value !== false,
+    minAmount: vasNumber(source, ["minAmount", "min_amount", "minimum"]),
+    maxAmount: vasNumber(source, ["maxAmount", "max_amount", "maximum"]),
+    fields: normalizeVasFields(source.fields || source.requiredFields || source.required_fields || source.accountFields || source.account_fields || source.inputs),
+    products
+  };
+}
+
+function normalizeVasCatalogue(payload) {
+  const root = payload && (payload.catalogue || payload.data || payload) || {};
+  const providerSource = root.providers || root.billers || root.networks || root.items || [];
+  const providers = (Array.isArray(providerSource) ? providerSource : []).map(normalizeVasProvider).filter(Boolean);
+  return providers;
+}
+
+async function loadVasCatalogue(vasKey) {
+  if (vasCatalogueCache.has(vasKey)) return vasCatalogueCache.get(vasKey);
+  try {
+    const payload = await api(`${VAS_CATALOGUE_PATH}?service=${encodeURIComponent(vasKey)}`);
+    const providers = normalizeVasCatalogue(payload);
+    const result = providers.length
+      ? { status: "ready", providers }
+      : { status: "empty", providers: [] };
+    vasCatalogueCache.set(vasKey, result);
+    return result;
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    // 404/501 means TitoPay has no catalogue endpoint for this service yet.
+    // Anything else is transient, so it is not cached and can be retried.
+    const result = {
+      status: "unavailable",
+      providers: [],
+      reason: status === 404 || status === 501 ? "not-provisioned" : status === 0 ? "offline" : "error",
+      message: status === 404 || status === 501 ? "" : friendlyFormError(error, "vas-catalogue")
+    };
+    if (result.reason === "not-provisioned") vasCatalogueCache.set(vasKey, result);
+    return result;
+  }
+}
+
+function vasCatalogueNotice(config, catalogue) {
+  if (catalogue.status === "empty") {
+    return {
+      head: `No ${config.productLabel.toLowerCase()}s available`,
+      body: `TitoPay returned no ${config.productLabel.toLowerCase()}s for this service. You can still continue by entering the ${config.amountLabel.toLowerCase()}.`
+    };
+  }
+  if (catalogue.reason === "offline") {
+    return {
+      head: "Product list unavailable",
+      body: `TitoPay could not be reached to load ${config.productLabel.toLowerCase()}s. Check your connection and retry, or continue by entering the ${config.amountLabel.toLowerCase()}.`
+    };
+  }
+  if (catalogue.reason === "error") {
+    return {
+      head: "Product list unavailable",
+      body: catalogue.message || `TitoPay could not load ${config.productLabel.toLowerCase()}s right now. Retry, or continue by entering the ${config.amountLabel.toLowerCase()}.`
+    };
+  }
+  return {
+    head: "Product list not available yet",
+    body: `TitoPay does not yet publish a ${config.productLabel.toLowerCase()} list for this service. Choose the ${config.providerLabel.toLowerCase()} and enter the ${config.amountLabel.toLowerCase()} to continue.`
+  };
+}
+
+function vasProductPriceText(product) {
+  if (product.amount) return money(product.amount);
+  if (product.minAmount && product.maxAmount) return `${money(product.minAmount)} - ${money(product.maxAmount)}`;
+  if (product.minAmount) return `From ${money(product.minAmount)}`;
+  return "Enter amount";
+}
+
+function vasProductMeta(product) {
+  return [product.size, product.validity, product.description].filter(Boolean).join(" · ");
+}
+
+function vasProductGrid(config, provider) {
+  if (!provider || !provider.products.length) return "";
+  const cards = provider.products.map((product, index) => `
+    <button class="vas-product" type="button" data-vas-product="${index}" aria-pressed="false">
+      <span class="vas-product-name">${esc(product.name)}</span>
+      ${vasProductMeta(product) ? `<span class="vas-product-meta">${esc(vasProductMeta(product))}</span>` : ""}
+      <span class="vas-product-price">${esc(vasProductPriceText(product))}</span>
+    </button>`).join("");
+  const openValue = config.openValue && provider.allowsOpenValue
+    ? `<button class="vas-product vas-product-open" type="button" data-vas-product="open" aria-pressed="false">
+        <span class="vas-product-name">${esc(config.openValueLabel)}</span>
+        <span class="vas-product-price">Enter amount</span>
+      </button>`
+    : "";
+  const search = provider.products.length > VAS_PRODUCT_SEARCH_THRESHOLD
+    ? `<div class="vas-product-search">
+        <label class="visually-hidden" for="vas-product-search">Search ${esc(config.productLabel.toLowerCase())}s</label>
+        <input id="vas-product-search" class="vas-search-input" type="search" autocomplete="off" data-vas-product-search
+          placeholder="Search ${esc(config.productLabel.toLowerCase())}s">
+        <p class="field-hint" data-vas-product-status role="status" aria-live="polite"></p>
+      </div>`
+    : "";
+  return `
+    <p class="vas-section-label" id="vas-product-label">${esc(config.productLabel)}</p>
+    ${search}
+    <div class="vas-product-grid" role="group" aria-labelledby="vas-product-label">${cards}${openValue}</div>`;
+}
+
+function vasCatalogueSkeleton(config) {
+  return `
+    <p class="vas-section-label">${esc(config.productLabel)}</p>
+    <div class="vas-product-grid is-loading" aria-hidden="true">
+      ${[0, 1, 2, 3].map(() => `<span class="skeleton vas-product-skeleton"></span>`).join("")}
+    </div>
+    <p class="vas-loading-note" role="status">Loading ${esc(config.productLabel.toLowerCase())}s...</p>`;
+}
+
+function vasSelectedProvider() {
+  if (!activeVasJourney) return null;
+  const { catalogue, providerCode } = activeVasJourney;
+  if (catalogue.status !== "ready") return null;
+  return catalogue.providers.find((provider) => provider.code === providerCode) || catalogue.providers[0] || null;
+}
+
+function renderVasProviderOptions(form) {
+  const select = form.querySelector('[name="provider"]');
+  if (!select) return;
+  const { config, catalogue } = activeVasJourney;
+  const names = catalogue.status === "ready"
+    ? catalogue.providers.map((provider) => [provider.code, provider.name])
+    : config.fallbackProviders.map((name) => [name, name]);
+  const previous = select.value;
+  select.innerHTML = names.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+  select.disabled = false;
+  if (previous && names.some(([value]) => value === previous)) select.value = previous;
+  activeVasJourney.providerCode = select.value;
+  syncVasProviderName(form);
+  applyVasProviderPicker(form);
+}
+
+// The submitted `provider` value stays exactly what the catalogue supplied (a
+// provider code once the API publishes one). The readable name is carried
+// alongside it so Review and Activity never show a raw code to the customer.
+function syncVasProviderName(form) {
+  const select = form.querySelector('[name="provider"]');
+  const nameField = form.querySelector("[data-vas-provider-name]");
+  if (!select || !nameField) return;
+  const option = select.options[select.selectedIndex];
+  nameField.value = option ? option.textContent.trim() : "";
+}
+
+// True when the customer has a legitimate way to name an amount: either the
+// catalogue supplied products, or the service is genuinely open-value.
+function vasCanTransact() {
+  if (!activeVasJourney) return false;
+  const { config, catalogue } = activeVasJourney;
+  const provider = vasSelectedProvider();
+  if (provider && provider.products.length) return true;
+  if (!config.openValue) return false;
+  if (catalogue.status === "ready") return Boolean(provider && provider.allowsOpenValue);
+  return config.fallbackProviders.length > 0;
+}
+
+// Blocks submission when nothing can legitimately be purchased, rather than
+// letting the customer fill in a form that cannot succeed.
+function applyVasAvailability(form) {
+  const available = vasCanTransact();
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = !available;
+  form.querySelectorAll('[data-vas-account] [name], [name="amount"], [name="reference"], [data-vas-validate], [data-vas-self]').forEach((field) => {
+    field.disabled = !available;
+  });
+  form.classList.toggle("vas-unavailable", !available);
+}
+
+// The account section is either the journey's own single field, or the exact
+// fields the selected provider published. The primary field always submits as
+// `recipient`, so the transaction contract is unchanged; any additional
+// provider fields travel as clearly namespaced vasField_ metadata.
+function vasAccountFieldName(field) {
+  return field.primary ? "recipient" : `vasField_${field.key}`;
+}
+
+function vasFieldControl(field, index) {
+  const id = `vas-field-${index}`;
+  const name = vasAccountFieldName(field);
+  const required = field.required ? " required" : "";
+  const maxLength = field.maxLength ? ` maxlength="${field.maxLength}"` : "";
+  const pattern = field.pattern ? ` pattern="${esc(field.pattern)}"` : "";
+  const inputMode = field.inputMode || (field.type === "number" ? "numeric" : field.type === "tel" ? "tel" : "text");
+  const describedBy = field.help ? ` aria-describedby="${id}-help"` : "";
+  const control = field.type === "select"
+    ? `<select id="${id}" name="${esc(name)}"${required}${describedBy}>
+        <option value="">Select ${esc(field.label.toLowerCase())}</option>
+        ${field.options.map((option) => `<option value="${esc(option.value)}">${esc(option.label)}</option>`).join("")}
+      </select>`
+    : `<input id="${id}" name="${esc(name)}" type="${field.type === "number" ? "text" : esc(field.type)}" inputmode="${esc(inputMode)}" autocomplete="off" placeholder="${esc(field.placeholder)}"${maxLength}${pattern}${required}${describedBy} data-no-user-verify="true">`;
+  return `<div class="field"${field.primary ? " data-vas-validate-anchor" : ""}>
+    <label for="${id}">${esc(field.label)}</label>
+    ${control}
+    ${field.help ? `<p class="field-hint" id="${id}-help">${esc(field.help)}</p>` : ""}
+    ${field.primary ? vasPrimaryFieldTools() : ""}
+  </div>`;
+}
+
+function renderVasAccountFields(form) {
+  const host = form.querySelector("[data-vas-account]");
+  if (!host || !activeVasJourney) return;
+  const { config } = activeVasJourney;
+  const provider = vasSelectedProvider();
+  const fields = (provider && provider.fields) || [];
+  // Values already typed survive a provider change, a re-render, or a return
+  // from Review -- including fields that belong to a biller not shown right now.
+  captureVasAccountValues(form);
+  const stored = activeVasJourney.accountValues || {};
+
+  host.innerHTML = fields.length
+    ? fields.map((field, index) => vasFieldControl(field, index)).join("")
+    : `<div class="field" data-vas-validate-anchor>
+        <label for="vas-recipient">${esc(config.recipientLabel)}</label>
+        <input id="vas-recipient" name="recipient" inputmode="${esc(config.recipientInputMode)}" autocomplete="off" placeholder="${esc(config.recipientPlaceholder)}" data-no-user-verify="true" required>
+        ${vasPrimaryFieldTools()}
+      </div>`;
+
+  host.querySelectorAll("[name]").forEach((el) => {
+    const value = stored[el.name];
+    if (value === undefined) return;
+    if (el.tagName === "SELECT" && !Array.from(el.options).some((option) => option.value === value)) return;
+    el.value = value;
+  });
+  enhanceContactPickerControls(host);
+  mergeVasFieldActions(host);
+}
+
+function mergeVasFieldActions(host) {
+  host.querySelectorAll(".field").forEach((field) => {
+    const tools = field.querySelector(".recipient-tools");
+    const actions = field.querySelector(".vas-field-actions");
+    if (!tools || !actions) return;
+    Array.from(actions.children).forEach((child) => tools.appendChild(child));
+    actions.remove();
+  });
+}
+
+function captureVasAccountValues(form) {
+  if (!activeVasJourney) return;
+  if (!activeVasJourney.accountValues) activeVasJourney.accountValues = {};
+  const host = form.querySelector("[data-vas-account]");
+  if (!host) return;
+  host.querySelectorAll("[name]").forEach((el) => {
+    activeVasJourney.accountValues[el.name] = el.value;
+  });
+}
+
+// Fills the customer's own number. An existing entry is never silently
+// replaced: the first press asks, the second press confirms.
+function applyVasSelfNumber(button) {
+  const form = button.closest("form");
+  const field = form && form.querySelector('[name="recipient"]');
+  if (!field) return;
+  const own = button.dataset.vasSelf || "";
+  if (!own) return;
+  const current = String(field.value || "").trim();
+  if (current === own) {
+    showToast("This is already your own number.");
+    return;
+  }
+  if (current && button.dataset.confirmReplace !== "true") {
+    button.dataset.confirmReplace = "true";
+    showToast("Press again to replace the number you entered with your own.");
+    return;
+  }
+  delete button.dataset.confirmReplace;
+  field.value = own;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.focus();
+  showToast("Your own number is in place.");
+}
+
+function vasPrimaryFieldTools() {
+  const config = activeVasJourney ? activeVasJourney.config : null;
+  if (!config) return "";
+  const self = config.selfPurchase ? vasSelfNumber() : "";
+  const buttons = [
+    self ? `<button class="btn ghost vas-self" type="button" data-vas-self="${esc(self)}">${icon("user")} Buy for myself</button>` : "",
+    config.validate ? `<button class="btn ghost vas-validate" type="button" data-vas-validate="1">${icon("shield")} ${esc(config.validateLabel)}</button>` : ""
+  ].filter(Boolean);
+  return buttons.length ? `<div class="vas-field-actions">${buttons.join("")}</div>` : "";
+}
+
+function vasProviderPickerHost(form) {
+  return form.querySelector("[data-vas-provider-picker]");
+}
+
+function applyVasProviderPicker(form) {
+  const select = form.querySelector('[name="provider"]');
+  const host = vasProviderPickerHost(form);
+  if (!select || !host) return;
+  const options = Array.from(select.options).filter((option) => option.value);
+  if (options.length <= VAS_PROVIDER_SEARCH_THRESHOLD) {
+    host.innerHTML = "";
+    select.classList.remove("is-picker-source");
+    select.removeAttribute("aria-hidden");
+    select.removeAttribute("tabindex");
+    return;
+  }
+  select.classList.add("is-picker-source");
+  select.setAttribute("aria-hidden", "true");
+  select.setAttribute("tabindex", "-1");
+  const selected = options.find((option) => option.value === select.value) || options[0];
+  host.innerHTML = `
+    <input class="vas-picker-input" type="text" role="combobox" aria-expanded="false"
+      aria-controls="vas-picker-list" aria-autocomplete="list" autocomplete="off"
+      aria-label="Search ${esc(activeVasJourney.config.providerLabel.toLowerCase())}"
+      placeholder="Search ${esc(activeVasJourney.config.providerLabel.toLowerCase())}" value="${esc(selected ? selected.textContent.trim() : "")}">
+    <button class="vas-picker-clear" type="button" data-vas-picker-clear aria-label="Clear selection">${icon("x")}</button>
+    <ul class="vas-picker-list" id="vas-picker-list" role="listbox" hidden></ul>`;
+  renderVasPickerList(form, "");
+}
+
+function renderVasPickerList(form, query) {
+  const select = form.querySelector('[name="provider"]');
+  const list = form.querySelector(".vas-picker-list");
+  if (!select || !list) return;
+  const needle = String(query || "").trim().toLowerCase();
+  const options = Array.from(select.options)
+    .filter((option) => option.value)
+    .filter((option) => !needle || option.textContent.toLowerCase().includes(needle));
+  list.innerHTML = options.length
+    ? options.map((option, index) => `<li class="vas-picker-option${option.value === select.value ? " is-selected" : ""}" id="vas-picker-option-${index}" role="option" aria-selected="${option.value === select.value ? "true" : "false"}" data-vas-picker-value="${esc(option.value)}" tabindex="-1">${esc(option.textContent.trim())}</li>`).join("")
+    : `<li class="vas-picker-empty" role="option" aria-selected="false" aria-disabled="true">No match for "${esc(query)}"</li>`;
+}
+
+function openVasPickerList(form, open) {
+  const list = form.querySelector(".vas-picker-list");
+  const input = form.querySelector(".vas-picker-input");
+  if (!list || !input) return;
+  list.hidden = !open;
+  input.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!open) input.removeAttribute("aria-activedescendant");
+}
+
+function chooseVasPickerOption(form, value) {
+  const select = form.querySelector('[name="provider"]');
+  const input = form.querySelector(".vas-picker-input");
+  if (!select) return;
+  const option = Array.from(select.options).find((item) => item.value === value);
+  if (!option) return;
+  select.value = value;
+  if (input) input.value = option.textContent.trim();
+  openVasPickerList(form, false);
+  renderVasPickerList(form, "");
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  if (input) input.focus();
+}
+
+function activeVasPickerOption(form) {
+  return form.querySelector(".vas-picker-option.is-active") || form.querySelector(".vas-picker-option.is-selected");
+}
+
+function moveVasPickerActive(form, direction) {
+  const options = Array.from(form.querySelectorAll(".vas-picker-option"));
+  if (!options.length) return;
+  const current = activeVasPickerOption(form);
+  const index = current ? options.indexOf(current) : -1;
+  const next = options[Math.max(0, Math.min(options.length - 1, index + direction))] || options[0];
+  options.forEach((option) => option.classList.remove("is-active"));
+  next.classList.add("is-active");
+  next.scrollIntoView({ block: "nearest" });
+  const input = form.querySelector(".vas-picker-input");
+  if (input) input.setAttribute("aria-activedescendant", next.id);
+}
+
+function handleVasPickerKeydown(event) {
+  const input = event.target.closest(".vas-picker-input");
+  if (!input) return;
+  const form = input.closest("form");
+  if (!form) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    openVasPickerList(form, true);
+    moveVasPickerActive(form, event.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (event.key === "Enter") {
+    const active = activeVasPickerOption(form);
+    if (active && active.dataset.vasPickerValue) {
+      event.preventDefault();
+      chooseVasPickerOption(form, active.dataset.vasPickerValue);
+    }
+    return;
+  }
+  if (event.key === "Escape") {
+    const list = form.querySelector(".vas-picker-list");
+    if (list && !list.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      openVasPickerList(form, false);
+    }
+  }
+}
+
+function filterVasProducts(input) {
+  const form = input.closest("form");
+  if (!form) return;
+  const needle = input.value.trim().toLowerCase();
+  const cards = Array.from(form.querySelectorAll(".vas-product"));
+  let shown = 0;
+  cards.forEach((card) => {
+    const match = !needle || card.textContent.toLowerCase().includes(needle);
+    card.hidden = !match;
+    if (match) shown += 1;
+  });
+  const status = form.querySelector("[data-vas-product-status]");
+  if (status) status.textContent = needle ? `${shown} of ${cards.length} shown` : "";
+}
+
+function renderVasCatalogueSection(form) {
+  const host = form.querySelector("[data-vas-catalogue]");
+  if (!host || !activeVasJourney) return;
+  const { config, catalogue } = activeVasJourney;
+  if (catalogue.status === "loading") {
+    host.innerHTML = vasCatalogueSkeleton(config);
+    return;
+  }
+  if (catalogue.status === "ready") {
+    const provider = vasSelectedProvider();
+    host.innerHTML = provider && provider.products.length
+      ? vasProductGrid(config, provider)
+      : vasEmptyProviderNotice(config, provider);
+    return;
+  }
+  // Electricity and bill payments are value-based: the absence of a product
+  // list is not news, and the open-value path they already use still works.
+  if (!config.productLed && config.openValue && config.fallbackProviders.length) {
+    host.innerHTML = "";
+    return;
+  }
+  const notice = vasCatalogueNotice(config, catalogue);
+  host.innerHTML = `
+    <div class="vas-notice" role="status">
+      <p class="vas-notice-head">${esc(notice.head)}</p>
+      <p class="vas-notice-body">${esc(notice.body)}</p>
+      <button class="btn ghost vas-retry" type="button" data-vas-retry="1">${icon("refresh")} Retry</button>
+    </div>`;
+}
+
+function vasEmptyProviderNotice(config, provider) {
+  const who = provider ? provider.name : config.providerLabel.toLowerCase();
+  const canOpenValue = config.openValue && (!provider || provider.allowsOpenValue);
+  // A value-based service with a working open-value path has nothing to report.
+  if (!config.productLed && canOpenValue) return "";
+  return `
+    <div class="vas-notice" role="status">
+      <p class="vas-notice-head">No ${esc(config.productLabel.toLowerCase())}s listed</p>
+      <p class="vas-notice-body">${esc(canOpenValue
+        ? `TitoPay has no ${config.productLabel.toLowerCase()} list for ${who}. Enter the ${config.amountLabel.toLowerCase()} to continue.`
+        : `TitoPay has no ${config.productLabel.toLowerCase()} available for ${who} right now, so this purchase cannot be completed. Try another ${config.providerLabel.toLowerCase()} or check back shortly.`)}</p>
+      <button class="btn ghost vas-retry" type="button" data-vas-retry="1">${icon("refresh")} Retry</button>
+    </div>`;
+}
+
+function applyVasAmountConstraints(form) {
+  const amountField = form.querySelector('[name="amount"]');
+  if (!amountField) return;
+  const hint = form.querySelector("[data-vas-amount-hint]");
+  const product = activeVasJourney && activeVasJourney.product;
+  const provider = vasSelectedProvider();
+  if (product && product.amount) {
+    amountField.value = String(product.amount);
+    amountField.readOnly = true;
+    amountField.setAttribute("aria-describedby", "vas-amount-hint");
+    if (hint) hint.textContent = `Set by ${product.name}. Choose another ${activeVasJourney.config.productLabel.toLowerCase()} to change it.`;
+    return;
+  }
+  amountField.readOnly = false;
+  const min = (product && product.minAmount) || (provider && provider.minAmount) || 0;
+  const max = (product && product.maxAmount) || (provider && provider.maxAmount) || 0;
+  if (hint) {
+    if (min && max) hint.textContent = `Between ${money(min)} and ${money(max)}.`;
+    else if (min) hint.textContent = `Minimum ${money(min)}.`;
+    else hint.textContent = activeVasJourney ? activeVasJourney.config.openValueNote : "";
+  }
+}
+
+function syncVasProductFields(form) {
+  const product = activeVasJourney && activeVasJourney.product;
+  const codeField = form.querySelector('[data-vas-product-code]');
+  const nameField = form.querySelector('[data-vas-product-name]');
+  if (codeField) codeField.value = product && product.code ? product.code : "";
+  if (nameField) nameField.value = product && product.name ? product.name : "";
+  form.querySelectorAll("[data-vas-product]").forEach((button) => {
+    const selected = product
+      ? button.dataset.vasProduct === String(activeVasJourney.productIndex)
+      : button.dataset.vasProduct === "open" && activeVasJourney && activeVasJourney.productIndex === "open";
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+    button.classList.toggle("is-selected", selected);
+  });
+  applyVasAmountConstraints(form);
+  applyVasAvailability(form);
+}
+
+function selectVasProduct(button) {
+  const form = button.closest("form");
+  if (!form || !activeVasJourney) return;
+  const key = button.dataset.vasProduct;
+  if (key === "open") {
+    activeVasJourney.product = null;
+    activeVasJourney.productIndex = "open";
+  } else {
+    const provider = vasSelectedProvider();
+    const product = provider && provider.products[Number(key)];
+    if (!product) return;
+    activeVasJourney.product = product;
+    activeVasJourney.productIndex = key;
+  }
+  syncVasProductFields(form);
+  const amountField = form.querySelector('[name="amount"]');
+  if (amountField && !amountField.readOnly) amountField.focus();
+}
+
+function handleVasProviderChange(select) {
+  const form = select.closest("form");
+  if (!form || !activeVasJourney) return;
+  activeVasJourney.providerCode = select.value;
+  activeVasJourney.product = null;
+  activeVasJourney.productIndex = null;
+  syncVasProviderName(form);
+  clearVasValidationPanel(form);
+  renderVasAccountFields(form);
+  renderVasCatalogueSection(form);
+  syncVasProductFields(form);
+}
+
+async function refreshVasCatalogue(form, { force = false } = {}) {
+  if (!activeVasJourney) return;
+  const { config } = activeVasJourney;
+  if (force) vasCatalogueCache.delete(config.vasKey);
+  activeVasJourney.catalogue = { status: "loading", providers: [] };
+  renderVasCatalogueSection(form);
+  applyVasAvailability(form);
+  const catalogue = await loadVasCatalogue(config.vasKey);
+  // The modal may have been closed or replaced while the request was in flight.
+  if (!activeVasJourney || activeVasJourney.config !== config || !document.contains(form)) return;
+  activeVasJourney.catalogue = catalogue;
+  activeVasJourney.product = null;
+  activeVasJourney.productIndex = null;
+  const restore = activeVasJourney.restore;
+  if (restore && restore.provider) activeVasJourney.providerCode = restore.provider;
+  renderVasProviderOptions(form);
+  if (restore && restore.provider) {
+    const select = form.querySelector('[name="provider"]');
+    if (select && Array.from(select.options).some((option) => option.value === restore.provider)) {
+      select.value = restore.provider;
+      activeVasJourney.providerCode = restore.provider;
+      syncVasProviderName(form);
+    }
+  }
+  renderVasAccountFields(form);
+  restoreVasCarry(form, activeVasJourney.carry);
+  renderVasCatalogueSection(form);
+  if (restore && restore.productCode) {
+    const provider = vasSelectedProvider();
+    const index = provider ? provider.products.findIndex((product) => product.code === restore.productCode) : -1;
+    if (index >= 0) {
+      activeVasJourney.product = provider.products[index];
+      activeVasJourney.productIndex = String(index);
+    } else if (restore.openValue) {
+      activeVasJourney.productIndex = "open";
+    }
+  }
+  activeVasJourney.restore = null;
+  syncVasProductFields(form);
+  // A restored fixed-price product must not silently overwrite an amount the
+  // customer changed on the review screen.
+  if (restore && restore.amount && !activeVasJourney.product) {
+    const amountField = form.querySelector('[name="amount"]');
+    if (amountField && !amountField.readOnly) amountField.value = restore.amount;
+  }
+}
+
+// Rebuilds the VAS journey for a transaction that is already under review, so
+// going back never costs the customer their provider, product or details.
+function reopenVasJourneyFromContext(context) {
+  const data = context.data || {};
+  const kind = String(data.vasJourney || "");
+  if (!kind || !VAS_JOURNEYS[kind]) return false;
+  const service = (state.services || []).find((item) => item.serviceCode === data.serviceCode)
+    || { serviceCode: data.serviceCode, action: kind, label: VAS_JOURNEYS[kind].eyebrow };
+  const amount = data.amount != null && data.amount !== "" ? String(data.amount) : String(context.amount || "");
+  const carry = {
+    recipient: data.recipient || "",
+    amount,
+    reference: data.reference || ""
+  };
+  Object.keys(data).forEach((key) => {
+    if (key.startsWith("vasField_") && data[key]) carry[key] = data[key];
+  });
+  openVasJourneyModal(service, kind, carry, {
+    provider: data.provider || "",
+    productCode: data.vasProductCode || "",
+    openValue: !data.vasProductCode,
+    amount
+  });
+  return true;
+}
+
+function clearVasValidationPanel(form) {
+  const existing = form.querySelector("[data-vas-validation]");
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+}
+
+function vasValidationRows(data) {
+  const rows = [
+    ["Name", vasText(data, ["customerName", "customer_name", "name", "accountName", "account_name", "holder"])],
+    ["Address", vasText(data, ["address", "customerAddress", "customer_address", "premises"])],
+    ["Meter or account", vasText(data, ["meterNumber", "meter_number", "accountNumber", "account_number", "identifier"])],
+    ["Utility or biller", vasText(data, ["utility", "municipality", "providerName", "provider_name", "billerName", "biller_name"])],
+    ["Amount due", vasNumber(data, ["amountDue", "amount_due", "outstandingBalance", "outstanding_balance", "balance"]) ? money(vasNumber(data, ["amountDue", "amount_due", "outstandingBalance", "outstanding_balance", "balance"])) : ""],
+    ["Meter type", vasText(data, ["meterType", "meter_type", "tariff", "tariffName", "tariff_name"])]
+  ].filter(([, value]) => value);
+  return rows;
+}
+
+// Renders the validation outcome inside the live form so the meter number,
+// amount and reference the user already typed are preserved. Only fields the
+// provider actually returned are shown; nothing is inferred.
+function renderVasValidationPanel(form, outcome) {
+  clearVasValidationPanel(form);
+  const anchor = form.querySelector("[data-vas-validate-anchor]");
+  if (!anchor) return;
+  const config = activeVasJourney ? activeVasJourney.config : { validateHeading: "Account" };
+  const panel = document.createElement("div");
+  panel.className = `recipient-verify-result vas-validation${outcome.status === "ok" ? "" : " is-missing"}`;
+  panel.dataset.vasValidation = "true";
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+
+  if (outcome.status === "ok") {
+    const rows = vasValidationRows(outcome.data || {});
+    panel.innerHTML = rows.length
+      ? `<p class="rv-head">${esc(config.validateHeading)} verified</p>
+         ${rows.map(([label, value]) => `<div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(value)}</strong><small>${esc(label)}</small></span></div>`).join("")}
+         <p class="rv-note">Only continue if these details match the ${esc(config.validateHeading.toLowerCase())} you intend to pay.</p>`
+      : `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} details not returned</p>
+         <p class="rv-note">TitoPay confirmed the request but returned no ${esc(config.validateHeading.toLowerCase())} details to display. Check the number carefully before you continue.</p>`;
+  } else if (outcome.status === "unsupported") {
+    panel.innerHTML = `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} verification unavailable</p>
+      <p class="rv-note">TitoPay cannot verify this ${esc(config.validateHeading.toLowerCase())} yet, so it has not been checked. Confirm the number is correct before you continue — your details are still here.</p>`;
+  } else {
+    panel.innerHTML = `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} not verified</p>
+      <p class="rv-note">${esc(outcome.message || "TitoPay could not verify this number right now.")} Your details are still here — retry or check the number.</p>`;
+  }
+  anchor.insertAdjacentElement("afterend", panel);
+}
+
+async function validateVasIdentifier(button) {
+  const form = button.closest("form");
+  if (!form || !activeVasJourney) return;
+  const { config } = activeVasJourney;
+  const field = form.querySelector('[name="recipient"]');
+  const identifier = String(field ? field.value : "").trim();
+  if (!identifier) {
+    showToast(`Enter the ${config.recipientLabel.toLowerCase()} first.`, "error");
+    if (field) field.focus();
+    return;
+  }
+  const providerSelect = form.querySelector('[name="provider"]');
+  setButtonBusy(button, true);
+  try {
+    const payload = await api(VAS_VALIDATE_PATH, {
+      method: "POST",
+      body: {
+        service: config.vasKey,
+        provider: providerSelect ? providerSelect.value : "",
+        identifier
+      }
+    });
+    if (!document.contains(form)) return;
+    renderVasValidationPanel(form, { status: "ok", data: payload.validation || payload.data || payload });
+  } catch (error) {
+    if (!document.contains(form)) return;
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) renderVasValidationPanel(form, { status: "unsupported" });
+    else renderVasValidationPanel(form, { status: "failed", message: friendlyFormError(error, "vas-validate") });
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function copyVasCredential(button) {
+  const value = button.dataset.vasCopy || "";
+  const label = button.dataset.vasCopyLabel || "Details";
+  if (!value) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      showToast(`${label} copied.`);
+      return;
+    }
+    throw new Error("Clipboard unavailable");
+  } catch (error) {
+    // Selecting the value lets the customer copy it manually when the browser
+    // blocks clipboard access. A token must never be silently unavailable.
+    const row = button.closest(".vas-credential");
+    const target = row?.querySelector(".vas-credential-value");
+    const revealButton = row?.querySelector("[data-vas-reveal]");
+    if (target && target.dataset.vasSecret && revealButton && revealButton.getAttribute("aria-pressed") !== "true") {
+      revealVasSecret(revealButton);
+    }
+    if (target && window.getSelection && document.createRange) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      showToast(`${label} selected. Copy it from the screen.`);
+      return;
+    }
+    showToast(`${label} could not be copied. Write it down before closing.`, "error");
+  }
+}
+
+// The Services grid presents airtime and data behind one "Airtime & Data" tile,
+// which previously opened the airtime form only -- there was no route to a data
+// purchase at all. The switch below is offered only when the service catalogue
+// really does carry separate airtime and data services, so each side keeps its
+// own serviceCode instead of one being invented.
+const VAS_MOBILE_VARIANTS = [
+  { kind: "airtime", label: "Airtime", ids: ["airtime"] },
+  { kind: "data", label: "Data", ids: ["data", "mobile-data"] },
+  { kind: "sms", label: "SMS", ids: ["sms", "sms-bundle", "sms-bundles"] },
+  { kind: "voice", label: "Voice", ids: ["voice", "voice-bundle", "voice-bundles"] }
+];
+
+function vasProductTypeVariants(service) {
+  const action = String(service.action || "").toLowerCase();
+  const mobile = ["airtime", "airtime-data", "airtime-and-data", "data", "mobile-data", "sms", "sms-bundle", "sms-bundles", "voice", "voice-bundle", "voice-bundles"];
+  if (!mobile.includes(action)) return [];
+  const variants = [];
+  VAS_MOBILE_VARIANTS.forEach((variant) => {
+    for (let index = 0; index < variant.ids.length; index += 1) {
+      const match = serviceById(variant.ids[index]);
+      if (match && match.serviceCode && !isDisabledService(match)) {
+        variants.push({ kind: variant.kind, label: variant.label, serviceCode: match.serviceCode });
+        return;
+      }
+    }
+  });
+  return variants.length > 1 ? variants : [];
+}
+
+function isDisabledService(service) {
+  return String(service.status || "").toLowerCase() === "disabled";
+}
+
+function vasProductTypeSwitch(variants, kind) {
+  if (variants.length < 2) return "";
+  return `<div class="vas-switch" role="group" aria-label="Product type">
+    ${variants.map((variant) => `
+      <button class="vas-switch-btn${variant.kind === kind ? " is-active" : ""}" type="button" data-vas-kind="${esc(variant.kind)}" aria-pressed="${variant.kind === kind ? "true" : "false"}">${esc(variant.label)}</button>`).join("")}
+  </div>`;
+}
+
+function switchVasProductType(button) {
+  if (!activeVasJourney) return;
+  const kind = button.dataset.vasKind;
+  if (!kind || kind === activeVasJourney.kind) return;
+  const variant = (activeVasJourney.variants || []).find((item) => item.kind === kind);
+  if (!variant) return;
+  const carry = captureVasCarry(button.closest("form"));
+  openVasJourneyModal(Object.assign({}, activeVasJourney.service, { serviceCode: variant.serviceCode }), kind, carry);
 }
 
 function openPurchaseModal(service) {
-  const isElectricity = service.action === "electricity";
-  const isVoucher = service.action === "voucher";
-  const isData = service.action === "data";
-  const recipientLabel = isElectricity ? "Meter number" : isVoucher ? "Voucher recipient" : "Cellphone number";
-  const recipientPlaceholder = isElectricity ? "Enter prepaid meter number" : isVoucher ? "Email, phone or self" : "+27";
-  const options = isElectricity
-    ? ["Prepaid electricity"]
-    : isVoucher
-      ? ["Shopping", "Gaming", "Entertainment", "Food"]
-      : ["MTN", "Vodacom", "Telkom", "Cell C"];
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">${esc(service.label)}</p><h2>${esc(isData ? "Buy data" : isVoucher ? "Buy voucher" : isElectricity ? "Buy electricity" : "Buy airtime")}</h2><p class="lead">Enter the details and confirm the fee preview before purchase.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <form class="form-grid" data-form="transaction">
-      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <div class="field"><label>${esc(recipientLabel)}</label><input name="recipient" placeholder="${esc(recipientPlaceholder)}" required></div>
-      <div class="field"><label>${esc(isVoucher ? "Category" : isElectricity ? "Product" : "Network")}</label><select name="provider">${options.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="${esc(service.label)} purchase"></div>
-      <button class="btn primary" type="submit">${icon(service.icon)} Preview purchase</button>
-    </form>
-  `);
+  openVasJourneyModal(service, vasJourneyKind(service));
 }
 
 function openPayBillsModal(service) {
-  const billers = ["DStv", "Municipal bill", "Water", "Rates", "Utilities", "School fees", "Insurance", "Other biller"];
+  openVasJourneyModal(service, "bill");
+}
+
+function openVasJourneyModal(service, kind, carry = null, restore = null) {
+  const config = VAS_JOURNEYS[kind] || VAS_JOURNEYS.airtime;
+  const variants = vasProductTypeVariants(service);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Pay Bills</p><h2>Pay account bills</h2><p class="lead">Pay DStv, municipal, water, rates and supported utility bills. TitoPay will show the fee preview before processing.</p></div>
+      <div>
+        <p class="eyebrow">${esc(service.label || config.eyebrow)}</p>
+        <h2>${esc(config.title)}</h2>
+        <p class="lead">${esc(config.lead)}</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid stable-service-form vas-form" data-form="transaction" data-vas-journey="${esc(kind)}">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <input type="hidden" name="integrationFlow" value="vas_bill_payment">
-      <input type="hidden" name="vasProviderReady" value="ott_or_vas_provider">
-      <div class="field"><label>Biller</label><select name="provider">${billers.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field"><label>Account or customer number</label><input name="recipient" placeholder="DStv smartcard, municipal account or bill reference" required></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Bill payment reference"></div>
-      <button class="btn primary" type="submit">${icon("list")} Preview bill payment</button>
+      ${config.integrationFlow ? `<input type="hidden" name="integrationFlow" value="${esc(config.integrationFlow)}">` : ""}
+      ${config.providerReady ? `<input type="hidden" name="vasProviderReady" value="${esc(config.providerReady)}">` : ""}
+      <input type="hidden" name="vasProductCode" value="" data-vas-product-code>
+      <input type="hidden" name="vasProductName" value="" data-vas-product-name>
+      <input type="hidden" name="vasProviderName" value="" data-vas-provider-name>
+      <input type="hidden" name="vasJourney" value="${esc(kind)}">
+      <p class="vas-progress">Step 1 of 3 &middot; Purchase details</p>
+      ${vasProductTypeSwitch(variants, kind)}
+      <div class="field vas-provider-field">
+        <label for="vas-provider">${esc(config.providerLabel)}</label>
+        <select id="vas-provider" name="provider" data-vas-provider disabled>
+          <option>Loading...</option>
+        </select>
+        <div class="vas-picker" data-vas-provider-picker></div>
+      </div>
+      <section class="vas-catalogue" data-vas-catalogue aria-live="polite"></section>
+      <section class="vas-account" data-vas-account></section>
+      <div class="field">
+        <label for="vas-amount">${esc(config.amountLabel)}</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="vas-amount" name="amount" inputmode="decimal" required></div>
+        <p class="field-hint" id="vas-amount-hint" data-vas-amount-hint>${esc(config.openValueNote)}</p>
+      </div>
+      <div class="field">
+        <label for="vas-reference">Reference</label>
+        <input id="vas-reference" name="reference" placeholder="${esc(config.title)} reference">
+      </div>
+      <button class="btn primary" type="submit">${icon(config.icon)} ${esc(config.submitLabel)}</button>
     </form>
   `);
+  // Set after openModal: openModal closes any previous modal first, which
+  // clears the journey record.
+  activeVasJourney = {
+    config,
+    kind,
+    service,
+    variants,
+    catalogue: { status: "loading", providers: [] },
+    providerCode: "",
+    product: null,
+    productIndex: null,
+    carry: carry || null,
+    restore: restore || null,
+    accountValues: Object.assign({}, carry || {})
+  };
+  const form = document.querySelector('.modal-card form[data-vas-journey]');
+  if (!form) return;
+  renderVasAccountFields(form);
+  // Anything the customer already typed survives a product-type switch or a
+  // return from another screen.
+  restoreVasCarry(form, carry);
+  // Fire and forget: a catalogue problem must never surface as an unhandled
+  // rejection, and loadVasCatalogue already renders its own failure state.
+  refreshVasCatalogue(form).catch(() => {});
+}
+
+// Restores previously entered values into a freshly rendered journey form.
+// Only fields the customer actually filled are written back.
+function restoreVasCarry(form, carry) {
+  if (!carry) return;
+  Object.entries(carry).forEach(([name, value]) => {
+    if (value === "" || value == null) return;
+    const field = form.querySelector(`[name="${name}"]`);
+    if (!field || field.readOnly) return;
+    field.value = value;
+  });
+}
+
+// Snapshot of everything the customer has entered in the live journey, used
+// whenever the journey has to be re-rendered.
+function captureVasCarry(form) {
+  if (!form) return null;
+  const carry = {};
+  const productPriced = Boolean(activeVasJourney && activeVasJourney.product && activeVasJourney.product.amount);
+  form.querySelectorAll("input:not([type=hidden]), textarea, select").forEach((field) => {
+    if (!field.name || field.name === "provider") return;
+    if (field.name === "amount" && productPriced) return;
+    if (field.value) carry[field.name] = field.value;
+  });
+  return carry;
+}
+
+// A business deals with customers; a personal account deals with other TitoPay
+// users. Copy that names the other party has to follow the account type, or a
+// personal user is told they are sending money to a "customer".
+function counterpartyNoun({ plural = false, capitalise = false } = {}) {
+  const base = state.accountType === "business" ? "customer" : "user";
+  const word = plural ? `${base}s` : base;
+  return capitalise ? word.charAt(0).toUpperCase() + word.slice(1) : word;
 }
 
 function contactSuggestions() {
   const contacts = [
     { value: "@example_user", method: "username" },
     { value: "+27 71 234 5678", method: "cellphone" },
-    { value: "customer@example.com", method: "email" }
+    { value: `${counterpartyNoun()}@example.com`, method: "email" }
   ];
   return `
     <div class="suggestion-row" aria-label="Suggested contacts">
@@ -3649,75 +6583,358 @@ function openPaymentRequestModal(service) {
   `);
 }
 
+// ---------------------------------------------------------------------------
+// Bill Split
+//
+// The old form asked for a total and a block of participant text and sent it.
+// Nobody ever saw what each person would be asked for until the requests had
+// already gone out.
+//
+// Participants are now rows, and the per-person share is calculated and shown
+// before anything is sent. The cent that does not divide evenly is assigned
+// explicitly rather than being left to rounding.
+//
+// The payload is unchanged: the rows serialise into the same participants
+// field, one entry per line, and splitMethod keeps its original values.
+// ---------------------------------------------------------------------------
+
+const BILL_SPLIT_EQUAL = "Equal split";
+
+let splitRowSequence = 0;
+
+function billSplitParticipantRow(index = 0) {
+  splitRowSequence += 1;
+  const id = `split-person-${splitRowSequence}`;
+  return `
+    <div class="split-participant" data-split-participant>
+      <div class="field">
+        <label class="visually-hidden" for="${id}">Participant ${index + 1}</label>
+        <input id="${id}" data-split-person type="text" autocomplete="off" placeholder="@username, +27 cellphone or email">
+      </div>
+      <p class="split-share" data-split-share aria-live="off">${esc(money(0))}</p>
+      <button class="icon-btn split-remove" type="button" data-split-remove aria-label="Remove participant ${index + 1}">${icon("x")}</button>
+    </div>`;
+}
+
+// Splits an amount across n people in whole cents. The remainder cents go to
+// the earliest participants rather than disappearing into rounding, so the
+// shares always add back up to the bill.
+function splitEvenly(total, people) {
+  const cents = Math.round((Number(total) || 0) * 100);
+  if (!people || cents <= 0) return new Array(Math.max(people, 0)).fill(0);
+  const base = Math.floor(cents / people);
+  const remainder = cents - base * people;
+  return new Array(people).fill(0).map((_, index) => (base + (index < remainder ? 1 : 0)) / 100);
+}
+
+function syncBillSplit() {
+  const form = document.querySelector("[data-split-form]");
+  if (!form) return;
+  const rows = [...form.querySelectorAll("[data-split-participant]")];
+  const people = rows.map((row) => ({ row, value: String(row.querySelector("[data-split-person]")?.value || "").trim() }));
+  const named = people.filter((person) => person.value);
+  const total = Math.max(Number(String(form.querySelector('[name="amount"]')?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+  const method = form.querySelector('[name="splitMethod"]')?.value || BILL_SPLIT_EQUAL;
+  const equal = method === BILL_SPLIT_EQUAL;
+
+  // You are part of the bill you are splitting, so the share is over
+  // participants plus yourself.
+  const shares = equal ? splitEvenly(total, named.length + 1) : [];
+  let cursor = 1;
+  people.forEach((person) => {
+    const cell = person.row.querySelector("[data-split-share]");
+    if (!cell) return;
+    if (!person.value) cell.textContent = "";
+    else if (!equal || !total) cell.textContent = "";
+    else {
+      cell.textContent = money(shares[cursor] || 0);
+      cursor += 1;
+    }
+  });
+
+  const hidden = form.querySelector('[name="participants"]');
+  if (hidden) hidden.value = named.map((person) => person.value).join("\n");
+
+  const removeButtons = form.querySelectorAll("[data-split-remove]");
+  removeButtons.forEach((button) => { button.disabled = removeButtons.length < 2; });
+
+  const summary = document.querySelector("[data-split-summary]");
+  if (summary) {
+    if (!named.length) {
+      summary.innerHTML = `<p class="field-hint">Add at least one participant to see the split.</p>`;
+    } else if (!total) {
+      summary.innerHTML = `<p class="field-hint">Enter the total bill to see what each person pays.</p>`;
+    } else if (equal) {
+      const yours = shares[0] || 0;
+      const uneven = shares.some((value) => value !== shares[0]);
+      summary.innerHTML = `
+        <div class="split-figures">
+          <div><span>Split between</span><strong>${named.length + 1} people</strong></div>
+          <div><span>Your share</span><strong>${esc(money(yours))}</strong></div>
+          <div><span>You are requesting</span><strong>${esc(money(total - yours))}</strong></div>
+        </div>
+        <p class="field-hint">${uneven
+          ? "The bill does not divide evenly. Your share carries the extra cent so every share still adds up to the full bill."
+          : "Each participant is sent a request for their share. They approve it themselves."}</p>`;
+    } else {
+      summary.innerHTML = `
+        <div class="split-figures">
+          <div><span>Split between</span><strong>${named.length + 1} people</strong></div>
+          <div><span>Total bill</span><strong>${esc(money(total))}</strong></div>
+        </div>
+        <p class="field-hint">TitoPay cannot calculate ${esc(method.toLowerCase())} shares in the app yet. Each participant is sent a request carrying the bill description, and the amounts are agreed between you.</p>`;
+    }
+  }
+
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = !named.length || !total;
+}
+
+function addBillSplitParticipant() {
+  const host = document.querySelector("[data-split-participants]");
+  if (!host) return;
+  host.insertAdjacentHTML("beforeend", billSplitParticipantRow(host.children.length));
+  syncBillSplit();
+  const added = host.querySelector("[data-split-participant]:last-child [data-split-person]");
+  if (added) added.focus();
+}
+
+function removeBillSplitParticipant(button) {
+  const row = button.closest("[data-split-participant]");
+  if (!row) return;
+  if (document.querySelectorAll("[data-split-participant]").length < 2) return;
+  row.remove();
+  syncBillSplit();
+}
+
 function openBillSplitModal(service) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Bill Split</p><h2>Split a bill</h2><p class="lead">Create equal, percentage or per-item payment requests for every participant.</p></div>
+      <div>
+        <p class="eyebrow">Bill Split</p>
+        <h2>Split a bill</h2>
+        <p class="lead">Enter the total, add the people, and see what each person is asked for before anything is sent.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <form class="form-grid stable-service-form split-form" data-form="transaction" data-split-form>
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="Bill Split Participants">
-      <div class="field"><label>Bill description</label><input name="reference" placeholder="Dinner, trip, household" required></div>
-      <div class="field"><label>Total bill amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Split method</label><select name="splitMethod"><option>Equal split</option><option>Percentage split</option><option>Per-item split</option></select></div>
-      ${recipientAutoMethodField("participantMethod", "Participant lookup method")}
-      <div class="field"><label>Participants</label><textarea name="participants" placeholder="@username, cellphone or email per line" required></textarea></div>
-      <button class="btn primary" type="submit">${icon("scissors")} Generate split requests</button>
+      <input type="hidden" name="participants" value="">
+
+      <div class="field">
+        <label for="split-reference">What is the bill for?</label>
+        <input id="split-reference" name="reference" autocomplete="off" placeholder="Dinner, trip, household" required>
+        <small class="field-hint">Every participant sees this, so make it recognisable.</small>
+      </div>
+
+      <div class="field">
+        <label for="split-amount">Total bill</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="split-amount" name="amount" inputmode="decimal" required></div>
+      </div>
+
+      <div class="field">
+        <label for="split-method">How is it split?</label>
+        <select id="split-method" name="splitMethod">
+          <option>Equal split</option>
+          <option>Percentage split</option>
+          <option>Per-item split</option>
+        </select>
+      </div>
+
+      ${recipientAutoMethodField("participantMethod", "Find participants by")}
+
+      <div class="field">
+        <p class="field-label" id="split-people-label">Participants</p>
+        <div class="split-participants" data-split-participants aria-labelledby="split-people-label">
+          ${billSplitParticipantRow(0)}
+        </div>
+        <button class="btn ghost split-add" type="button" data-action="split-add-participant">${icon("plus")} Add a person</button>
+      </div>
+
+      <section class="split-summary" data-split-summary aria-live="polite"></section>
+
+      <button class="btn primary" type="submit" disabled>${icon("scissors")} Preview split requests</button>
     </form>
   `);
+  syncBillSplit();
 }
 
 function openSendGiftModal(service) {
+  // Occasions as chips rather than a twelve-item dropdown: a gift is chosen, not
+  // filled in, and every option is visible at a glance.
   const occasions = ["Birthday", "Wedding", "Graduation", "Thank You", "Anniversary", "Christmas", "Eid", "Mother's Day", "Father's Day", "Valentine's Day", "Congratulations", "Custom"];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Send Gift</p><h2>Send a digital gift</h2><p class="lead">Choose an occasion, recipient, message and optional scheduled delivery date.</p></div>
+      <div><p class="eyebrow">Send Gift</p><h2>Send a digital gift</h2><p class="lead">Pick the occasion, the amount and a message. You will see everything before it sends.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <form class="form-grid stable-service-form gift-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="transactionType" value="send_gift">
+
+      <div class="field">
+        <p class="field-label" id="gift-occasion-label">Occasion</p>
+        <div class="gift-occasions" role="group" aria-labelledby="gift-occasion-label">
+          ${occasions.map((item, index) => `<button class="chip gift-occasion${index === 0 ? " is-active" : ""}" type="button" data-gift-occasion="${esc(item)}" aria-pressed="${index === 0 ? "true" : "false"}">${esc(item)}</button>`).join("")}
+        </div>
+        <input type="hidden" name="occasion" value="${esc(occasions[0])}" data-gift-occasion-value>
+      </div>
+      <div class="field hidden" data-custom-occasion>
+        <label for="gift-custom">Custom occasion</label>
+        <input id="gift-custom" name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you">
+      </div>
+
       ${recipientMethodField("auto")}
-      <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      <div class="field">
+        <label for="gift-recipient">Who is it for?</label>
+        <input id="gift-recipient" name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required>
+      </div>
       ${contactSuggestions()}
-      <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan recipient QR</button>
+      <button class="btn ghost gift-scan" type="button" data-action="start-qr-scan">${icon("scan")} Scan their TitoPay QR</button>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
-      <div class="field"><label>Gift amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Occasion</label><select name="occasion">${occasions.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field hidden" data-custom-occasion><label>Custom occasion</label><input name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you"></div>
-      <div class="field"><label>Scheduled delivery</label><input name="scheduledDelivery" type="datetime-local"></div>
-      <div class="field"><label>Gift message</label><textarea name="message" maxlength="240" placeholder="Write the message the recipient will see"></textarea></div>
+
+      <div class="field">
+        <label for="gift-amount">Gift amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="gift-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips([50, 100, 200, 500])}
+      </div>
+
+      <div class="field">
+        <label for="gift-message">Message <span class="field-optional">optional</span></label>
+        <textarea id="gift-message" name="message" maxlength="240" data-gift-message placeholder="Write the message they will see with the gift"></textarea>
+        <p class="field-hint" data-gift-counter aria-live="polite">240 characters left</p>
+      </div>
+
+      <div class="field">
+        <p class="field-label" id="gift-when-label">When should it arrive?</p>
+        <div class="gift-when" role="group" aria-labelledby="gift-when-label">
+          <button class="chip gift-timing is-active" type="button" data-gift-timing="now" aria-pressed="true">Send now</button>
+          <button class="chip gift-timing" type="button" data-gift-timing="later" aria-pressed="false">Schedule it</button>
+        </div>
+      </div>
+      <div class="field hidden" data-gift-schedule>
+        <label for="gift-when">Delivery date and time</label>
+        <input id="gift-when" name="scheduledDelivery" type="datetime-local">
+      </div>
+
       <button class="btn primary" type="submit">${icon("gift")} Preview gift</button>
     </form>
   `);
 }
 
+function applyQuickAmount(button) {
+  const form = button.closest("form");
+  const field = form ? form.querySelector('[name="amount"]') : null;
+  if (!field) return;
+  field.value = String(Number(button.dataset.quickAmount) || "");
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  form.querySelectorAll("[data-quick-amount]").forEach((chip) => {
+    chip.classList.toggle("is-active", chip === button);
+  });
+  field.focus();
+}
+
+function selectGiftOccasion(button) {
+  const form = button.closest("form");
+  if (!form) return;
+  const value = button.dataset.giftOccasion;
+  form.querySelectorAll("[data-gift-occasion]").forEach((chip) => {
+    const active = chip === button;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const hidden = form.querySelector("[data-gift-occasion-value]");
+  if (hidden) hidden.value = value;
+  const custom = form.querySelector("[data-custom-occasion]");
+  if (custom) {
+    const isCustom = value === "Custom";
+    custom.classList.toggle("hidden", !isCustom);
+    const input = custom.querySelector("input");
+    if (input) {
+      input.required = isCustom;
+      if (!isCustom) input.value = "";
+      else input.focus();
+    }
+  }
+}
+
+// "Send now" versus "Schedule it" is an explicit choice. An empty date field
+// left the customer guessing whether a blank meant now or nothing.
+function selectGiftTiming(button) {
+  const form = button.closest("form");
+  if (!form) return;
+  const later = button.dataset.giftTiming === "later";
+  form.querySelectorAll("[data-gift-timing]").forEach((chip) => {
+    const active = chip === button;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const schedule = form.querySelector("[data-gift-schedule]");
+  if (!schedule) return;
+  schedule.classList.toggle("hidden", !later);
+  const input = schedule.querySelector("input");
+  if (!input) return;
+  input.required = later;
+  if (!later) input.value = "";
+  else input.focus();
+}
+
+function updateGiftCounter(field) {
+  const counter = field.closest("form")?.querySelector("[data-gift-counter]");
+  if (!counter) return;
+  const left = 240 - field.value.length;
+  counter.textContent = `${left} character${left === 1 ? "" : "s"} left`;
+  counter.classList.toggle("is-low", left <= 20);
+}
+
+// Payouts and Withdraw both move wallet money to a bank account, and the two
+// tiles gave no clue which to use. They are separate service codes on the
+// backend, so they cannot be merged here; instead each one now says what it is
+// for. Payouts also gained the balance context and amount presets Withdraw has.
 function openPayoutModal(service) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Payouts</p><h2>Request business payout</h2><p class="lead">Business payouts are handled through Peach Payments-supported payout processing after fee preview and confirmation.</p></div>
+      <div>
+        <p class="eyebrow">Payouts</p>
+        <h2>Pay out to a bank account</h2>
+        <p class="lead">Settle business takings to a bank beneficiary. Payouts keep their own record and reference so they can be reconciled against sales.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <form class="form-grid money-form stable-service-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "merchant_payout")}">
       <input type="hidden" name="integrationFlow" value="merchant_payout">
-      <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank beneficiary or account reference" required></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      ${balanceContextRow("Available to pay out")}
       <div class="field">
-        <label>Payout speed</label>
-        <select name="payoutSpeed">
-          <option value="standard_peach_business_payout">Standard Peach Payments payout</option>
-          <option value="instant_peach_business_payout">Instant Peach Payments payout</option>
-        </select>
+        <label for="payout-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="payout-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips(QUICK_AMOUNTS, { includeAll: true })}
       </div>
-      <section class="integration-note" aria-label="Business payout processing options">
-        <p>${icon("bank")} <span><strong>Peach Payments payout:</strong> confirm the beneficiary and review the fee before submitting.</span></p>
-        <p>${icon("shield")} <span><strong>Security:</strong> payouts are checked against wallet lock, fee preview and confirmation before processing.</span></p>
-      </section>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Settlement, supplier, payroll"></div>
-      <button class="btn primary" type="submit">${icon("withdraw")} Preview payout</button>
+      <div class="field">
+        <label for="payout-recipient">Bank account or beneficiary</label>
+        <input id="payout-recipient" name="recipient" autocomplete="off" placeholder="Saved bank beneficiary or account reference" required>
+        <p class="field-hint">Enter the beneficiary you have already given TitoPay, or its reference.</p>
+      </div>
+      <div class="field">
+        <label for="payout-speed">How soon do you need it?</label>
+        <select id="payout-speed" name="payoutSpeed" data-payout-speed>
+          <option value="standard_peach_business_payout">Standard</option>
+          <option value="instant_peach_business_payout">Instant</option>
+        </select>
+        <p class="field-hint" data-payout-hint>Processed through Peach Payments. The exact fee is shown on the preview before you confirm.</p>
+      </div>
+      <div class="field">
+        <label for="payout-reference">Reference <span class="field-optional">optional</span></label>
+        <input id="payout-reference" name="reference" autocomplete="off" placeholder="Settlement, supplier, payroll">
+        <p class="field-hint">Appears on your payout record, which helps when reconciling.</p>
+      </div>
+      <button class="btn primary" type="submit">${icon("bank-payout")} Preview payout</button>
     </form>
+    <section class="integration-note" aria-label="About payouts">
+      <p>${icon("bank")} <span><strong>Payout or withdrawal:</strong> use Payouts to settle business takings to a bank beneficiary with a reconcilable record. Withdraw moves money out of a personal wallet.</span></p>
+      <p>${icon("shield")} <span><strong>Security:</strong> payouts are checked against wallet lock, fee preview and confirmation before processing.</span></p>
+    </section>
     <div class="auth-actions">
       <button class="btn secondary" data-action="export-csv">${icon("download")} Payout CSV</button>
       <button class="btn secondary" data-action="payout-pdf">${icon("download")} Payout report</button>
@@ -3757,44 +6974,381 @@ function openRefundModal(service) {
   `);
 }
 
-function openInvoiceDocumentModal(service) {
-  const kind = service.action === "quote" ? "Quote" : service.action === "proforma-invoice" ? "Proforma Invoice" : "Invoice";
-  const businessName = businessProfileName();
-  const businessContact = businessProfileContact();
-  const businessAddress = businessProfileAddress();
-  const logoText = businessLogoText();
+// ---------------------------------------------------------------------------
+// Business documents: Invoice, Quote, Proforma Invoice
+//
+// These three used to share one form that treated them as the same thing:
+// line items were typed as pipe-delimited text, the subtotal was typed by hand
+// separately from the lines it was meant to total, and VAT was chosen from a
+// dropdown whose result was never shown. A document could be saved with a
+// subtotal that disagreed with its own items.
+//
+// Now the lines are rows, the subtotal is derived from them, and the totals are
+// on screen before anything is saved. The three kinds carry the terminology and
+// the date that each actually needs: an invoice is due, a quote is valid until,
+// a proforma is payable by and is not a tax invoice.
+//
+// The submitted payload is unchanged. The rows serialise back into the same
+// "description | qty | unit" lineItems string, the derived subtotal is written
+// into the same amount field, and the VAT select keeps its original values.
+// Dates and terms are carried on unnamed inputs, which FormData does not
+// collect, so they reach the locally-built document without entering the
+// request body.
+// ---------------------------------------------------------------------------
+
+const DOCUMENT_KINDS = {
+  invoice: {
+    kind: "Invoice",
+    title: "Create an invoice",
+    lead: "A numbered request for payment for work already delivered.",
+    customerLabel: "Bill to",
+    dateLabel: "Due date",
+    dateHint: "State when payment is expected. An invoice without a due date invites a late one.",
+    defaultDays: 30,
+    termChips: [0, 7, 14, 30],
+    disclaimer: ""
+  },
+  quote: {
+    kind: "Quote",
+    title: "Create a quote",
+    lead: "A priced offer, sent before the work starts.",
+    customerLabel: "Quote for",
+    dateLabel: "Valid until",
+    dateHint: "A validity date stops old pricing binding you later.",
+    defaultDays: 14,
+    termChips: [7, 14, 30, 60],
+    disclaimer: "This quote is an offer and is not a request for payment. It becomes binding only once accepted in writing."
+  },
+  "proforma-invoice": {
+    kind: "Proforma Invoice",
+    title: "Create a proforma invoice",
+    lead: "A request for payment before supply.",
+    customerLabel: "Issued to",
+    dateLabel: "Payable by",
+    dateHint: "State the date payment is expected before the goods or services are supplied.",
+    defaultDays: 7,
+    termChips: [0, 7, 14, 30],
+    disclaimer: "This is a proforma invoice and not a tax invoice. A tax invoice will follow once payment is received."
+  }
+};
+
+// Document detail that belongs on the document but not in the request body.
+let activeDocumentMeta = null;
+
+function documentKindConfig(action) {
+  return DOCUMENT_KINDS[action] || DOCUMENT_KINDS.invoice;
+}
+
+function isoDate(date) {
+  const value = date instanceof Date ? date : new Date(date);
+  return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const value = new Date(date);
+  value.setDate(value.getDate() + Number(days || 0));
+  return value;
+}
+
+function friendlyDate(value) {
+  if (!value) return "Not set";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "Not set";
+  return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).replace(/,/g, "");
+}
+
+function termChipLabel(days) {
+  if (!days) return "On receipt";
+  return `${days} days`;
+}
+
+let documentRowSequence = 0;
+
+function documentItemRow() {
+  documentRowSequence += 1;
+  const id = `doc-line-${documentRowSequence}`;
+  return `
+    <div class="doc-item" data-doc-item>
+      <div class="field doc-item-field doc-item-desc">
+        <label class="visually-hidden" for="${id}-desc">Item description</label>
+        <input id="${id}-desc" data-doc-desc type="text" autocomplete="off" placeholder="What are you charging for?">
+      </div>
+      <div class="field doc-item-field doc-item-qty">
+        <label class="visually-hidden" for="${id}-qty">Quantity</label>
+        <input id="${id}-qty" data-doc-qty type="text" inputmode="decimal" value="1">
+      </div>
+      <div class="field doc-item-field doc-item-unit">
+        <label class="visually-hidden" for="${id}-unit">Unit price</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="${id}-unit" data-doc-unit type="text" inputmode="decimal" placeholder="0.00"></div>
+      </div>
+      <p class="doc-item-total" data-doc-line-total>${esc(money(0))}</p>
+      <button class="icon-btn doc-item-remove" type="button" data-doc-remove-item aria-label="Remove this line">${icon("x")}</button>
+    </div>`;
+}
+
+function readDocumentItems() {
+  const rows = [...document.querySelectorAll("[data-doc-item]")];
+  return rows.map((row) => {
+    const description = String(row.querySelector("[data-doc-desc]")?.value || "").trim();
+    const quantity = Math.max(Number(String(row.querySelector("[data-doc-qty]")?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+    const unit = Math.max(Number(String(row.querySelector("[data-doc-unit]")?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+    return { row, description, quantity, unit, total: quantity * unit };
+  });
+}
+
+// Rebuilds the derived fields from the rows on every edit. The hidden lineItems
+// and amount fields are the only things the request ever sees, so they are the
+// single place the rows are converted back into the original format.
+function syncDocumentTotals() {
+  const form = document.querySelector("[data-document-form]");
+  if (!form) return;
+  const rows = readDocumentItems();
+  rows.forEach((item) => {
+    const cell = item.row.querySelector("[data-doc-line-total]");
+    if (cell) cell.textContent = money(item.total);
+  });
+  const usable = rows.filter((item) => item.description && item.total > 0);
+  const serialised = usable.map((item) => `${item.description.replace(/\|/g, "/")} | ${item.quantity} | ${item.unit}`).join("\n");
+  const subtotal = usable.reduce((sum, item) => sum + item.total, 0);
+  const lineField = form.querySelector('[name="lineItems"]');
+  const amountField = form.querySelector('[name="amount"]');
+  if (lineField) lineField.value = serialised;
+  if (amountField) amountField.value = subtotal ? String(Number(subtotal.toFixed(2))) : "";
+
+  const vatMode = form.querySelector('[name="vat"]')?.value || "No VAT";
+  const totals = documentTotals(usable.map((item) => ({ total: item.total })), vatMode, subtotal);
+  const totalsHost = document.querySelector("[data-doc-totals]");
+  if (totalsHost) {
+    totalsHost.innerHTML = `
+      <div><span>Subtotal</span><strong>${esc(money(totals.subtotal))}</strong></div>
+      <div><span>${totals.vatIncluded ? "VAT 15%" : "VAT"}</span><strong>${esc(money(totals.vat))}</strong></div>
+      <div class="doc-total-row"><span>Total</span><strong>${esc(money(totals.total))}</strong></div>`;
+  }
+
+  const removeButtons = form.querySelectorAll("[data-doc-remove-item]");
+  removeButtons.forEach((button) => { button.disabled = removeButtons.length < 2; });
+
+  const submit = form.querySelector('button[type="submit"]');
+  const warning = document.querySelector("[data-doc-warning]");
+  const valid = usable.length > 0;
+  if (submit) submit.disabled = !valid;
+  if (warning) warning.hidden = valid;
+
+  const issue = form.querySelector("[data-doc-issue]")?.value || "";
+  const due = form.querySelector("[data-doc-due]")?.value || "";
+  const action = form.querySelector('[name="documentAction"]')?.value || "invoice";
+  const config = documentKindConfig(action);
+  activeDocumentMeta = { issueDate: issue, dueDate: due, dateLabel: config.dateLabel, disclaimer: config.disclaimer };
+  const dueSummary = document.querySelector("[data-doc-due-summary]");
+  if (dueSummary) dueSummary.textContent = `${config.dateLabel}: ${friendlyDate(due)}`;
+}
+
+function addDocumentItemRow() {
+  const host = document.querySelector("[data-doc-items]");
+  if (!host) return;
+  host.insertAdjacentHTML("beforeend", documentItemRow());
+  syncDocumentTotals();
+  const added = host.querySelector("[data-doc-item]:last-child [data-doc-desc]");
+  if (added) added.focus();
+}
+
+function removeDocumentItemRow(button) {
+  const row = button.closest("[data-doc-item]");
+  if (!row) return;
+  if (document.querySelectorAll("[data-doc-item]").length < 2) return;
+  row.remove();
+  syncDocumentTotals();
+}
+
+function applyDocumentTerm(button) {
+  const form = document.querySelector("[data-document-form]");
+  if (!form) return;
+  const issueField = form.querySelector("[data-doc-issue]");
+  const dueField = form.querySelector("[data-doc-due]");
+  const base = issueField && issueField.value ? new Date(`${issueField.value}T00:00:00`) : new Date();
+  if (dueField) dueField.value = isoDate(addDays(base, Number(button.dataset.docTerm) || 0));
+  form.querySelectorAll("[data-doc-term]").forEach((chip) => {
+    const active = chip === button;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  syncDocumentTotals();
+}
+
+// Saved documents were written to localStorage and then had no route back to
+// them: once the saved screen closed, an invoice was unreachable. This is that
+// route. It is still local-only storage -- see the API specification -- so the
+// screen says so rather than implying a server-held archive.
+function openBusinessDocumentHistory() {
+  const documents = state.businessDocuments || [];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(kind)}</p><h2>Create ${esc(kind)}</h2><p class="lead">Creation is free. PDF extraction or download is R2.50.</p></div>
+      <div>
+        <p class="eyebrow">Documents</p>
+        <h2>Saved documents</h2>
+        <p class="lead">${documents.length ? `${documents.length} saved on this device.` : "Invoices, quotes and proformas you save appear here."}</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${documents.length ? `
+      <section class="settings-list">
+        ${documents.map((record) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon(record.action === "quote" ? "quote" : record.action === "proforma-invoice" ? "document-invoice" : "invoice")}</span>
+            <div>
+              <strong>${esc(record.number || record.kind)}</strong>
+              <small>${esc(record.customerName || "Customer")} · ${esc(money(record.totals?.total || 0))}</small>
+              <small>${esc(record.kind)} · ${esc(friendlyDate(record.issueDate))}${record.dueDate ? ` · ${esc(record.dateLabel || "Due")} ${esc(friendlyDate(record.dueDate))}` : ""}</small>
+            </div>
+            <button class="btn secondary mini" type="button" data-document-open="${esc(record.id)}">Open</button>
+          </article>
+        `).join("")}
+      </section>
+      <p class="field-hint">These are stored on this device only. Clearing your browser data removes them, so keep the PDF of anything you need to retain.</p>
+    ` : `
+      <section class="empty-state compact-state">
+        ${icon("invoice")}
+        <strong>No saved documents yet</strong>
+        <p>Create an invoice, quote or proforma and it will be listed here.</p>
+      </section>
+    `}
+  `);
+}
+
+function openSavedBusinessDocument(id) {
+  const record = (state.businessDocuments || []).find((item) => item.id === id);
+  if (!record) {
+    showToast("That document is no longer saved on this device.", "error");
+    return;
+  }
+  state.activeBusinessDocumentId = record.id;
+  openBusinessDocumentSavedModal(record, { total: record.totals?.total || 0 });
+}
+
+function openInvoiceDocumentModal(service) {
+  const action = service.action || "invoice";
+  const config = documentKindConfig(action);
+  const kind = config.kind;
+  const businessName = businessProfileName();
+  const businessContact = businessProfileContact();
+  // businessProfileAddress() falls back to a placeholder string. Prefilling it
+  // as a value would print "Address not supplied" on the finished document.
+  const profileAddress = businessProfileAddress();
+  const businessAddress = profileAddress === "Address not supplied" ? "" : profileAddress;
+  const logoText = businessLogoText();
+  const today = new Date();
+  const number = nextBusinessDocumentNumber(action);
+  activeDocumentMeta = null;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(kind)}</p>
+        <h2>${esc(config.title)}</h2>
+        <p class="lead">${esc(config.lead)} Creating and saving it is free. The PDF download carries a ${esc(money(DOCUMENT_PDF_FEE))} extraction fee.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
     <section class="document-brand-card" aria-label="Business document brand">
       <div class="document-logo-mark">${esc(logoText)}</div>
       <div>
         <strong>${esc(businessName)}</strong>
         <span>${esc(businessContact)}</span>
-        <small>Logo mark is detected from your business profile. Update your profile photo or business name to change it.</small>
+        <small>${esc(kind)} ${esc(number)}. The logo mark comes from your business profile.</small>
       </div>
     </section>
-    <form class="form-grid" data-form="transaction">
+
+    <form class="form-grid document-form" data-form="transaction" data-document-form>
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <input type="hidden" name="documentAction" value="${esc(service.action || "invoice")}">
+      <input type="hidden" name="documentAction" value="${esc(action)}">
       <input type="hidden" name="documentKind" value="${esc(kind)}">
-      <div class="field"><label>Business address</label><textarea name="businessAddress" placeholder="Business address">${esc(businessAddress)}</textarea></div>
-      <div class="field"><label>Customer name</label><input name="recipient" required></div>
-      <div class="field"><label>Customer email</label><input name="customerEmail" type="email"></div>
-      <div class="field"><label>Customer address</label><textarea name="customerAddress" placeholder="Customer billing address"></textarea></div>
-      <div class="field"><label>Itemized lines</label><textarea name="lineItems" placeholder="Design work | 1 | 850&#10;Delivery | 1 | 120" required></textarea><small class="field-hint">Use one line per item: description | quantity | unit price.</small></div>
-      <div class="field"><label>Subtotal</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>VAT support</label><select name="vat"><option>Include VAT 15%</option><option>No VAT</option></select></div>
-      <div class="field"><label>Notes</label><textarea name="note" placeholder="Payment terms, banking details or thank-you message"></textarea></div>
-      <button class="btn primary" type="submit">${icon("list")} Save ${esc(kind)}</button>
+      <input type="hidden" name="lineItems" value="">
+      <input type="hidden" name="amount" value="">
+
+      <fieldset class="doc-section">
+        <legend>${esc(config.customerLabel)}</legend>
+        <div class="field">
+          <label for="doc-customer">Customer name</label>
+          <input id="doc-customer" name="recipient" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="doc-customer-email">Customer email <span class="field-optional">optional</span></label>
+          <input id="doc-customer-email" name="customerEmail" type="email" autocomplete="off" inputmode="email">
+          <small class="field-hint">Used when you share the document from the saved screen.</small>
+        </div>
+        <div class="field">
+          <label for="doc-customer-address">Customer address <span class="field-optional">optional</span></label>
+          <textarea id="doc-customer-address" name="customerAddress" rows="2" placeholder="Street, suburb, city, postal code"></textarea>
+        </div>
+      </fieldset>
+
+      <fieldset class="doc-section">
+        <legend>Items</legend>
+        <div class="doc-item-head" aria-hidden="true">
+          <span>Description</span>
+          <span>Qty</span>
+          <span>Unit price</span>
+          <span>Amount</span>
+          <span></span>
+        </div>
+        <div class="doc-items" data-doc-items>
+          ${documentItemRow()}
+        </div>
+        <button class="btn ghost doc-add-item" type="button" data-action="doc-add-item">${icon("plus")} Add a line</button>
+        <p class="field-hint" data-doc-warning>Add at least one line with a description and a price before saving.</p>
+
+        <div class="field">
+          <label for="doc-vat">VAT</label>
+          <select id="doc-vat" name="vat">
+            <option>No VAT</option>
+            <option>Include VAT 15%</option>
+          </select>
+          <small class="field-hint">Only a registered VAT vendor may charge VAT. Confirm your position with SARS or your accountant.</small>
+        </div>
+
+        <section class="doc-totals" data-doc-totals aria-live="polite"></section>
+      </fieldset>
+
+      <fieldset class="doc-section">
+        <legend>Dates</legend>
+        <div class="doc-dates">
+          <div class="field">
+            <label for="doc-issue">Issue date</label>
+            <input id="doc-issue" type="date" data-doc-issue value="${esc(isoDate(today))}">
+          </div>
+          <div class="field">
+            <label for="doc-due">${esc(config.dateLabel)}</label>
+            <input id="doc-due" type="date" data-doc-due value="${esc(isoDate(addDays(today, config.defaultDays)))}">
+          </div>
+        </div>
+        <div class="doc-terms" role="group" aria-label="Payment terms">
+          ${config.termChips.map((days) => `<button class="chip${days === config.defaultDays ? " is-active" : ""}" type="button" data-doc-term="${days}" aria-pressed="${days === config.defaultDays ? "true" : "false"}">${esc(termChipLabel(days))}</button>`).join("")}
+        </div>
+        <small class="field-hint">${esc(config.dateHint)}</small>
+      </fieldset>
+
+      <fieldset class="doc-section">
+        <legend>Your details</legend>
+        <div class="field">
+          <label for="doc-business-address">Business address</label>
+          <textarea id="doc-business-address" name="businessAddress" rows="2" placeholder="Street, suburb, city, postal code">${esc(businessAddress)}</textarea>
+        </div>
+        <div class="field">
+          <label for="doc-note">Notes and payment terms <span class="field-optional">optional</span></label>
+          <textarea id="doc-note" name="note" rows="2" maxlength="240" placeholder="Payment terms, delivery arrangements or a thank-you message"></textarea>
+          <small class="field-hint">Do not put full banking details here. Share those through a channel you control.</small>
+        </div>
+      </fieldset>
+
+      ${config.disclaimer ? `<p class="doc-disclaimer">${esc(config.disclaimer)}</p>` : ""}
+
+      <button class="btn primary" type="submit" disabled>${icon("list")} Save ${esc(kind)}</button>
     </form>
-    <div class="auth-actions">
-      <button class="btn secondary" data-action="invoice-link">${icon("send")} Email link free</button>
-      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay R2.50 + Download PDF</button>
-    </div>
+    ${(state.businessDocuments || []).length ? `
+      <button class="btn ghost" type="button" data-action="business-documents">${icon("list")} Saved documents (${(state.businessDocuments || []).length})</button>
+    ` : ""}
   `);
+  syncDocumentTotals();
 }
 
 function businessProfileName() {
@@ -3870,9 +7424,17 @@ function documentTotals(items, vatMode, fallbackAmount) {
 
 function buildBusinessDocumentDraft(data, transaction, preview) {
   const action = data.documentAction || "invoice";
+  const config = documentKindConfig(action);
   const items = parseDocumentLineItems(data.lineItems, data.amount);
   const totals = documentTotals(items, data.vat, data.amount);
+  // Dates and the kind disclaimer never travel in the request body. They are
+  // captured from the unnamed inputs while the form is still on screen.
+  const meta = activeDocumentMeta || {};
   return {
+    issueDate: meta.issueDate || isoDate(new Date()),
+    dueDate: meta.dueDate || "",
+    dateLabel: meta.dateLabel || config.dateLabel,
+    disclaimer: meta.disclaimer || config.disclaimer || "",
     id: transaction && (transaction.id || transaction.transactionId) || `doc-${Date.now()}`,
     number: nextBusinessDocumentNumber(action),
     prefix: documentPrefix(action),
@@ -3914,14 +7476,18 @@ function openBusinessDocumentSavedModal(document, preview) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="document-fee-card">
+      <div><span>Customer</span><strong>${esc(document.customerName)}</strong></div>
+      <div><span>Issued</span><strong>${esc(friendlyDate(document.issueDate))}</strong></div>
+      ${document.dueDate ? `<div><span>${esc(document.dateLabel || "Due date")}</span><strong>${esc(friendlyDate(document.dueDate))}</strong></div>` : ""}
       <div><span>Document total</span><strong>${money(document.totals.total)}</strong></div>
       <div><span>PDF extraction fee</span><strong>${money(DOCUMENT_PDF_FEE)}</strong></div>
       <div><span>Status</span><strong>${document.pdfFeePaid ? "PDF paid" : "PDF payment required"}</strong></div>
     </section>
-    <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Customer payment links remain free to send.</p>
+    ${document.disclaimer ? `<p class="doc-disclaimer">${esc(document.disclaimer)}</p>` : ""}
+    <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Sharing the document is free; only the PDF download carries the extraction fee.</p>
     <div class="auth-actions">
-      <button class="btn secondary" data-action="invoice-link">${icon("send")} Email link free</button>
-      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay R2.50 + Download PDF</button>
+      <button class="btn secondary" data-action="invoice-link">${icon("share")} Share document</button>
+      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + Download PDF</button>
     </div>
   `);
 }
@@ -3983,6 +7549,21 @@ async function confirmBusinessDocumentPdfDownload() {
   await refreshData();
 }
 
+// The label is what the payer sees when they scan. Defaulting it to "TitoPay
+// payment" told them nothing about who they were paying, so it now carries the
+// account name and stays editable.
+function qrOwnerName() {
+  const user = state.user || {};
+  if (state.accountType === "business") return businessProfileName();
+  return user.fullName || user.full_name || user.name || (user.username ? displayUsername(user.username) : "") || "TitoPay";
+}
+
+function defaultQrLabel(suffix = "") {
+  const name = String(qrOwnerName() || "").trim();
+  if (!name || name === "TitoPay") return suffix ? `TitoPay ${suffix}` : "TitoPay payment";
+  return suffix ? `${name} ${suffix}` : name;
+}
+
 function openReceiveModal() {
   openModal(`
     <div class="modal-head">
@@ -3990,11 +7571,396 @@ function openReceiveModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
-      <div class="field"><label>QR label</label><input name="label" value="TitoPay payment"></div>
-      <div class="field"><label>Fixed amount (optional)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal"></div></div>
+      <div class="field">
+        <label for="receive-qr-label">QR label</label>
+        <input id="receive-qr-label" name="label" value="${esc(defaultQrLabel())}" maxlength="48">
+        <small class="field-hint">This is what the payer sees when they scan. Your name is used unless you change it.</small>
+      </div>
+      <div class="field">
+        <label for="receive-qr-amount">Fixed amount <span class="field-optional">optional</span></label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="receive-qr-amount" name="amount" inputmode="decimal"></div>
+        <small class="field-hint">Leave empty to let the payer enter the amount.</small>
+      </div>
       <button class="btn primary" type="submit">${icon("qr")} Generate receive QR</button>
     </form>
   `);
+}
+
+// ---------------------------------------------------------------------------
+// Printable A4 QR posters
+//
+// A shop needs one thing on the counter: a sheet a customer can scan. Two
+// variants share the layout -- a payment poster and a tip poster -- because a
+// tip jar and a till are different asks and a business may want both on the
+// wall. Both are built from a QR the account actually has. Nothing here
+// invents a code: if the API returns no image, the poster says so rather than
+// printing a placeholder a customer would try to scan.
+// ---------------------------------------------------------------------------
+
+const BRAND_TAGLINE = "Smart Payments. Simplified.";
+
+const QR_POSTER_KINDS = {
+  payment: {
+    eyebrow: "Receive Payment",
+    modalTitle: "Payment QR poster",
+    heading: "Pay with TitoPay",
+    steps: "Open TitoPay \u00b7 Scan this code \u00b7 Confirm the amount",
+    filename: "titopay-payment-qr",
+    labelSuffix: ""
+  },
+  tip: {
+    eyebrow: "Tips",
+    modalTitle: "Tip QR poster",
+    heading: "Tip with TitoPay",
+    banner: "Tips",
+    steps: "Open TitoPay \u00b7 Scan this code \u00b7 Choose your tip",
+    filename: "titopay-tip-qr",
+    labelSuffix: "tips"
+  }
+};
+
+function posterQrFrom(qr) {
+  if (!qr) return null;
+  const image = qr.imageDataUrl || qr.image_url || qr.imageUrl || "";
+  const id = qr.id || qr.reference || qr.qrId || "";
+  const link = qr.deepLink || qr.url || qr.paymentUrl || "";
+  if (!image && !id && !link) return null;
+  return { image, id, link };
+}
+
+// The payment poster prefers the permanent profile QR when the account has
+// one. A tip QR is always generated, because it carries its own label.
+async function ensurePosterQr(kind) {
+  if (kind === "payment") {
+    const existing = posterQrFrom(state.profileQr);
+    if (existing && existing.image) return existing;
+  }
+  const config = QR_POSTER_KINDS[kind] || QR_POSTER_KINDS.payment;
+  const result = await api("/v1/qr/generate-static", {
+    method: "POST",
+    body: { label: defaultQrLabel(config.labelSuffix), codeType: "static", amount: null }
+  });
+  const generated = posterQrFrom(result.qr);
+  if (!generated) throw new Error("TitoPay could not return a QR code for this account.");
+  if (kind === "payment") state.profileQr = result.qr || state.profileQr;
+  return generated;
+}
+
+async function openQrPosterModal(kind = "payment") {
+  const config = QR_POSTER_KINDS[kind] || QR_POSTER_KINDS.payment;
+  let qr = null;
+  let failure = "";
+  try {
+    qr = await ensurePosterQr(kind);
+  } catch (error) {
+    failure = error.message || "TitoPay could not return a QR code right now.";
+  }
+  const name = state.accountType === "business" ? businessProfileName() : qrOwnerName();
+  const wallet = primaryWallet();
+  const walletId = displayWalletId(wallet || {});
+  state.qrPosterContext = qr ? { kind, config, name, qr, walletId: walletId !== "Generating" ? walletId : "" } : null;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(config.eyebrow)}</p>
+        <h2>${esc(config.modalTitle)}</h2>
+        <p class="lead">An A4 sheet for your counter, window or table. Print it, or save it as a PDF from the print dialog.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${failure ? `<section class="empty-state">${icon("qr")}<strong>QR unavailable</strong><p>${esc(failure)} Your wallet is unaffected. Try again once you are back online.</p></section>` : `
+      <article class="qr-poster qr-poster-${esc(kind)}" data-qr-poster aria-label="Printable ${esc(config.modalTitle)}">
+        <header class="qr-poster-head">
+          <img src="./assets/titopay-logo.png" alt="TitoPay" class="qr-poster-logo">
+          <p class="qr-poster-tagline">${esc(BRAND_TAGLINE)}</p>
+        </header>
+        <div class="qr-poster-body">
+          ${config.banner ? `<p class="qr-poster-banner">${esc(config.banner)}</p>` : ""}
+          <p class="qr-poster-eyebrow">${esc(config.heading)}</p>
+          <h3 class="qr-poster-name">${esc(name)}</h3>
+          <div class="qr-poster-qr">
+            ${qr.image
+              ? `<img src="${esc(qr.image)}" alt="${esc(config.modalTitle)} for ${esc(name)}">`
+              : `<div class="qr-poster-qr-missing"><strong>QR image unavailable</strong><p>Use the code below.</p></div>`}
+          </div>
+          <p class="qr-poster-steps">${esc(config.steps)}</p>
+        </div>
+        <footer class="qr-poster-foot">
+          ${qr.id ? `<p class="qr-poster-id"><span>QR ID</span><strong>${esc(qr.id)}</strong></p>` : ""}
+          ${walletId && walletId !== "Generating" ? `<p class="qr-poster-id"><span>Wallet ID</span><strong>${esc(walletId)}</strong></p>` : ""}
+          <p class="qr-poster-site">titopay.co.za</p>
+        </footer>
+      </article>
+      <section class="auth-actions">
+        <button class="btn primary" type="button" data-action="download-qr-poster-pdf">${icon("download")} Download A4 PDF</button>
+        <button class="btn secondary" type="button" data-action="print-qr-poster">${icon("statement")} Print</button>
+        ${qr.image ? `<button class="btn secondary" type="button" data-download-qr="${esc(qr.image)}" data-qr-filename="${esc(qr.id || config.filename)}">${icon("qr")} Download QR image</button>` : ""}
+      </section>
+      <p class="field-hint">The PDF is a finished A4 sheet: download it, then print it from any device or send it to a print shop.</p>
+    `}
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// A4 poster PDF
+//
+// The print dialog turned out to be the wrong delivery mechanism: printing
+// from the browser menu bypasses the poster isolation entirely and prints the
+// whole app, and iOS treats 100vh inside a paged context unpredictably. So
+// the poster is drawn once, at 200dpi on a canvas, and wrapped in a real
+// single-page A4 PDF. What downloads is a finished sheet -- no dialog
+// settings, no browser involved in the layout.
+// ---------------------------------------------------------------------------
+
+const POSTER_INK = { navy: "#061a3d", blue: "#0a4dff", muted: "#62708a", line: "#dfe7f5" };
+
+function posterFont(weight, size) {
+  return `${weight} ${size}px -apple-system, "Segoe UI", Inter, Roboto, sans-serif`;
+}
+
+function posterRoundRectPath(g, x, y, w, h, r) {
+  if (typeof g.roundRect === "function") {
+    g.beginPath();
+    g.roundRect(x, y, w, h, r);
+    return;
+  }
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+function posterLoadImage(src) {
+  return new Promise((resolve) => {
+    if (!src) return resolve(null);
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
+// Shrinks a line until it fits the column rather than letting it clip. The
+// value is real data (a business name, a UUID), so it must all be on the sheet.
+function posterFitText(g, textValue, weight, startSize, maxWidth, minSize = 22) {
+  let size = startSize;
+  g.font = posterFont(weight, size);
+  while (size > minSize && g.measureText(textValue).width > maxWidth) {
+    size -= 2;
+    g.font = posterFont(weight, size);
+  }
+  return size;
+}
+
+async function renderQrPosterCanvas(context) {
+  const W = 1654;
+  const H = 2339; // A4 portrait at 200dpi
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const g = canvas.getContext("2d");
+  const centerX = W / 2;
+  const colW = W - 300;
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+
+  const [logo, qrImage] = await Promise.all([
+    posterLoadImage("./assets/titopay-logo.png"),
+    posterLoadImage(context.qr.image || "")
+  ]);
+
+  let y = 240;
+  if (logo) {
+    const logoW = 980;
+    const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
+    g.drawImage(logo, centerX - logoW / 2, y - logoH / 2, logoW, logoH);
+    y += logoH / 2;
+  } else {
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(800, 120);
+    g.fillText("TitoPay", centerX, y + 40);
+    y += 80;
+  }
+
+  y += 84;
+  g.fillStyle = POSTER_INK.muted;
+  g.font = posterFont(600, 46);
+  g.fillText(BRAND_TAGLINE, centerX, y);
+
+  if (context.config.banner) {
+    y += 130;
+    const label = String(context.config.banner).toUpperCase();
+    g.font = posterFont(800, 60);
+    const pillW = g.measureText(label).width + 220;
+    g.fillStyle = POSTER_INK.navy;
+    posterRoundRectPath(g, centerX - pillW / 2, y - 74, pillW, 110, 55);
+    g.fill();
+    g.fillStyle = "#ffffff";
+    g.fillText(label.split("").join("\u2009"), centerX, y + 8);
+    y += 40;
+  } else {
+    y += 40;
+  }
+
+  y += 116;
+  g.fillStyle = POSTER_INK.blue;
+  g.font = posterFont(800, 52);
+  g.fillText(String(context.config.heading).toUpperCase().split("").join("\u2009"), centerX, y);
+
+  y += 110;
+  g.fillStyle = POSTER_INK.navy;
+  posterFitText(g, context.name, 800, 96, colW, 44);
+  g.fillText(context.name, centerX, y);
+
+  // QR block. The tip sheet carries an extra banner row, so its QR gives back
+  // a little height to keep the whole composition on one visual rhythm.
+  const qrBox = context.config.banner ? 840 : 900;
+  const qrPad = 52;
+  y += 84;
+  g.strokeStyle = POSTER_INK.navy;
+  g.lineWidth = 6;
+  posterRoundRectPath(g, centerX - qrBox / 2, y, qrBox, qrBox, 44);
+  g.stroke();
+  if (qrImage) {
+    g.imageSmoothingEnabled = false;
+    g.drawImage(qrImage, centerX - qrBox / 2 + qrPad, y + qrPad, qrBox - qrPad * 2, qrBox - qrPad * 2);
+    g.imageSmoothingEnabled = true;
+  } else {
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(700, 44);
+    g.fillText("QR image unavailable", centerX, y + qrBox / 2 - 20);
+    g.fillStyle = POSTER_INK.muted;
+    g.font = posterFont(600, 36);
+    g.fillText("Use the QR ID below", centerX, y + qrBox / 2 + 44);
+  }
+  y += qrBox;
+
+  // Footer geometry is computed from the bottom up, so the divider always
+  // sits between the steps and the IDs with clear air on both sides --
+  // whatever the header above cost.
+  const footRows = [];
+  if (context.qr.id) footRows.push(["QR ID", String(context.qr.id)]);
+  if (context.walletId) footRows.push(["Wallet ID", String(context.walletId)]);
+  const siteY = H - 150;
+  const rowsTop = siteY - 84 - (footRows.length - 1) * 64;
+  const ruleY = rowsTop - 96;
+  const stepsY = Math.min(y + 130, ruleY - 70);
+
+  g.fillStyle = POSTER_INK.navy;
+  g.font = posterFont(700, 44);
+  g.fillText(context.config.steps, centerX, stepsY);
+
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(150, ruleY);
+  g.lineTo(W - 150, ruleY);
+  g.stroke();
+
+  let footY = rowsTop;
+  const footRow = (label, value) => {
+    g.font = posterFont(700, 34);
+    g.fillStyle = POSTER_INK.muted;
+    const labelText = label.toUpperCase().split("").join("\u2009") + "   ";
+    g.font = posterFont(700, Math.min(40, posterFitText(g, labelText + value, 700, 40, colW)));
+    const labelW = (() => { g.font = posterFont(700, 34); return g.measureText(labelText).width; })();
+    const size = posterFitText(g, value, 800, 40, colW - labelW);
+    const totalW = labelW + g.measureText(value).width;
+    g.textAlign = "left";
+    g.fillStyle = POSTER_INK.muted;
+    g.font = posterFont(700, 34);
+    g.fillText(labelText, centerX - totalW / 2, footY);
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(800, size);
+    g.fillText(value, centerX - totalW / 2 + labelW, footY);
+    g.textAlign = "center";
+    footY += 64;
+  };
+  footRows.forEach(([label, value]) => footRow(label, value));
+  g.fillStyle = POSTER_INK.blue;
+  g.font = posterFont(800, 40);
+  g.fillText("titopay.co.za", centerX, siteY);
+
+  return canvas;
+}
+
+// A single-page PDF whose only content is the poster JPEG, scaled to the A4
+// media box. Built by hand like every other PDF in this app.
+function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight) {
+  const base64 = String(jpegDataUrl).split(",")[1] || "";
+  const binary = atob(base64);
+  const jpeg = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) jpeg[i] = binary.charCodeAt(i);
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const offsets = {};
+  let offset = 0;
+  const push = (part) => {
+    const bytes = typeof part === "string" ? encoder.encode(part) : part;
+    chunks.push(bytes);
+    offset += bytes.length;
+  };
+  push("%PDF-1.4\n");
+  offsets[1] = offset;
+  push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+  offsets[2] = offset;
+  push("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+  offsets[3] = offset;
+  push("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+  offsets[4] = offset;
+  push(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
+  push(jpeg);
+  push("\nendstream\nendobj\n");
+  const content = "q 595.28 0 0 841.89 0 0 cm /Im1 Do Q";
+  offsets[5] = offset;
+  push(`5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
+  const xrefStart = offset;
+  let xref = "xref\n0 6\n0000000000 65535 f \n";
+  for (let i = 1; i <= 5; i += 1) xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  push(`${xref}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`);
+  const out = new Uint8Array(offset);
+  let position = 0;
+  chunks.forEach((chunk) => {
+    out.set(chunk, position);
+    position += chunk.length;
+  });
+  return out;
+}
+
+async function downloadQrPosterPdf() {
+  const context = state.qrPosterContext;
+  if (!context) {
+    showToast("Open the poster before downloading it.", "error");
+    return;
+  }
+  const canvas = await renderQrPosterCanvas(context);
+  const jpeg = canvas.toDataURL("image/jpeg", 0.92);
+  const pdf = posterJpegToPdf(jpeg, canvas.width, canvas.height);
+  downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${context.config.filename}-a4.pdf`);
+  showToast("A4 poster downloaded as a PDF.");
+}
+
+// Mirrors the statement print path: hide the app, leave the poster, restore
+// afterwards whether the user prints or cancels.
+function printQrPoster() {
+  const poster = document.querySelector("[data-qr-poster]");
+  if (!poster) {
+    showToast("Open the poster before printing it.", "error");
+    return;
+  }
+  document.body.classList.add("qr-poster-printing");
+  const cleanup = () => {
+    document.body.classList.remove("qr-poster-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+  setTimeout(cleanup, 1500);
 }
 
 function openTipModal() {
@@ -4004,161 +7970,2162 @@ function openTipModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
-      <div class="field"><label>QR label</label><input name="label" value="TitoPay tip"></div>
-      <div class="field"><label>Suggested amount (optional)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal"></div></div>
+      <div class="field">
+        <label for="tip-qr-label">QR label</label>
+        <input id="tip-qr-label" name="label" value="${esc(defaultQrLabel("tips"))}" maxlength="48">
+        <small class="field-hint">This is what the tipper sees when they scan. Your name is used unless you change it.</small>
+      </div>
+      <div class="field">
+        <label for="tip-qr-amount">Suggested amount <span class="field-optional">optional</span></label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="tip-qr-amount" name="amount" inputmode="decimal"></div>
+        <small class="field-hint">Leave empty to let the tipper choose.</small>
+      </div>
       <button class="btn primary" type="submit">${icon("tip")} Generate Tip QR</button>
     </form>
     <div class="auth-actions">
+      <button class="btn secondary" data-action="tip-poster">${icon("qr")} Tip A4 poster</button>
       <button class="btn secondary" data-action="export-csv">${icon("download")} Tip CSV</button>
       <button class="btn secondary" data-action="export-pdf">${icon("download")} Tip statement</button>
     </div>
   `);
 }
 
+// ---------------------------------------------------------------------------
+// Learn
+//
+// Learn used to be a list of topic names with a one-line summary and a "Guides:"
+// teaser naming guides that did not exist. Nothing opened. This is the library
+// itself: every topic carries the guidance it was advertising.
+//
+// Scope rules for this content:
+//   - It is general financial education, not advice. Anything that depends on a
+//     person's circumstances says so and points at the authority (SARS, FSCA,
+//     a registered adviser) rather than answering for them.
+//   - Statements about TitoPay describe what the app actually does today. No
+//     capability is claimed here that is not built.
+//   - Nothing promises a return, a rate or an outcome.
+// ---------------------------------------------------------------------------
+
+const LEARN_LIBRARY = {
+  personal: [
+    {
+      category: "Everyday money",
+      lessons: [
+        {
+          title: "Budgeting",
+          summary: "Decide where your money goes before the month decides for you.",
+          points: [
+            "List your fixed costs first: rent, transport, school fees, debit orders. What is left is what you actually have to plan with.",
+            "Give every rand a job. Money without a job is the money that disappears.",
+            "The 50/30/20 split is a starting point, not a rule: about half to needs, a third to wants, the rest to savings and debt. Adjust it to your income rather than forcing your income into it.",
+            "Budget for the irregular things too. December, school uniforms and a car licence are yearly costs, and a yearly cost divided by twelve is a monthly cost.",
+            "Review weekly, not monthly. A month is too long to notice you have overspent."
+          ],
+          titopay: "Activity lists every wallet transaction with search, date and direction filters, and exports to CSV or PDF if you want to add it up outside the app."
+        },
+        {
+          title: "Saving",
+          summary: "Save small, save often, and make it automatic before it becomes a decision.",
+          points: [
+            "Save on payday, not at month-end. What is left at month-end is usually nothing.",
+            "A small amount you never skip beats a large amount you manage twice a year.",
+            "Name your savings. \"R400 for December\" is harder to spend than \"savings\".",
+            "Keep savings apart from spending money. Money you can see is money you will use.",
+            "Increase the amount when your income increases, before your spending does."
+          ],
+          titopay: "A savings group on TitoPay is one way to save a fixed amount on a fixed date, with every contribution visible to the whole group."
+        },
+        {
+          title: "Emergency Funds",
+          summary: "Money set aside so an unexpected expense does not become debt.",
+          points: [
+            "Start with one month of essential costs, not six. A reachable target is one you reach.",
+            "Essentials means rent, food, transport and electricity, not your whole budget.",
+            "Build this before you invest. An emergency fund is what stops you selling an investment at the worst possible moment.",
+            "Keep it somewhere you can reach within a day, but not somewhere you will spend it by accident.",
+            "Replace what you use. A fund used once and never refilled is a fund you no longer have."
+          ],
+          titopay: "Prepaid essentials like electricity and airtime can be bought straight from your wallet, so a short cash gap does not have to mean going without."
+        },
+        {
+          title: "Financial Planning",
+          summary: "Goals with amounts and dates attached, reviewed often enough to matter.",
+          points: [
+            "Write the goal, the amount and the date. \"Save more\" is not a goal.",
+            "Separate short goals under a year, medium goals of one to five years, and long goals beyond that. They need different treatment.",
+            "Check progress quarterly. Adjust the plan, not the goal.",
+            "Plan for the life events you can already see coming. A known cost should never arrive as a surprise.",
+            "Write down where your financial records are and who should know, in case something happens to you."
+          ],
+          titopay: "Statements and saved receipts give you the record to review when you check progress."
+        }
+      ]
+    },
+    {
+      category: "Debt and credit",
+      lessons: [
+        {
+          title: "Debt Management",
+          summary: "Know what you owe, what it costs, and what to pay first.",
+          points: [
+            "List every debt with its balance, its instalment and its interest rate. You cannot manage what you have not written down.",
+            "Pay the minimum on everything, then put anything extra on the most expensive debt. That is the cheapest route out.",
+            "Short-term and unsecured credit usually costs the most. Compare the rate, not just the instalment.",
+            "Never borrow to pay a debt instalment. That is the point where debt starts growing on its own.",
+            "If you cannot pay, contact the credit provider before you miss. An arrangement made early is worth far more than a default.",
+            "South Africa has a formal debt counselling process under the National Credit Act. A registered debt counsellor can tell you whether it applies to you."
+          ],
+          titopay: "TitoPay does not offer credit or loans. Your wallet balance is your own money."
+        },
+        {
+          title: "Credit Scores",
+          summary: "A record of how you have handled credit, used by lenders to decide.",
+          points: [
+            "Payment history carries the most weight. Paying on time, every time, is the single biggest factor.",
+            "How much of your available credit you use matters too. Consistently maxed-out accounts read as strain.",
+            "Several credit applications in a short period can count against you.",
+            "Closing old accounts is not automatically helpful. Length of history counts.",
+            "You are entitled to a free credit report each year from the registered South African credit bureaus. Read it, and dispute anything that is wrong."
+          ],
+          titopay: "Wallet activity on TitoPay is not credit and is not reported to credit bureaus."
+        }
+      ]
+    },
+    {
+      category: "Staying safe",
+      lessons: [
+        {
+          title: "Fraud Prevention",
+          summary: "Most fraud needs your cooperation to work. Do not give it.",
+          points: [
+            "No TitoPay employee, bank employee or service provider will ever ask for your OTP or PIN. Nobody legitimate ever needs it.",
+            "Urgency is the tell. \"Act now or your account is blocked\" is pressure designed to stop you thinking.",
+            "Do not trust the number that called you. Hang up and call back on a number you found yourself.",
+            "Never approve a payment or share a code in order to \"reverse\" or \"cancel\" a transaction. That request is the fraud.",
+            "If a deal, prize or job needs a payment from you first, it is not a deal, prize or job.",
+            "Report it immediately. Speed matters much more than embarrassment."
+          ],
+          titopay: "TitoPay shows the recipient, the fee and the total before any payment is confirmed. If that screen does not match what you were told, stop there."
+        },
+        {
+          title: "Digital Wallet Safety",
+          summary: "Your phone is your wallet. Secure it like one.",
+          points: [
+            "Lock the device itself with a PIN, pattern or biometrics. Everything else depends on that.",
+            "Do not reuse your wallet PIN as your phone unlock code.",
+            "Never store a PIN in notes, photos or contacts.",
+            "Sign out on any device that is not yours, and avoid moving money on public Wi-Fi.",
+            "Check your activity regularly. Small unfamiliar amounts are often a test before a larger attempt.",
+            "If your phone is lost or stolen, lock the wallet and report it straight away."
+          ],
+          titopay: "Profile includes a wallet lock, and every transaction appears in Activity with a reference you can check."
+        }
+      ]
+    },
+    {
+      category: "Using TitoPay",
+      lessons: [
+        {
+          title: "Airtime and Data Planning",
+          summary: "Buy with a plan instead of topping up in a panic.",
+          points: [
+            "Bundles are almost always cheaper per megabyte than out-of-bundle rates. Out-of-bundle is where the money goes.",
+            "Match the bundle to how you actually use data, then check at month-end whether you were right.",
+            "One larger bundle usually costs less than five emergency top-ups.",
+            "Set your phone to warn you before data runs out, and keep background updates off mobile data.",
+            "Check the network and the number before confirming. Airtime sent to a wrong number is usually gone."
+          ],
+          titopay: "Airtime, data, SMS and voice bundles are bought from your wallet with the network and product confirmed before payment, and you can buy for your own number or for someone else."
+        },
+        {
+          title: "Electricity Tokens",
+          summary: "Prepaid electricity, bought correctly and kept safely.",
+          points: [
+            "Check the meter number every single time. A token bought against the wrong meter usually cannot be recovered.",
+            "Keep the receipt. If a token does not load, the receipt is your proof.",
+            "A token is a number, not a payment. It only takes effect once it is entered into the meter.",
+            "Buy before you run out. Buying in the dark is how mistakes happen.",
+            "Watch your usage across a few months so you know what a normal month costs you."
+          ],
+          titopay: "Electricity is bought from your wallet and the token appears on the receipt saved in the app, so you can find it again."
+        },
+        {
+          title: "Payment Requests",
+          summary: "Ask for money in a way that is easy to say yes to.",
+          points: [
+            "Say what it is for. A request with a clear reference is paid faster than a bare amount.",
+            "Send it while the reason is fresh, the same day rather than two weeks later.",
+            "One request per thing. Combining unrelated amounts invites a dispute.",
+            "A request is an ask, not a debit. The other person still has to approve it.",
+            "Follow up once, politely, then speak to them directly."
+          ],
+          titopay: "Payment requests carry a reference and a status you can track, and the recipient approves the payment themselves."
+        },
+        {
+          title: "Bill Split Etiquette",
+          summary: "Shared costs, split in a way nobody argues about.",
+          points: [
+            "Agree the split before the bill arrives, not after it does.",
+            "Equal is simplest and usually fairest for shared things. Split by item when what people used differs a lot.",
+            "Show the working. People pay faster when they can see how their share was calculated.",
+            "Round in the other person's favour. The rand you lose is cheaper than the conversation.",
+            "Somebody has to carry the full amount first. Take turns."
+          ],
+          titopay: "Bill Split shows each participant's share before you send, and creates a separate request per person carrying the same description."
+        },
+        {
+          title: "Savings Group Basics",
+          summary: "A stokvel works on written agreement and visibility, not trust alone.",
+          points: [
+            "Agree the amount, the date and the payout order in writing before the first contribution.",
+            "Write down what happens when somebody misses a contribution, before anybody misses one.",
+            "Every member should be able to see the full contribution record at any time. Secrecy is where groups fail.",
+            "Share responsibility. One person holding everything is a risk to them as much as to the group.",
+            "A savings group holds only what its members put in. Any group promising a return on top of contributions is something else, and worth being careful about."
+          ],
+          titopay: "A TitoPay savings group records contributions per member against a shared statement, so every member sees the same record. TitoPay does not add interest or a return."
+        }
+      ]
+    },
+    {
+      category: "Planning ahead",
+      lessons: [
+        {
+          title: "Investing Basics",
+          summary: "Understand the risk before you look at the return.",
+          points: [
+            "Risk and return travel together. A higher promised return always means higher risk, without exception.",
+            "Guaranteed high returns do not exist. That promise is the most reliable sign of a scam there is.",
+            "Time in the market matters more than timing it. Long horizons absorb short shocks.",
+            "Spread your money. One investment failing should not end your plan.",
+            "Understand the fees. Fees are certain in a way returns never are.",
+            "In South Africa, check that a provider is registered with the FSCA before handing over money. This is education, not advice. A registered financial adviser can advise on your own situation."
+          ],
+          titopay: "TitoPay is a payments wallet. It does not offer investments, and a wallet balance does not earn a return."
+        },
+        {
+          title: "Insurance Basics",
+          summary: "Know what is covered before you need it to be.",
+          points: [
+            "Insurance covers a loss you could not absorb yourself. It is not a savings product.",
+            "Read the exclusions first. That is where claims are lost.",
+            "The excess is what you pay on a claim. A low premium with a large excess may not be cheaper overall.",
+            "Answer the application honestly. Non-disclosure is the most common reason a claim that looked valid is rejected.",
+            "Review your cover when life changes: a move, a new vehicle, a new child."
+          ],
+          titopay: "TitoPay does not sell insurance. Premiums paid by debit order sit outside the wallet."
+        }
+      ]
+    }
+  ],
+  business: [
+    {
+      category: "Money in, money out",
+      lessons: [
+        {
+          title: "Cash Flow Management",
+          summary: "Profit is an opinion. Cash is a fact.",
+          points: [
+            "A profitable business can still fail. It fails when money goes out before it comes in.",
+            "Track expected money in and money out weekly rather than monthly.",
+            "Know your runway: how many weeks you could operate if no new income arrived.",
+            "Chase late payments early and consistently. Most late payment is habit, not inability.",
+            "Keep a buffer that is separate from operating money."
+          ],
+          titopay: "Activity filters by date and direction and exports to CSV, so you can set money in against money out for any period."
+        },
+        {
+          title: "Pricing Strategies",
+          summary: "Price from your costs and your value, never from your competitor alone.",
+          points: [
+            "Know your true cost per unit: materials, time, transport, fees and waste. Price below it and volume only makes it worse.",
+            "Add margin deliberately. Margin is what funds growth and covers slow months.",
+            "Undercutting is the easiest strategy for anyone to copy and the hardest to recover from.",
+            "Raise prices in small, explained steps rather than one large shock.",
+            "Different customers can carry different prices, based on volume, urgency or service level."
+          ],
+          titopay: "Quotes let you present a price and its breakdown before any work starts, so the pricing conversation happens first."
+        },
+        {
+          title: "Payout Planning",
+          summary: "Match when money leaves to when money arrives.",
+          points: [
+            "Know your settlement timing before you agree supplier terms.",
+            "Schedule supplier payments after expected settlements, not before them.",
+            "Keep a reserve so a delayed settlement is not a missed payment.",
+            "Reconcile payouts against sales every time. Unexplained differences do not resolve themselves."
+          ],
+          titopay: "Payouts are requested from the business wallet, and payout records export to CSV for reconciliation."
+        }
+      ]
+    },
+    {
+      category: "Getting paid",
+      lessons: [
+        {
+          title: "Invoicing",
+          summary: "A clear invoice is paid faster than a good reminder.",
+          points: [
+            "Every invoice needs a unique number, an issue date, a due date and stated payment terms.",
+            "Describe each line so the customer recognises what they bought. Vague lines create queries, and queries create delay.",
+            "Put the total, the VAT treatment and the due date where they cannot be missed.",
+            "Send it the day the work is done. Invoicing late teaches customers to pay late.",
+            "Keep every invoice. It is your record for tax, for disputes and for cash-flow planning."
+          ],
+          titopay: "Invoices are built from itemised lines with VAT and totals calculated for you, and issue and due dates on the document. Creating and sending the link is free; the PDF download carries the R2.50 extraction fee."
+        },
+        {
+          title: "Quotes and Proforma",
+          summary: "Agree the price in writing before the work starts.",
+          points: [
+            "A quote is an offer. Give it a validity period so old pricing does not bind you later.",
+            "A proforma invoice is a request for payment before supply. It is not a tax invoice and should say so on its face.",
+            "Once a quote is accepted, invoice against the same numbers. Changing them afterwards causes disputes.",
+            "Put the scope in writing. Most disputes are about what was included, not about the amount.",
+            "Quote for changes separately rather than absorbing them quietly."
+          ],
+          titopay: "Quote, Proforma Invoice and Invoice each use their own numbering series. A quote carries a valid-until date, and a proforma is marked as not a tax invoice."
+        },
+        {
+          title: "Merchant QR Payments",
+          summary: "Fast at the counter, clean in the records.",
+          points: [
+            "Confirm the amount on screen with the customer before they scan.",
+            "Use a reference that will still mean something to you at reconciliation.",
+            "Wait for the confirmation before releasing goods. A screenshot is not a confirmation.",
+            "Keep the receipt record. It settles disputes quickly."
+          ],
+          titopay: "Merchant sales generate a QR carrying the amount and reference you set, and receipts are saved in the app."
+        }
+      ]
+    },
+    {
+      category: "Tax and records",
+      lessons: [
+        {
+          title: "VAT Basics",
+          summary: "VAT is collected on behalf of SARS. It is not income.",
+          points: [
+            "VAT registration is compulsory above a turnover threshold and voluntary below it. SARS sets and updates those thresholds, so confirm the current figures with SARS or your accountant.",
+            "VAT you charge is not yours. Set it aside.",
+            "Only a registered vendor may charge VAT, and a valid tax invoice must carry the details SARS requires, including your VAT number.",
+            "Keep supplier tax invoices. Input VAT you cannot prove is input VAT you cannot claim.",
+            "Getting this wrong is expensive. This is general information, not tax advice."
+          ],
+          titopay: "Business documents can add VAT at 15% to the subtotal and show it as its own line. Whether you should be charging VAT at all is a question for SARS or your accountant."
+        },
+        {
+          title: "Tax Basics",
+          summary: "Good records make tax ordinary instead of frightening.",
+          points: [
+            "Separate business and personal money. Mixed records are the single biggest cause of tax pain.",
+            "Keep records for the period SARS requires. Confirm the current retention rule rather than assuming.",
+            "Provisional tax applies to many business owners, with payments during the year rather than one at the end.",
+            "Record expenses as they happen. Reconstructing a year in one week loses money.",
+            "Use a registered tax practitioner for anything you are unsure about."
+          ],
+          titopay: "Statements export to CSV and PDF for any date range, which is the format most accountants ask for."
+        },
+        {
+          title: "Record Keeping",
+          summary: "If it is not written down, it did not happen.",
+          points: [
+            "Keep invoices, quotes, receipts and bank records for every transaction.",
+            "File as you go, by month. Batch filing is where documents go missing.",
+            "Back up digitally. One damaged box should not end your records.",
+            "Reconcile monthly against your actual balance rather than once a year."
+          ],
+          titopay: "Receipts, saved business documents and statements are all retrievable in the app, and activity exports cover any date range."
+        },
+        {
+          title: "Compliance",
+          summary: "Meeting your obligations is cheaper than explaining why you did not.",
+          points: [
+            "Know which registrations apply to you: company, tax, VAT where relevant, and any industry licence.",
+            "Verified business details are required for financial services. Keep them current.",
+            "Protect customer information. Under POPIA, collect only what you need and keep it secure.",
+            "Keep staff access to financial tools limited, and review that list.",
+            "Rules change. Check with the relevant authority rather than assuming last year's answer still holds."
+          ],
+          titopay: "Business verification is completed in Profile, and business features that require it stay locked until it is approved."
+        }
+      ]
+    },
+    {
+      category: "Running the business",
+      lessons: [
+        {
+          title: "Inventory Management",
+          summary: "Stock is cash sitting on a shelf.",
+          points: [
+            "Count regularly. Records that do not match the shelf are not records.",
+            "Know which items sell fast and which tie up money. Slow stock is expensive stock.",
+            "Order to demand, not to a discount. A bulk deal on a slow item is a cash-flow problem.",
+            "Watch for shrinkage and check it against your sales records."
+          ],
+          titopay: "Sales history in Activity shows what actually sold and when, which is a better ordering guide than memory."
+        },
+        {
+          title: "Customer Retention",
+          summary: "Keeping a customer costs less than finding one.",
+          points: [
+            "Existing customers already trust you. That is the cheapest growth available.",
+            "Answer quickly. Response time shapes how people describe you to others.",
+            "Fix problems generously and visibly. A recovered complaint creates more loyalty than a smooth sale.",
+            "Keep a record of who buys what, and follow up in a way that is useful rather than noisy."
+          ],
+          titopay: "Transaction records show repeat customers by reference, so follow-up is based on what actually happened."
+        },
+        {
+          title: "Business Banking",
+          summary: "Keep business money separate and everything else gets easier.",
+          points: [
+            "Never run business income through a personal account. It ruins your records and complicates tax.",
+            "Reconcile settlements against sales regularly.",
+            "Give each person only the access their role requires.",
+            "Understand the fees on each payment method. They change your real margin."
+          ],
+          titopay: "The business wallet is separate from personal, and payouts and statements are recorded against the business account."
+        }
+      ]
+    },
+    {
+      category: "Growing",
+      lessons: [
+        {
+          title: "Business Funding",
+          summary: "Prepare the records first, then ask.",
+          points: [
+            "Funders look at cash flow, not ambition. Clean records are most of the application.",
+            "Know exactly what the money is for and what it will produce.",
+            "Understand the total cost of the funding, not just the instalment.",
+            "Compare the options. A funder, a supplier term, or simply waiting are all answers. Not every gap needs credit.",
+            "Be careful with anyone offering funding that requires an upfront fee from you."
+          ],
+          titopay: "Statements and document history give you a documented trading record to present. TitoPay does not provide funding or credit."
+        },
+        {
+          title: "Growth Strategies",
+          summary: "Grow on evidence, not on optimism.",
+          points: [
+            "Look at what already sells before adding something new.",
+            "Growth increases cash needs before it increases cash. Plan for that gap.",
+            "Test small. A cheap failed test is information; an expensive one is a setback.",
+            "Fix what breaks at higher volume, such as delivery, service and stock, before the volume arrives."
+          ],
+          titopay: "Filtered activity exports let you compare periods and see which services and customers are actually growing."
+        }
+      ]
+    },
+    {
+      category: "Staying safe",
+      lessons: [
+        {
+          title: "Fraud Prevention for Business",
+          summary: "Most business fraud arrives as a normal-looking instruction.",
+          points: [
+            "Verify any change of banking details by phoning a number you already had, never a number on the new instruction. This one habit stops the most common business fraud in South Africa.",
+            "Never act on an urgent payment instruction that discourages checking, even when it appears to come from an owner or a manager.",
+            "Limit who can move money, and review that list.",
+            "Confirm payment has actually arrived before releasing goods. Proof-of-payment emails and screenshots are easily faked.",
+            "Train staff on refund and overpayment scams. A refund request for an overpayment that never arrived is a classic."
+          ],
+          titopay: "Refunds run through the business wallet with a recorded reference, and TitoPay staff will never ask for an OTP or PIN."
+        }
+      ]
+    }
+  ]
+};
+
+function learnCategories() {
+  return LEARN_LIBRARY[state.accountType === "business" ? "business" : "personal"] || LEARN_LIBRARY.personal;
+}
+
+function learnLessons() {
+  return learnCategories().flatMap((group) => group.lessons.map((lesson) => Object.assign({}, lesson, { category: group.category })));
+}
+
+function learnLessonId(lesson) {
+  return String(lesson.title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function matchingLearnLessons() {
+  const query = String(state.learn.search || "").trim().toLowerCase();
+  const category = state.learn.category || "all";
+  return learnLessons().filter((lesson) => {
+    if (category !== "all" && lesson.category !== category) return false;
+    if (!query) return true;
+    const haystack = [lesson.title, lesson.summary, lesson.category, lesson.titopay].concat(lesson.points).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function learnLessonMarkup(lesson) {
+  const id = learnLessonId(lesson);
+  const open = state.learn.open === id;
+  return `
+    <article class="learn-item${open ? " is-open" : ""}">
+      <h3>
+        <button class="learn-head" type="button" data-learn-toggle="${esc(id)}" aria-expanded="${open ? "true" : "false"}" aria-controls="learn-body-${esc(id)}">
+          <span class="learn-head-text">
+            <strong>${esc(lesson.title)}</strong>
+            <small>${esc(lesson.summary)}</small>
+          </span>
+          <span class="learn-chevron" aria-hidden="true">${icon("chevron-down")}</span>
+        </button>
+      </h3>
+      <div class="learn-body" id="learn-body-${esc(id)}"${open ? "" : " hidden"}>
+        <ul class="learn-points">
+          ${lesson.points.map((point) => `<li>${esc(point)}</li>`).join("")}
+        </ul>
+        <p class="learn-note"><strong>In TitoPay</strong> ${esc(lesson.titopay)}</p>
+      </div>
+    </article>`;
+}
+
+function renderLearnLessons() {
+  const host = document.querySelector("[data-learn-list]");
+  if (!host) return;
+  const lessons = matchingLearnLessons();
+  if (!lessons.length) {
+    host.innerHTML = `<div class="empty-state"><strong>No match</strong><p>Nothing here covers "${esc(state.learn.search)}" yet. Try a shorter word, or clear the search to browse everything.</p></div>`;
+    return;
+  }
+  const grouped = [];
+  lessons.forEach((lesson) => {
+    const last = grouped[grouped.length - 1];
+    if (last && last.category === lesson.category) last.lessons.push(lesson);
+    else grouped.push({ category: lesson.category, lessons: [lesson] });
+  });
+  host.innerHTML = grouped.map((group) => `
+    <section class="learn-group">
+      <h4 class="learn-group-title">${esc(group.category)}</h4>
+      ${group.lessons.map(learnLessonMarkup).join("")}
+    </section>`).join("");
+  const counter = document.querySelector("[data-learn-count]");
+  if (counter) counter.textContent = `${lessons.length} ${lessons.length === 1 ? "guide" : "guides"}`;
+}
+
+function toggleLearnLesson(id) {
+  state.learn.open = state.learn.open === id ? "" : id;
+  renderLearnLessons();
+  const opened = document.querySelector(`[data-learn-toggle="${CSS.escape(id)}"]`);
+  if (opened && state.learn.open === id) opened.focus();
+}
+
+function selectLearnCategory(category) {
+  state.learn.category = category;
+  state.learn.open = "";
+  document.querySelectorAll("[data-learn-category]").forEach((chip) => {
+    const active = chip.dataset.learnCategory === category;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  renderLearnLessons();
+}
+
 function openLearnModal() {
-  const personal = ["Budgeting", "Saving", "Emergency Funds", "Debt Management", "Credit Scores", "Fraud Prevention", "Digital Wallet Safety", "Airtime & Data Planning", "Electricity Tokens", "Payment Requests", "Bill Split Etiquette", "Stokvel Basics", "Investing Basics", "Insurance Basics", "Financial Planning"];
-  const business = ["Cash Flow Management", "Pricing Strategies", "Invoicing", "Quotes & Proforma", "VAT Basics", "Tax Basics", "Business Banking", "Inventory Management", "Customer Retention", "Merchant QR Payments", "Payout Planning", "Record Keeping", "Fraud Prevention for Business", "Business Funding", "Growth Strategies", "Compliance"];
-  const lessons = state.accountType === "business" ? business : personal;
+  const isBusiness = state.accountType === "business";
+  state.learn = { search: "", category: "all", open: "" };
+  const categories = learnCategories().map((group) => group.category);
+  const total = learnLessons().length;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Learn</p><h2>${state.accountType === "business" ? "Business Education" : "Personal Money Education"}</h2><p class="lead">Practical TitoPay learning for safer, smarter money decisions.</p></div>
+      <div>
+        <p class="eyebrow">Learn</p>
+        <h2>${isBusiness ? "Business education" : "Money education"}</h2>
+        <p class="lead">${total} practical guides. Open one to read it. This is general education, not financial advice.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="activity-list">
-      ${lessons.map((lesson) => `<article class="activity-item"><span class="icon-bubble">${icon("learn")}</span><div><p><strong>${esc(lesson)}</strong></p><small>${esc(lessonSummary(lesson))}</small><small class="guide-list">${esc(lessonGuide(lesson))}</small></div></article>`).join("")}
-    </section>
+    <div class="field learn-search-field">
+      <label class="visually-hidden" for="learn-search">Search guides</label>
+      <input id="learn-search" data-learn-search type="search" autocomplete="off" placeholder="Search guides">
+    </div>
+    <div class="learn-categories" role="group" aria-label="Filter by category">
+      <button class="chip is-active" type="button" data-learn-category="all" aria-pressed="true">All</button>
+      ${categories.map((category) => `<button class="chip" type="button" data-learn-category="${esc(category)}" aria-pressed="false">${esc(category)}</button>`).join("")}
+    </div>
+    <p class="learn-count muted" data-learn-count aria-live="polite">${total} guides</p>
+    <div class="learn-list" data-learn-list></div>
   `);
+  renderLearnLessons();
 }
 
-function lessonSummary(lesson) {
-  const summaries = {
-    Budgeting: "Plan monthly income, essentials, savings and discretionary spending.",
-    Saving: "Build consistent savings habits from small, repeatable actions.",
-    "Emergency Funds": "Prepare for unexpected expenses without disrupting your wallet.",
-    "Debt Management": "Understand repayments, fees and safer borrowing decisions.",
-    "Credit Scores": "Learn what lenders review and how payment behaviour matters.",
-    "Fraud Prevention": "Spot scams, protect OTPs and report suspicious activity quickly.",
-    "Digital Wallet Safety": "Use PINs, device security and wallet lock controls wisely.",
-    "Airtime & Data Planning": "Buy bundles with a plan and avoid overspending on emergency top-ups.",
-    "Electricity Tokens": "Understand prepaid purchases, token storage and meter reference checks.",
-    "Payment Requests": "Request money clearly with dates, references and status tracking.",
-    "Bill Split Etiquette": "Split shared costs fairly and make every participant's share clear.",
-    "Stokvel Basics": "Learn contribution cycles, member trust and transparent group records.",
-    "Investing Basics": "Understand risk, time horizon and why quick-return promises are dangerous.",
-    "Insurance Basics": "Know what cover, premiums, excess and exclusions mean before committing.",
-    "Financial Planning": "Set goals, review progress and keep money decisions intentional.",
-    "Cash Flow Management": "Track money in and out so your business can operate smoothly.",
-    "Pricing Strategies": "Price products with costs, margins and customer value in mind.",
-    Invoicing: "Create clear customer documents with payment terms and traceable references.",
-    "Quotes & Proforma": "Use quotes and proforma invoices to confirm pricing before delivery.",
-    "VAT Basics": "Understand VAT awareness, customer invoices and record preparation.",
-    "Tax Basics": "Keep useful records so filing and professional advice become easier.",
-    "Business Banking": "Separate business funds, settlements and payout records.",
-    "Inventory Management": "Keep stock levels healthy and avoid tying up too much cash.",
-    "Customer Retention": "Improve repeat purchases with service, trust and clear follow-up.",
-    "Merchant QR Payments": "Accept payments faster with clear references and receipt discipline.",
-    "Payout Planning": "Plan settlement timing, supplier payments and cash reserves.",
-    "Record Keeping": "Keep invoices, receipts and exports organized for decisions and compliance.",
-    "Fraud Prevention for Business": "Protect staff access, payment links and customer data.",
-    "Business Funding": "Prepare cash-flow records before applying for working capital.",
-    "Growth Strategies": "Use payment and customer data to understand demand and scale carefully.",
-    Compliance: "Understand FICA, data care and responsible financial operations."
-  };
-  return summaries[lesson] || "A practical TitoPay guide for everyday financial confidence.";
+// ---------------------------------------------------------------------------
+// Stockvel: digital savings group
+//
+// TitoPay launches the Stockvel as a transparent digital savings group: members
+// agree an amount and a schedule, contribute, and the group can see exactly who
+// has paid. Nothing here offers a return, manages money on a member's behalf or
+// gives advice.
+//
+// A savings group is persistent state -- members, a contribution ledger, an
+// activity trail -- which belongs to the TitoPay API. This layer asks for that
+// state and renders exactly what comes back. It never invents a group, a
+// member, a balance, a contribution or an approval.
+// ---------------------------------------------------------------------------
+
+const STOCKVEL_PATH = "/v1/stockvels";
+
+// Capabilities that would change what TitoPay is, regulator-wise: managing
+// money, promising a return, advising, insuring or lending. Every one is OFF for
+// launch and none is implemented. The gate exists so that enabling one after
+// legal review is a deliberate, single-line decision rather than a rebuild --
+// and so that no screen can quietly start positioning TitoPay as an investment
+// manager or financial adviser.
+const STOCKVEL_FEATURES = {
+  investmentPortfolios: false,
+  investmentAdvice: false,
+  interestBearingBalances: false,
+  wealthManagement: false,
+  portfolioRecommendations: false,
+  riskProfiling: false,
+  assetAllocation: false,
+  insuranceProducts: false,
+  memberLending: false,
+  creditScoring: false,
+  buyNowPayLater: false
+};
+
+function stockvelFeature(name) {
+  return STOCKVEL_FEATURES[name] === true;
 }
 
-function lessonGuide(lesson) {
-  const guides = {
-    Budgeting: "Guides: needs vs wants, 50/30/20 planning, weekly wallet review.",
-    Saving: "Guides: savings goals, debit-order discipline, avoiding impulse spending.",
-    "Emergency Funds": "Guides: starter fund, three-month target, safe access rules.",
-    "Debt Management": "Guides: repayment priority, fee awareness, avoiding debt traps.",
-    "Credit Scores": "Guides: payment history, credit usage, application readiness.",
-    "Fraud Prevention": "Guides: OTP safety, phishing signs, reporting suspicious activity.",
-    "Digital Wallet Safety": "Guides: wallet lock, strong PINs, device sessions and support escalation.",
-    "Airtime & Data Planning": "Guides: network choice, bundle expiry, monthly usage and family top-ups.",
-    "Electricity Tokens": "Guides: meter checks, token storage, purchase references and support evidence.",
-    "Payment Requests": "Guides: recipient details, due dates, QR requests and payment tracking.",
-    "Bill Split Etiquette": "Guides: equal splits, custom shares, reminders and proof of payment.",
-    "Stokvel Basics": "Guides: member roles, contribution order, payout cycles and records.",
-    "Investing Basics": "Guides: risk, time horizon, diversification and realistic returns.",
-    "Insurance Basics": "Guides: cover types, premiums, excess and claim readiness.",
-    "Financial Planning": "Guides: short-term goals, annual reviews, debt plans and savings milestones.",
-    "Cash Flow Management": "Guides: daily takings, supplier timing, payout planning.",
-    "Pricing Strategies": "Guides: cost price, markup, profit margin, discounts and break-even thinking.",
-    Invoicing: "Guides: line items, VAT, payment terms and professional follow-up.",
-    "Quotes & Proforma": "Guides: quote validity, deposits, customer approval and delivery notes.",
-    "VAT Basics": "Guides: VAT registration awareness, records and customer invoices.",
-    "Tax Basics": "Guides: expense records, filing preparation and SARS discipline.",
-    "Business Banking": "Guides: separating funds, settlements and audit trails.",
-    "Inventory Management": "Guides: reorder levels, shrinkage, slow movers and margins.",
-    "Customer Retention": "Guides: service recovery, loyalty, follow-up and repeat purchase patterns.",
-    "Merchant QR Payments": "Guides: static QR, dynamic QR, references, refunds and receipts.",
-    "Payout Planning": "Guides: settlement timing, beneficiary checks and cash reserve rules.",
-    "Record Keeping": "Guides: PDF receipts, CSV exports, invoice folders and audit trails.",
-    "Fraud Prevention for Business": "Guides: staff roles, suspicious payments, device access and reporting.",
-    "Business Funding": "Guides: working capital, repayment planning and readiness.",
-    "Growth Strategies": "Guides: top products, repeat customers, campaign tracking and expansion timing.",
-    Compliance: "Guides: FICA, record keeping, receipts and customer data care."
-  };
-  return guides[lesson] || "Guides: practical steps, common mistakes and TitoPay workflow tips.";
+function stockvelText(source, keys) {
+  if (!source || typeof source !== "object") return "";
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = source[keys[index]];
+    if (value != null && String(value).trim() !== "") return String(value).trim();
+  }
+  return "";
 }
+
+// Returns null rather than 0 for an absent number, so a missing figure can be
+// left off the screen instead of being shown as zero.
+function stockvelNumber(source, keys) {
+  if (!source || typeof source !== "object") return null;
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = source[keys[index]];
+    if (value == null || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function stockvelList(source, keys) {
+  if (!source || typeof source !== "object") return [];
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = source[keys[index]];
+    if (Array.isArray(value)) return value;
+    if (value && Array.isArray(value.items)) return value.items;
+  }
+  return [];
+}
+
+const STOCKVEL_MEMBER_STATES = {
+  paid: { label: "Paid", tone: "settled" },
+  settled: { label: "Paid", tone: "settled" },
+  complete: { label: "Paid", tone: "settled" },
+  pending: { label: "Pending", tone: "" },
+  due: { label: "Due", tone: "" },
+  processing: { label: "Processing", tone: "" },
+  outstanding: { label: "Outstanding", tone: "warn" },
+  missed: { label: "Missed", tone: "failed" },
+  late: { label: "Late", tone: "failed" },
+  failed: { label: "Failed", tone: "failed" },
+  exempt: { label: "Exempt", tone: "" }
+};
+
+function stockvelStatusMeta(status) {
+  const key = String(status || "").toLowerCase();
+  return STOCKVEL_MEMBER_STATES[key] || (key ? { label: key.charAt(0).toUpperCase() + key.slice(1), tone: "" } : null);
+}
+
+// Monogram initials, used for the group and member avatars. TitoPay has nowhere
+// to store an uploaded group photo, so the group's identity is drawn from its
+// name instead of inventing an image pipeline.
+function stockvelInitials(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "ST";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
+
+// A stable hue per group so the same group always looks the same, without
+// storing anything.
+function stockvelHue(seed) {
+  const text = String(seed || "stockvel");
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) hash = (hash * 31 + text.charCodeAt(index)) % 360;
+  return hash;
+}
+
+function normalizeStockvelMember(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const name = stockvelText(source, ["name", "fullName", "full_name", "displayName", "display_name", "memberName", "member_name", "businessName"]);
+  const identifier = stockvelText(source, ["identifier", "username", "phone", "msisdn", "email", "id", "memberId", "member_id"]);
+  if (!name && !identifier) return null;
+  return {
+    id: stockvelText(source, ["id", "memberId", "member_id", "userId", "user_id"]) || identifier,
+    name: name || identifier,
+    username: stockvelText(source, ["username", "userName", "user_name"]),
+    contact: stockvelText(source, ["phone", "msisdn", "mobile", "email"]),
+    photo: stockvelText(source, ["photo", "photoUrl", "photo_url", "avatar", "avatarUrl", "avatar_url", "profilePhoto", "profile_photo"]),
+    verified: source.verified === true || source.isVerified === true || source.is_verified === true
+      || String(stockvelText(source, ["verificationStatus", "verification_status", "kycStatus", "kyc_status", "ficaStatus", "fica_status"])).toLowerCase() === "approved",
+    role: stockvelText(source, ["role", "memberRole", "member_role", "position"]) || "Member",
+    joinedAt: stockvelText(source, ["joinedAt", "joined_at", "createdAt", "created_at", "joinDate", "join_date"]),
+    status: stockvelText(source, ["status", "contributionStatus", "contribution_status", "paymentStatus", "payment_status"]),
+    lastContributionAt: stockvelText(source, ["lastContributionAt", "last_contribution_at", "lastPaidAt", "last_paid_at"]),
+    lastContributionAmount: stockvelNumber(source, ["lastContributionAmount", "last_contribution_amount", "lastAmount", "last_amount"]),
+    lastActivityAt: stockvelText(source, ["lastActivityAt", "last_activity_at", "lastSeenAt", "last_seen_at"]),
+    outstandingAmount: stockvelNumber(source, ["outstandingAmount", "outstanding_amount", "outstandingBalance", "outstanding_balance", "amountOwed", "amount_owed", "arrears"]),
+    totalContributed: stockvelNumber(source, ["totalContributed", "total_contributed", "lifetimeContribution", "lifetime_contribution"]),
+    streak: stockvelNumber(source, ["streak", "contributionStreak", "contribution_streak"])
+  };
+}
+
+function normalizeStockvelContribution(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : {};
+  const amount = stockvelNumber(source, ["amount", "value", "contributionAmount", "contribution_amount"]);
+  const dueDate = stockvelText(source, ["dueDate", "due_date", "dueAt", "due_at", "date", "cycleDate", "cycle_date"]);
+  if (amount == null && !dueDate) return null;
+  return {
+    id: stockvelText(source, ["id", "contributionId", "contribution_id", "reference"]),
+    amount,
+    dueDate,
+    paidAt: stockvelText(source, ["paidAt", "paid_at", "settledAt", "settled_at"]),
+    status: stockvelText(source, ["status", "state"]),
+    memberName: stockvelText(source, ["memberName", "member_name", "name", "member"]),
+    reference: stockvelText(source, ["reference", "transactionReference", "transaction_reference"]),
+    cycle: stockvelText(source, ["cycle", "cycleLabel", "cycle_label", "period"])
+  };
+}
+
+function normalizeStockvelActivity(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : {};
+  const title = stockvelText(source, ["title", "summary", "message", "description", "event", "type"]);
+  if (!title) return null;
+  return {
+    id: stockvelText(source, ["id", "eventId", "event_id", "reference"]),
+    kind: String(stockvelText(source, ["kind", "type", "category", "eventType", "event_type"]) || "").toLowerCase(),
+    title,
+    detail: stockvelText(source, ["detail", "details", "body", "note"]),
+    actor: stockvelText(source, ["actor", "actorName", "actor_name", "memberName", "member_name", "by"]),
+    amount: stockvelNumber(source, ["amount", "value"]),
+    at: stockvelText(source, ["at", "createdAt", "created_at", "timestamp", "occurredAt", "occurred_at", "date"])
+  };
+}
+
+function normalizeStockvelWithdrawal(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : {};
+  const amount = stockvelNumber(source, ["amount", "value", "requestedAmount", "requested_amount"]);
+  const requestedBy = stockvelText(source, ["requestedBy", "requested_by", "requesterName", "requester_name", "memberName", "member_name"]);
+  if (amount == null && !requestedBy) return null;
+  const approvals = stockvelNumber(source, ["approvals", "approvalCount", "approval_count", "approvedCount", "approved_count"]);
+  const required = stockvelNumber(source, ["approvalsRequired", "approvals_required", "requiredApprovals", "required_approvals", "quorum"]);
+  return {
+    id: stockvelText(source, ["id", "withdrawalId", "withdrawal_id", "reference"]),
+    amount,
+    requestedBy,
+    reason: stockvelText(source, ["reason", "purpose", "motivation", "note", "description"]),
+    status: stockvelText(source, ["status", "state"]),
+    approvals,
+    approvalsRequired: required,
+    requestedAt: stockvelText(source, ["requestedAt", "requested_at", "createdAt", "created_at"]),
+    approvedBy: stockvelList(source, ["approvedBy", "approved_by", "approvers"]).map((item) => stockvelText(typeof item === "object" ? item : { name: item }, ["name", "fullName", "username", "identifier"])).filter(Boolean)
+  };
+}
+
+function normalizeStockvelGroup(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const name = stockvelText(source, ["name", "groupName", "group_name", "title", "stockvelName", "stockvel_name"]);
+  const id = stockvelText(source, ["id", "groupId", "group_id", "stockvelId", "stockvel_id", "reference", "code"]);
+  if (!name && !id) return null;
+  const members = stockvelList(source, ["members", "memberList", "member_list", "participants"]).map(normalizeStockvelMember).filter(Boolean);
+  return {
+    id: id || name,
+    name: name || id,
+    description: stockvelText(source, ["description", "purpose", "summary", "about"]),
+    role: stockvelText(source, ["role", "myRole", "my_role", "memberRole", "member_role"]),
+    status: stockvelText(source, ["status", "state"]),
+    cadence: stockvelText(source, ["cadence", "frequency", "contributionFrequency", "contribution_frequency", "schedule"]),
+    contributionDay: stockvelText(source, ["contributionDay", "contribution_day", "dayOfMonth", "day_of_month", "dueDay", "due_day"]),
+    contributionAmount: stockvelNumber(source, ["contributionAmount", "contribution_amount", "amount", "perMemberAmount", "per_member_amount"]),
+    balance: stockvelNumber(source, ["balance", "currentBalance", "current_balance", "groupBalance", "group_balance", "availableBalance", "available_balance"]),
+    goalAmount: stockvelNumber(source, ["goalAmount", "goal_amount", "savingsGoal", "savings_goal", "target", "targetAmount", "target_amount"]),
+    totalContributed: stockvelNumber(source, ["totalContributed", "total_contributed", "contributedTotal", "contributed_total"]),
+    myContribution: stockvelNumber(source, ["myContribution", "my_contribution", "yourContribution", "your_contribution", "memberContribution", "member_contribution"]),
+    memberCount: stockvelNumber(source, ["memberCount", "member_count", "members_total", "totalMembers", "total_members"]) ?? (members.length || null),
+    memberLimit: stockvelNumber(source, ["memberLimit", "member_limit", "maxMembers", "max_members", "capacity"]),
+    membersPaid: stockvelNumber(source, ["membersPaid", "members_paid", "paidCount", "paid_count"]),
+    membersOutstanding: stockvelNumber(source, ["membersOutstanding", "members_outstanding", "outstandingCount", "outstanding_count", "unpaidCount", "unpaid_count"]),
+    nextContributionAt: stockvelText(source, ["nextContributionAt", "next_contribution_at", "nextContributionDate", "next_contribution_date", "nextDueAt", "next_due_at"]),
+    nextContributionAmount: stockvelNumber(source, ["nextContributionAmount", "next_contribution_amount", "nextAmount", "next_amount"]),
+    myStatus: stockvelText(source, ["myStatus", "my_status", "yourStatus", "your_status", "contributionStatus", "contribution_status"]),
+    myStreak: stockvelNumber(source, ["myStreak", "my_streak", "streak", "contributionStreak", "contribution_streak"]),
+    myOutstanding: stockvelNumber(source, ["myOutstanding", "my_outstanding", "yourOutstanding", "your_outstanding", "myOutstandingAmount", "my_outstanding_amount"]),
+    outstandingTotal: stockvelNumber(source, ["outstandingTotal", "outstanding_total", "totalOutstanding", "total_outstanding", "arrearsTotal", "arrears_total"]),
+    canManage: source.canManage === true || source.can_manage === true,
+    inviteCode: stockvelText(source, ["inviteCode", "invite_code", "joinCode", "join_code"]),
+    inviteUrl: stockvelText(source, ["inviteUrl", "invite_url", "joinUrl", "join_url", "shareUrl", "share_url"]),
+    startedAt: stockvelText(source, ["startDate", "start_date", "startedAt", "started_at", "createdAt", "created_at"]),
+    members,
+    contributions: stockvelList(source, ["contributions", "contributionHistory", "contribution_history", "schedule", "cycles"]).map(normalizeStockvelContribution).filter(Boolean),
+    activity: stockvelList(source, ["activity", "events", "timeline", "history"]).map(normalizeStockvelActivity).filter(Boolean),
+    withdrawals: stockvelList(source, ["withdrawals", "withdrawalRequests", "withdrawal_requests", "payouts"]).map(normalizeStockvelWithdrawal).filter(Boolean)
+  };
+}
+
+// Loads the caller's savings groups. A 404/501 means TitoPay has not shipped
+// group management yet; that is reported as "not provisioned" rather than as an
+// error, and is cached so the hub does not re-ask on every open.
+async function loadStockvelGroups({ force = false } = {}) {
+  const store = state.stockvel;
+  if (!force && store.status === "ready") return store;
+  store.status = "loading";
+  store.error = "";
+  try {
+    const payload = await api(STOCKVEL_PATH);
+    const groups = stockvelList(payload, ["items", "stockvels", "groups", "data"]).map(normalizeStockvelGroup).filter(Boolean);
+    store.groups = groups;
+    store.status = groups.length ? "ready" : "empty";
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    store.groups = [];
+    if (status === 404 || status === 501) {
+      store.status = "not-provisioned";
+    } else if (status === 0) {
+      store.status = "offline";
+    } else {
+      store.status = "error";
+      store.error = friendlyFormError(error, "stockvel");
+    }
+  }
+  return store;
+}
+
+// Group detail is requested separately so the hub stays fast. When the endpoint
+// is absent the dashboard falls back to the summary the list already provided
+// and says which sections need the API.
+async function loadStockvelDetail(id) {
+  const store = state.stockvel;
+  store.detailStatus = "loading";
+  store.detailError = "";
+  try {
+    const payload = await api(`${STOCKVEL_PATH}/${encodeURIComponent(id)}`);
+    const group = normalizeStockvelGroup(payload.stockvel || payload.group || payload.data || payload);
+    store.detail = group;
+    store.detailStatus = group ? "ready" : "empty";
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    store.detail = (store.groups || []).find((group) => group.id === id) || null;
+    store.detailStatus = status === 404 || status === 501 ? "not-provisioned" : status === 0 ? "offline" : "error";
+    if (store.detailStatus === "error") store.detailError = friendlyFormError(error, "stockvel");
+  }
+  return store;
+}
+
+// ---------------------------------------------------------------------------
+// Stockvel presentation
+// ---------------------------------------------------------------------------
+
+function stockvelAvatar(name, size = "") {
+  return `<span class="sv-avatar${size ? ` ${size}` : ""}" data-sv-hue="${stockvelHue(name)}" aria-hidden="true">${esc(stockvelInitials(name))}</span>`;
+}
+
+// Applies the values the markup could not carry inline. Called after every
+// Stockvel render; safe to run repeatedly.
+// The Content Security Policy is style-src 'self', so an inline style attribute
+// is refused outright. Any computed width has to be applied through the CSSOM.
+function paintProgressBars(root = document) {
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll("[data-ticket-progress]").forEach((el) => {
+    el.style.width = `${Math.max(0, Math.min(100, Number(el.dataset.ticketProgress) || 0))}%`;
+  });
+}
+
+function paintStockvel(root = document) {
+  paintProgressBars(root);
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll("[data-sv-hue]").forEach((el) => {
+    el.style.setProperty("--sv-hue", el.dataset.svHue);
+  });
+  root.querySelectorAll("[data-sv-width]").forEach((el) => {
+    el.style.width = `${Math.max(0, Math.min(100, Number(el.dataset.svWidth) || 0))}%`;
+  });
+}
+
+function stockvelDate(value, { withTime = false } = {}) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const day = date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" });
+  return withTime ? `${day} · ${date.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}` : day;
+}
+
+function stockvelRelativeDays(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const days = Math.round((date.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days === -1) return "Yesterday";
+  if (days > 1) return `In ${days} days`;
+  return `${Math.abs(days)} days ago`;
+}
+
+function stockvelStatusChip(status) {
+  const meta = stockvelStatusMeta(status);
+  if (!meta) return "";
+  return `<em class="sv-chip${meta.tone ? ` ${meta.tone}` : ""}">${esc(meta.label)}</em>`;
+}
+
+// Progress is only drawn when the group published both a goal and a figure to
+// measure against it. A bar with an invented denominator would misrepresent how
+// close the group is to its goal.
+function stockvelGoalProgress(group) {
+  const goal = group.goalAmount;
+  const saved = group.balance ?? group.totalContributed;
+  if (!goal || goal <= 0 || saved == null) return "";
+  const percent = Math.max(0, Math.min(100, Math.round((saved / goal) * 100)));
+  return `
+    <div class="sv-goal">
+      <div class="sv-goal-head">
+        <span>${esc(money(saved))} of ${esc(money(goal))}</span>
+        <strong>${percent}%</strong>
+      </div>
+      <div class="sv-progress" role="img" aria-label="Savings goal ${percent} percent reached, ${esc(money(saved))} of ${esc(money(goal))}">
+        <span data-sv-width="${percent}"></span>
+      </div>
+    </div>`;
+}
+
+function stockvelStat(label, value, hint) {
+  if (value == null || value === "") return "";
+  return `<div class="sv-stat"><strong>${esc(value)}</strong><span>${esc(label)}</span>${hint ? `<small>${esc(hint)}</small>` : ""}</div>`;
+}
+
+function stockvelUnavailablePanel(head, body, { retry = "" } = {}) {
+  return `
+    <div class="sv-notice" role="status">
+      <p class="sv-notice-head">${esc(head)}</p>
+      <p class="sv-notice-body">${esc(body)}</p>
+      ${retry ? `<button class="btn ghost sv-retry" type="button" data-stockvel-retry="${esc(retry)}">${icon("refresh")} Try again</button>` : ""}
+    </div>`;
+}
+
+function stockvelSkeletonCards(count = 2) {
+  return `<div class="sv-card-list" aria-hidden="true">${Array.from({ length: count }).map(() => `
+    <div class="sv-card is-loading">
+      <span class="skeleton skeleton-circle"></span>
+      <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
+    </div>`).join("")}</div>`;
+}
+
+// ---- Hub -------------------------------------------------------------------
 
 function openStockvelModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Stokvel</p><h2>Rotating contribution group</h2><p class="lead">Create and manage a revolving stokvel where members contribute on schedule and receive payouts by round.</p></div>
+      <div>
+        <p class="eyebrow">Stokvel</p>
+        <h2>Your savings groups</h2>
+        <p class="lead">A transparent digital savings group: agree an amount and a schedule, contribute together, and see exactly who has paid.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form stockvel-flow" data-form="transaction">
+    <section class="sv-hub" data-stockvel-hub aria-live="polite">${stockvelSkeletonCards()}</section>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="stockvel-create">${icon("stockvel")} Create a stokvel</button>
+      <button class="btn secondary" type="button" data-action="stockvel-join">${icon("contacts")} Join with a code</button>
+    </div>
+  `);
+  refreshStockvelHub();
+  paintStockvel(document.querySelector(".modal-card"));
+}
+
+async function refreshStockvelHub({ force = false } = {}) {
+  const host = document.querySelector("[data-stockvel-hub]");
+  if (!host) return;
+  host.innerHTML = stockvelSkeletonCards();
+  const [store] = await Promise.all([loadStockvelGroups({ force }), loadStockvelInvitations()]);
+  const current = document.querySelector("[data-stockvel-hub]");
+  if (!current) return;
+  current.innerHTML = `${renderStockvelInvitations(store)}${renderStockvelHub(store)}`;
+  paintStockvel(current);
+}
+
+function renderStockvelHub(store) {
+  if (store.status === "ready") {
+    return `<div class="sv-card-list">${store.groups.map((group) => stockvelGroupCard(group)).join("")}</div>`;
+  }
+  if (store.status === "empty") {
+    return `
+      <section class="sv-empty">
+        ${stockvelAvatar("Stokvel", "lg")}
+        <strong>No savings group yet</strong>
+        <p>Start one with the people you already save with. You agree the amount and the schedule; TitoPay keeps the record of who has contributed.</p>
+      </section>`;
+  }
+  if (store.status === "not-provisioned") {
+    return `
+      <section class="sv-empty">
+        ${stockvelAvatar("Stokvel", "lg")}
+        <strong>Group management is not live yet</strong>
+        <p>You can set up a stokvel now and TitoPay will record it. Shared dashboards, member lists and contribution tracking arrive once group management is switched on.</p>
+      </section>`;
+  }
+  if (store.status === "offline") {
+    return stockvelUnavailablePanel(
+      "Cannot reach TitoPay",
+      "Your savings groups could not be loaded. Check your connection and try again.",
+      { retry: "hub" }
+    );
+  }
+  return stockvelUnavailablePanel(
+    "Savings groups unavailable",
+    store.error || "TitoPay could not load your savings groups right now.",
+    { retry: "hub" }
+  );
+}
+
+function stockvelGroupCard(group) {
+  const meta = [
+    group.cadence,
+    group.contributionAmount != null ? `${money(group.contributionAmount)} each` : "",
+    group.memberCount != null ? `${group.memberCount}${group.memberLimit ? ` of ${group.memberLimit}` : ""} members` : ""
+  ].filter(Boolean).join(" · ");
+  return `
+    <button class="sv-card" type="button" data-stockvel-open="${esc(group.id)}" aria-label="Open ${esc(group.name)}">
+      ${stockvelAvatar(group.name)}
+      <div class="sv-card-body">
+        <strong>${esc(group.name)}</strong>
+        ${meta ? `<small>${esc(meta)}</small>` : ""}
+        ${stockvelGoalProgress(group)}
+      </div>
+      <span class="sv-card-aside">
+        ${group.balance != null ? `<span class="sv-card-amount">${esc(money(group.balance))}</span>` : ""}
+        ${stockvelStatusChip(group.myStatus)}
+      </span>
+    </button>`;
+}
+
+// ---- Create wizard ---------------------------------------------------------
+
+const STOCKVEL_STEPS = [
+  { key: "group", label: "Group", title: "What are you saving for?" },
+  { key: "schedule", label: "Amount", title: "How much and how often?" },
+  { key: "members", label: "Members", title: "Who is saving with you?" },
+  { key: "rules", label: "Rules", title: "How should the group run?" }
+];
+
+function stockvelStepIndicator(activeIndex) {
+  return `
+    <ol class="sv-steps" aria-label="Create stokvel progress">
+      ${STOCKVEL_STEPS.map((step, index) => `
+        <li class="sv-step${index === activeIndex ? " is-active" : index < activeIndex ? " is-done" : ""}"${index === activeIndex ? ' aria-current="step"' : ""}>
+          <span class="sv-step-dot">${index < activeIndex ? icon("check-circle") : String(index + 1)}</span>
+          <span class="sv-step-label">${esc(step.label)}</span>
+        </li>`).join("")}
+    </ol>`;
+}
+
+// The whole wizard is one form, with steps shown and hidden. Every value the
+// customer types therefore survives moving backwards and forwards, and the
+// existing single-submit transaction path is preserved unchanged.
+function openStockvelCreateWizard() {
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Stokvel</p>
+        <h2 data-stockvel-step-title>${esc(STOCKVEL_STEPS[0].title)}</h2>
+        <p class="lead">Set the group up once. You can review everything before anything is created.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${stockvelStepIndicator(0)}
+    <form class="form-grid stable-service-form stockvel-flow sv-form" data-form="transaction" data-stockvel-wizard>
       <input type="hidden" name="serviceCode" value="stockvel">
       <input type="hidden" name="stockvelType" value="Rotating contribution group">
-      <div class="field"><label>Stokvel name</label><input name="recipient" placeholder="e.g. Family Rotation, Business Round, School Fees Group" required></div>
-      <div class="field"><label>Group purpose</label><textarea name="description" placeholder="Describe the rotating contribution purpose and member rules"></textarea></div>
-      <div class="field"><label>Contribution cadence</label><select name="cadence"><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
-      <div class="field"><label>Contribution amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Start date</label><input name="startDate" type="date"></div>
-      <div class="field"><label>Next contribution date</label><input name="nextContributionDate" type="date"></div>
-      <div class="field"><label>Round length</label><select name="roundLength"><option>One payout per contribution cycle</option><option>Two payouts per month</option><option>Custom rotation agreed by group organisers</option></select></div>
-      <div class="field"><label>Maximum members</label><input name="memberLimit" inputmode="numeric" placeholder="e.g. 12"></div>
-      ${recipientAutoMethodField("memberMethod", "Member lookup method")}
-      <div class="field"><label>Members to invite</label><textarea name="members" placeholder="@username, cellphone or email per line" required></textarea></div>
-      <div class="field">
-        <label>Rotating payout order</label>
-        <textarea name="payoutOrder" placeholder="1. You&#10;2. @membername&#10;3. +27 cellphone or email"></textarea>
-        <small class="field-hint">The order determines who receives each round. Leave blank to use the member invite order.</small>
+
+      <fieldset class="sv-panel" data-stockvel-step="0">
+        <legend class="visually-hidden">Group details</legend>
+        <div class="field">
+          <label for="sv-name">Group name</label>
+          <input id="sv-name" name="recipient" placeholder="e.g. Family Rotation, School Fees Group" required>
+        </div>
+        <div class="field">
+          <label for="sv-description">What is the group for?</label>
+          <textarea id="sv-description" name="description" placeholder="Describe the purpose and the rules everyone agreed"></textarea>
+        </div>
+        <div class="field">
+          <label for="sv-goal">Savings goal <span class="sv-optional">optional</span></label>
+          <div class="input-affix currency-affix" data-prefix="R"><input id="sv-goal" name="stockvelSavingsGoal" inputmode="decimal"></div>
+          <p class="field-hint">A target the group is working towards. Leave blank if there is no fixed goal.</p>
+        </div>
+      </fieldset>
+
+      <fieldset class="sv-panel" data-stockvel-step="1" hidden>
+        <legend class="visually-hidden">Contribution schedule</legend>
+        <div class="field">
+          <label for="sv-amount">Contribution amount per member</label>
+          <div class="input-affix currency-affix" data-prefix="R"><input id="sv-amount" name="amount" inputmode="decimal" required></div>
+        </div>
+        <div class="field">
+          <label for="sv-cadence">How often</label>
+          <select id="sv-cadence" name="cadence">
+            <option>Weekly</option>
+            <option>Fortnightly</option>
+            <option selected>Monthly</option>
+            <option>Quarterly</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-day">Contribution day <span class="sv-optional">optional</span></label>
+          <input id="sv-day" name="stockvelContributionDay" placeholder="e.g. the 25th, or every Friday">
+        </div>
+        <div class="field">
+          <label for="sv-start">Start date</label>
+          <input id="sv-start" name="startDate" type="date">
+        </div>
+        <div class="field">
+          <label for="sv-next">First contribution due</label>
+          <input id="sv-next" name="nextContributionDate" type="date">
+        </div>
+        <div class="field">
+          <label for="sv-round">Payout rhythm</label>
+          <select id="sv-round" name="roundLength">
+            <option>One payout per contribution cycle</option>
+            <option>Two payouts per month</option>
+            <option>Custom rotation agreed by group organisers</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset class="sv-panel" data-stockvel-step="2" hidden>
+        <legend class="visually-hidden">Members</legend>
+        <div class="field">
+          <label for="sv-limit">Maximum members <span class="sv-optional">optional</span></label>
+          <input id="sv-limit" name="memberLimit" inputmode="numeric" placeholder="e.g. 12">
+        </div>
+        ${recipientAutoMethodField("memberMethod", "Member lookup method")}
+        <div class="field">
+          <label for="sv-members">Members to invite</label>
+          <textarea id="sv-members" name="members" placeholder="@username, cellphone or email — one per line" required></textarea>
+          <p class="field-hint">Each person is checked as a TitoPay user before the group is created.</p>
+        </div>
+        <div class="field">
+          <label for="sv-order">Payout order <span class="sv-optional">optional</span></label>
+          <textarea id="sv-order" name="payoutOrder" placeholder="1. You&#10;2. @membername&#10;3. +27 cellphone or email"></textarea>
+          <p class="field-hint">Determines who receives each round. Leave blank to use the invite order.</p>
+        </div>
+      </fieldset>
+
+      <fieldset class="sv-panel" data-stockvel-step="3" hidden>
+        <legend class="visually-hidden">Group rules</legend>
+        <div class="field">
+          <label for="sv-tracking">Contribution tracking</label>
+          <select id="sv-tracking" name="tracking">
+            <option>Track paid, pending and missed contributions</option>
+            <option>Track paid contributions only</option>
+            <option>Manual organiser confirmation</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-reminders">Reminders</label>
+          <select id="sv-reminders" name="reminders">
+            <option>3 days before and on due date</option>
+            <option>1 day before and on due date</option>
+            <option>On due date only</option>
+            <option>Manual reminders only</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-controls">Who can change the group</label>
+          <select id="sv-controls" name="groupControls">
+            <option>Organiser approval required for member changes</option>
+            <option>All members can invite</option>
+            <option>Creator controls payout order</option>
+          </select>
+        </div>
+        <section class="sv-summary" data-stockvel-summary aria-label="Summary"></section>
+        <section class="integration-note" aria-label="How this group works">
+          <p>${icon("shield")} <span><strong>Transparent by design:</strong> every member sees the same contribution record.</span></p>
+          <p>${icon("wallet")} <span><strong>No returns or interest:</strong> a stokvel holds what the group contributes, nothing more.</span></p>
+        </section>
+      </fieldset>
+
+      <div class="sv-actions">
+        <button class="btn ghost" type="button" data-stockvel-back hidden>${icon("arrow-left")} Back</button>
+        <button class="btn primary" type="button" data-stockvel-next>Continue</button>
+        <button class="btn primary" type="submit" data-stockvel-submit hidden>${icon("stockvel")} Review and create</button>
       </div>
-      <section class="payout-order-card stockvel-rotation-card" aria-label="Rotating stockvel controls">
-        <div><strong>1</strong><span>Members contribute the same amount for each cycle.</span></div>
-        <div><strong>2</strong><span>The scheduled member receives the round payout.</span></div>
-        <div><strong>3</strong><span>The payout order rotates until every member has received.</span></div>
-      </section>
-      <div class="field"><label>Contribution tracking</label><select name="tracking"><option>Track paid, pending and missed contributions</option><option>Track paid contributions only</option><option>Manual organiser confirmation</option></select></div>
-      <div class="field"><label>Reminder schedule</label><select name="reminders"><option>3 days before and on due date</option><option>1 day before and on due date</option><option>On due date only</option><option>Manual reminders only</option></select></div>
-      <div class="field"><label>Group controls</label><select name="groupControls"><option>Organiser approval required for member changes</option><option>All members can invite</option><option>Creator controls payout order</option></select></div>
-      <button class="btn primary" type="submit">${icon("stockvel")} Create stokvel</button>
     </form>
-    <section class="panel compact-panel">
-      <p class="eyebrow">Round dashboard</p>
-      <div class="stats-grid">
-        <div class="stat"><strong>0</strong><span>Contributions paid</span></div>
-        <div class="stat"><strong>0</strong><span>Pending this round</span></div>
-        <div class="stat"><strong>Ready</strong><span>Payout schedule</span></div>
-      </div>
-    </section>
-    <section class="panel compact-panel">
-      <p class="eyebrow">Group management</p>
-      <div class="payout-order-card">
-        <div><strong>${icon("contacts")}</strong><span>Add, remove and verify members before the first round starts.</span></div>
-        <div><strong>${icon("list")}</strong><span>Review contribution dates, payout recipient and round status.</span></div>
-        <div><strong>${icon("send")}</strong><span>Send reminders for upcoming and missed contributions.</span></div>
-      </div>
-    </section>
-    <div class="auth-actions">
-      <button class="btn secondary" data-action="export-csv">${icon("download")} Contribution CSV</button>
-      <button class="btn secondary" data-action="export-pdf">${icon("download")} Stokvel statement</button>
+  `);
+  state.stockvel.step = 0;
+  applyStockvelStep();
+}
+
+function applyStockvelStep() {
+  const form = document.querySelector("[data-stockvel-wizard]");
+  if (!form) return;
+  const step = Math.max(0, Math.min(STOCKVEL_STEPS.length - 1, Number(state.stockvel.step) || 0));
+  state.stockvel.step = step;
+  form.querySelectorAll("[data-stockvel-step]").forEach((panel) => {
+    panel.hidden = Number(panel.dataset.stockvelStep) !== step;
+  });
+  const indicator = document.querySelector(".sv-steps");
+  if (indicator) indicator.outerHTML = stockvelStepIndicator(step);
+  const title = document.querySelector("[data-stockvel-step-title]");
+  if (title) title.textContent = STOCKVEL_STEPS[step].title;
+  const back = form.querySelector("[data-stockvel-back]");
+  const next = form.querySelector("[data-stockvel-next]");
+  const submit = form.querySelector("[data-stockvel-submit]");
+  const last = step === STOCKVEL_STEPS.length - 1;
+  if (back) back.hidden = step === 0;
+  if (next) next.hidden = last;
+  if (submit) submit.hidden = !last;
+  if (last) renderStockvelSummary(form);
+  const heading = form.querySelector(`[data-stockvel-step="${step}"] input, [data-stockvel-step="${step}"] select, [data-stockvel-step="${step}"] textarea`);
+  if (heading) heading.focus({ preventScroll: true });
+  const card = form.closest(".modal-card");
+  if (card) card.scrollTop = 0;
+}
+
+// Only advances when the fields on the visible step are valid, so a customer is
+// never told about a problem three steps later.
+function advanceStockvelStep(direction) {
+  const form = document.querySelector("[data-stockvel-wizard]");
+  if (!form) return;
+  if (direction > 0) {
+    const panel = form.querySelector(`[data-stockvel-step="${state.stockvel.step}"]`);
+    const invalid = panel ? Array.from(panel.querySelectorAll("input, select, textarea")).find((field) => !field.disabled && !field.checkValidity()) : null;
+    if (invalid) {
+      invalid.reportValidity();
+      return;
+    }
+  }
+  state.stockvel.step = (Number(state.stockvel.step) || 0) + direction;
+  applyStockvelStep();
+}
+
+function renderStockvelSummary(form) {
+  const host = form.querySelector("[data-stockvel-summary]");
+  if (!host) return;
+  const read = (name) => String(form.querySelector(`[name="${name}"]`)?.value || "").trim();
+  const amount = Number(read("amount"));
+  const goal = Number(read("stockvelSavingsGoal"));
+  const memberCount = read("members").split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean).length;
+  const rows = [
+    ["Group", read("recipient")],
+    ["Savings goal", Number.isFinite(goal) && goal > 0 ? money(goal) : ""],
+    ["Contribution", Number.isFinite(amount) && amount > 0 ? `${money(amount)} ${read("cadence").toLowerCase()}` : ""],
+    ["Contribution day", read("stockvelContributionDay")],
+    ["First contribution", read("nextContributionDate") ? stockvelDate(read("nextContributionDate")) : ""],
+    ["Members invited", memberCount ? String(memberCount) : ""],
+    ["Maximum members", read("memberLimit")]
+  ].filter(([, value]) => value);
+  host.innerHTML = rows.length
+    ? `<p class="sv-section-label">Check this over</p><div class="activity-list">${rows.map(([label, value]) => settingsRow(label, value, "list")).join("")}</div>`
+    : "";
+}
+
+// ---- Join with a code ------------------------------------------------------
+
+function openStockvelJoinModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Stokvel</p><h2>Join a savings group</h2><p class="lead">Enter the invite code the group organiser shared with you.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="empty-state compact-state">${icon("chat")}<strong>Stokvel group chat</strong><p>Message members about contributions, payout order and reminders.</p><button class="btn secondary" type="button" data-action="open-stockvel-chat">${icon("chat")} Open group chat</button></section>
+    <form class="form-grid" data-form="stockvel-join">
+      <div class="field">
+        <label for="sv-join-code">Invite code</label>
+        <input id="sv-join-code" name="inviteCode" autocomplete="off" placeholder="e.g. TP-STK-4471" required>
+      </div>
+      <button class="btn primary" type="submit">${icon("stockvel")} Join group</button>
+    </form>
+    <section class="integration-note" aria-label="About joining">
+      <p>${icon("shield")} <span><strong>Nothing is charged to join.</strong> You agree to contributions only once you are in the group.</span></p>
+    </section>
+  `);
+}
+
+async function submitStockvelJoin(data) {
+  const code = String(data.inviteCode || "").trim();
+  if (!code) throw new Error("Enter the invite code the organiser shared with you.");
+  try {
+    const result = await api(`${STOCKVEL_PATH}/join`, { method: "POST", body: { inviteCode: code } });
+    const group = normalizeStockvelGroup(result.stockvel || result.group || result);
+    showToast(group ? `You have joined ${group.name}.` : "You have joined the group.");
+    state.stockvel.status = "idle";
+    if (group && group.id) openStockvelDashboard(group.id);
+    else openStockvelModal();
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Joining by invite code is not available yet. Ask the organiser to add you to the group directly.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-join"));
+  }
+}
+
+// ---- Group dashboard -------------------------------------------------------
+
+const STOCKVEL_SECTIONS = [
+  { key: "overview", label: "Overview" },
+  { key: "members", label: "Members" },
+  { key: "contributions", label: "Contributions" },
+  { key: "activity", label: "Activity" },
+  { key: "withdrawals", label: "Withdrawals" },
+  { key: "settings", label: "Settings" }
+];
+
+const STOCKVEL_ACTIVITY_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "contribution", label: "Contributions", match: /contribut|payment|paid/ },
+  { key: "member", label: "Members", match: /member|join|leave|promote|demote|remove/ },
+  { key: "withdrawal", label: "Withdrawals", match: /withdraw|payout/ },
+  { key: "vote", label: "Votes", match: /vote|approval|approve/ },
+  { key: "announcement", label: "Notices", match: /announce|notice|message|admin/ }
+];
+
+function openStockvelDashboard(id) {
+  state.stockvel.activeId = id;
+  state.stockvel.section = "overview";
+  state.stockvel.search = "";
+  state.stockvel.activityFilter = "all";
+  const summary = (state.stockvel.groups || []).find((group) => group.id === id) || null;
+  openModal(`
+    <div class="modal-head sv-dash-head">
+      <div class="sv-dash-title">
+        ${stockvelAvatar(summary ? summary.name : "Stokvel", "lg")}
+        <div>
+          <p class="eyebrow">Stokvel</p>
+          <h2>${esc(summary ? summary.name : "Savings group")}</h2>
+          ${summary && summary.description ? `<p class="lead">${esc(summary.description)}</p>` : ""}
+        </div>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <nav class="sv-tabs" aria-label="Group sections">
+      ${STOCKVEL_SECTIONS.map((section) => `
+        <button class="sv-tab${section.key === "overview" ? " is-active" : ""}" type="button" data-stockvel-section="${section.key}" aria-pressed="${section.key === "overview" ? "true" : "false"}">${esc(section.label)}</button>`).join("")}
+    </nav>
+    <section class="sv-section" data-stockvel-body aria-live="polite">${stockvelSkeletonCards(3)}</section>
+  `);
+  refreshStockvelDashboard(id);
+  paintStockvel(document.querySelector(".modal-card"));
+}
+
+async function refreshStockvelDashboard(id) {
+  await loadStockvelDetail(id);
+  renderStockvelSection();
+}
+
+function activeStockvelGroup() {
+  return state.stockvel.detail || (state.stockvel.groups || []).find((group) => group.id === state.stockvel.activeId) || null;
+}
+
+function renderStockvelSection() {
+  const host = document.querySelector("[data-stockvel-body]");
+  if (!host) return;
+  const store = state.stockvel;
+  const group = activeStockvelGroup();
+  document.querySelectorAll("[data-stockvel-section]").forEach((tab) => {
+    const active = tab.dataset.stockvelSection === store.section;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  if (store.detailStatus === "loading") {
+    host.innerHTML = stockvelSkeletonCards(3);
+    return;
+  }
+  if (!group) {
+    host.innerHTML = stockvelUnavailablePanel(
+      store.detailStatus === "offline" ? "Cannot reach TitoPay" : "Group unavailable",
+      store.detailError || "This savings group could not be loaded.",
+      { retry: "detail" }
+    );
+    return;
+  }
+  const renderers = {
+    overview: renderStockvelOverview,
+    members: renderStockvelMembers,
+    contributions: renderStockvelContributions,
+    activity: renderStockvelActivity,
+    withdrawals: renderStockvelWithdrawals,
+    settings: renderStockvelSettings
+  };
+  host.innerHTML = (renderers[store.section] || renderStockvelOverview)(group, store);
+  paintStockvel(host);
+}
+
+// A section that needs group state the API has not shipped says so plainly,
+// rather than showing an empty table that looks like a group with no history.
+function stockvelSectionUnavailable(store, what) {
+  if (store.detailStatus === "not-provisioned") {
+    return stockvelUnavailablePanel(
+      `${what} not available yet`,
+      `TitoPay does not publish ${what.toLowerCase()} for a savings group yet. This section fills in automatically once group management is switched on.`
+    );
+  }
+  if (store.detailStatus === "offline") {
+    return stockvelUnavailablePanel("Cannot reach TitoPay", `${what} could not be loaded. Check your connection and try again.`, { retry: "detail" });
+  }
+  return stockvelUnavailablePanel(`${what} unavailable`, store.detailError || `TitoPay could not load ${what.toLowerCase()} right now.`, { retry: "detail" });
+}
+
+function renderStockvelOverview(group, store) {
+  const stats = [
+    stockvelStat("Group balance", group.balance != null ? money(group.balance) : null),
+    stockvelStat("Total contributed", group.totalContributed != null ? money(group.totalContributed) : null),
+    stockvelStat("Your contribution", group.myContribution != null ? money(group.myContribution) : null),
+    stockvelStat("Members", group.memberCount != null ? `${group.memberCount}${group.memberLimit ? ` / ${group.memberLimit}` : ""}` : null),
+    stockvelStat("Paid this cycle", group.membersPaid != null ? String(group.membersPaid) : null),
+    stockvelStat("Outstanding", group.membersOutstanding != null ? String(group.membersOutstanding) : null),
+    stockvelStat("Your streak", group.myStreak != null ? `${group.myStreak} in a row` : null),
+    stockvelStat("Outstanding balance", group.outstandingTotal != null ? money(group.outstandingTotal) : null),
+    stockvelStat("You owe", group.myOutstanding != null && group.myOutstanding > 0 ? money(group.myOutstanding) : null)
+  ].filter(Boolean).join("");
+
+  const nextDue = group.nextContributionAt || group.nextContributionAmount != null ? `
+    <section class="sv-next" aria-label="Next contribution">
+      <div>
+        <p class="sv-section-label">Next contribution</p>
+        <strong>${esc(group.nextContributionAmount != null ? money(group.nextContributionAmount) : group.contributionAmount != null ? money(group.contributionAmount) : "Amount to confirm")}</strong>
+        ${group.nextContributionAt ? `<small>${esc(stockvelDate(group.nextContributionAt))}${stockvelRelativeDays(group.nextContributionAt) ? ` · ${esc(stockvelRelativeDays(group.nextContributionAt))}` : ""}</small>` : ""}
+      </div>
+      ${stockvelStatusChip(group.myStatus)}
+    </section>` : "";
+
+  const recent = group.activity.slice(0, 4);
+  return `
+    ${stockvelGoalProgress(group) ? `<section class="sv-goal-card" aria-label="Savings goal">${stockvelGoalProgress(group)}</section>` : ""}
+    ${stats ? `<div class="sv-stat-grid">${stats}</div>` : ""}
+    ${nextDue}
+    ${stockvelContributionCalendar(group)}
+    ${recent.length ? `
+      <section aria-label="Recent activity">
+        <p class="sv-section-label">Recent activity</p>
+        <div class="activity-list">${recent.map((item) => stockvelActivityRow(item)).join("")}</div>
+        <button class="btn ghost sv-more" type="button" data-stockvel-section="activity">View all activity</button>
+      </section>` : ""}
+    ${!stats && !nextDue && !recent.length ? stockvelSectionUnavailable(store, "Group figures") : ""}
+    <div class="tx-detail-actions">
+      ${group.myOutstanding != null && group.myOutstanding > 0 ? `<button class="btn primary" type="button" data-stockvel-contribute="${esc(group.id)}">${icon("wallet")} Contribute ${esc(money(group.myOutstanding))}</button>` : ""}
+      <button class="btn secondary" type="button" data-stockvel-add-members="${esc(group.id)}">${icon("send")} Invite members</button>
+      <button class="btn secondary" type="button" data-stockvel-withdraw="${esc(group.id)}">${icon("withdraw")} Request withdrawal</button>
+      <button class="btn secondary" type="button" data-action="open-stockvel-chat">${icon("chat")} Group chat</button>
+      <button class="btn secondary" type="button" data-stockvel-statement="${esc(group.id)}">${icon("statement")} Statement</button>
+    </div>`;
+}
+
+// A cycle strip built only from contributions the API returned. No cycle is
+// projected forward, because a projected date the group has not agreed is a
+// guess presented as a fact.
+function stockvelContributionCalendar(group) {
+  const cycles = group.contributions.filter((item) => item.dueDate).slice(0, 8);
+  if (!cycles.length) return "";
+  return `
+    <section aria-label="Contribution schedule">
+      <p class="sv-section-label">Contribution schedule</p>
+      <div class="sv-calendar">
+        ${cycles.map((cycle) => {
+          const meta = stockvelStatusMeta(cycle.status);
+          const date = cycle.dueDate ? new Date(cycle.dueDate) : null;
+          const valid = date && !Number.isNaN(date.getTime());
+          return `<div class="sv-cycle${meta && meta.tone ? ` ${meta.tone}` : ""}">
+            <span class="sv-cycle-month">${esc(valid ? date.toLocaleDateString("en-ZA", { month: "short" }) : cycle.cycle || "Cycle")}</span>
+            <strong>${esc(valid ? String(date.getDate()) : "-")}</strong>
+            ${meta ? `<small>${esc(meta.label)}</small>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+    </section>`;
+}
+
+function stockvelActivityRow(item) {
+  const iconName = /contribut|paid|payment/.test(item.kind) ? "wallet"
+    : /withdraw|payout/.test(item.kind) ? "withdraw"
+      : /member|join|leave/.test(item.kind) ? "contacts"
+        : /vote|approv/.test(item.kind) ? "check-circle"
+          : /announce|notice|message/.test(item.kind) ? "chat" : "list";
+  const detail = [item.actor, item.amount != null ? money(item.amount) : "", item.at ? stockvelDate(item.at, { withTime: true }) : ""].filter(Boolean).join(" · ");
+  return `<article class="activity-item">
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <div><p><strong>${esc(item.title)}</strong></p><small>${esc(detail || item.detail || "")}</small></div>
+  </article>`;
+}
+
+function stockvelSearchField(placeholder, value) {
+  return `<div class="sv-search">
+    <label class="visually-hidden" for="sv-search">${esc(placeholder)}</label>
+    <input id="sv-search" class="vas-search-input" type="search" autocomplete="off" data-stockvel-search placeholder="${esc(placeholder)}" value="${esc(value || "")}">
+  </div>`;
+}
+
+function stockvelMatchesSearch(needle, ...values) {
+  if (!needle) return true;
+  const query = needle.toLowerCase();
+  return values.filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+}
+
+function renderStockvelMembers(group, store) {
+  if (!group.members.length) return stockvelSectionUnavailable(store, "Member list");
+  const needle = store.search || "";
+  const members = group.members.filter((member) => stockvelMatchesSearch(needle, member.name, member.username, member.contact, member.role));
+  const isOrganiser = /organiser|organizer|admin|owner|creator/i.test(group.role || "");
+  return `
+    ${stockvelSearchField("Search members", needle)}
+    ${members.length ? `<div class="sv-card-list">${members.map((member) => `
+      <article class="sv-member">
+        ${member.photo ? `<img class="sv-avatar" src="${esc(member.photo)}" alt="">` : stockvelAvatar(member.name)}
+        <div class="sv-member-body">
+          <strong>${esc(member.name)}${member.verified ? `<span class="sv-verified" title="Verified TitoPay user">${icon("shield")}<span class="visually-hidden">Verified</span></span>` : ""}</strong>
+          <small>${esc([member.username ? displayUsername(member.username) : "", member.role].filter(Boolean).join(" · "))}</small>
+          ${member.joinedAt ? `<small>Joined ${esc(stockvelDate(member.joinedAt))}</small>` : ""}
+          ${member.lastContributionAt ? `<small>Last contribution ${esc(stockvelDate(member.lastContributionAt))}${member.lastContributionAmount != null ? ` · ${esc(money(member.lastContributionAmount))}` : ""}</small>` : ""}
+          ${member.lastActivityAt ? `<small>Last active ${esc(stockvelDate(member.lastActivityAt))}</small>` : ""}
+          ${member.outstandingAmount != null && member.outstandingAmount > 0 ? `<small class="sv-owed">Outstanding ${esc(money(member.outstandingAmount))}</small>` : ""}
+        </div>
+        <span class="sv-member-aside">
+          ${stockvelStatusChip(member.status)}
+          ${isOrganiser ? `<button class="icon-btn" type="button" data-stockvel-member-menu="${esc(member.id)}" aria-label="Manage ${esc(member.name)}">${icon("more-horizontal")}</button>` : ""}
+        </span>
+      </article>`).join("")}</div>` : `<section class="sv-empty compact"><strong>No match</strong><p>No member matches "${esc(needle)}".</p></section>`}
+    <div class="tx-detail-actions">
+      <button class="btn secondary" type="button" data-stockvel-add-members="${esc(group.id)}">${icon("send")} Invite members</button>
+      <button class="btn ghost" type="button" data-stockvel-leave="${esc(group.id)}">Leave group</button>
+    </div>`;
+}
+
+function renderStockvelContributions(group, store) {
+  const needle = store.search || "";
+  const rows = group.contributions.filter((item) => stockvelMatchesSearch(needle, item.memberName, item.reference, item.cycle, item.status));
+  const paid = group.contributions.filter((item) => /paid|settled|complete/i.test(item.status || "")).length;
+  const missed = group.contributions.filter((item) => /missed|late|failed/i.test(item.status || "")).length;
+  const outstanding = group.contributions.filter((item) => /outstanding|pending|due/i.test(item.status || "")).length;
+  const stats = [
+    stockvelStat("Amount due", group.contributionAmount != null ? money(group.contributionAmount) : null),
+    stockvelStat("Paid", paid ? String(paid) : null),
+    stockvelStat("Outstanding", outstanding ? String(outstanding) : null),
+    stockvelStat("Missed", missed ? String(missed) : null),
+    stockvelStat("Your streak", group.myStreak != null ? `${group.myStreak} in a row` : null),
+    stockvelStat("Lifetime", group.myContribution != null ? money(group.myContribution) : null)
+  ].filter(Boolean).join("");
+  const owed = group.myOutstanding;
+  return `
+    ${stats ? `<div class="sv-stat-grid">${stats}</div>` : ""}
+    ${owed != null && owed > 0 ? `
+      <section class="sv-next" aria-label="Your outstanding balance">
+        <div><p class="sv-section-label">You still owe</p><strong>${esc(money(owed))}</strong></div>
+        <em class="sv-chip warn">Outstanding</em>
+      </section>` : ""}
+    ${group.contributions.length ? stockvelSearchField("Search contributions", needle) : ""}
+    ${!group.contributions.length ? stockvelSectionUnavailable(store, "Contribution history")
+      : rows.length ? `<div class="activity-list">${rows.map((item) => `
+      <article class="activity-item">
+        <span class="icon-bubble">${icon("wallet")}</span>
+        <div>
+          <p><strong>${esc(item.memberName || item.cycle || "Contribution")}</strong>${stockvelStatusChip(item.status)}</p>
+          <small>${esc([item.amount != null ? money(item.amount) : "", item.dueDate ? `Due ${stockvelDate(item.dueDate)}` : "", item.paidAt ? `Paid ${stockvelDate(item.paidAt)}` : "", item.reference].filter(Boolean).join(" · "))}</small>
+        </div>
+      </article>`).join("")}</div>` : `<section class="sv-empty compact"><strong>No match</strong><p>No contribution matches "${esc(needle)}".</p></section>`}
+    <div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-stockvel-contribute="${esc(group.id)}">${icon("wallet")} Make my contribution</button>
+    </div>`;
+}
+
+function renderStockvelActivity(group, store) {
+  if (!group.activity.length) return stockvelSectionUnavailable(store, "Activity timeline");
+  const filter = STOCKVEL_ACTIVITY_FILTERS.find((item) => item.key === (store.activityFilter || "all")) || STOCKVEL_ACTIVITY_FILTERS[0];
+  const needle = store.search || "";
+  const items = group.activity
+    .filter((item) => !filter.match || filter.match.test(`${item.kind} ${item.title}`))
+    .filter((item) => stockvelMatchesSearch(needle, item.title, item.detail, item.actor));
+  return `
+    <div class="sv-filter-row" role="group" aria-label="Filter activity">
+      ${STOCKVEL_ACTIVITY_FILTERS.map((item) => `
+        <button class="chip${item.key === filter.key ? " is-active" : ""}" type="button" data-stockvel-activity-filter="${item.key}" aria-pressed="${item.key === filter.key ? "true" : "false"}">${esc(item.label)}</button>`).join("")}
+    </div>
+    ${stockvelSearchField("Search activity", needle)}
+    ${items.length ? `<div class="activity-list sv-timeline">${items.map((item) => stockvelActivityRow(item)).join("")}</div>`
+      : `<section class="sv-empty compact"><strong>Nothing here</strong><p>No activity matches this filter.</p></section>`}`;
+}
+
+function renderStockvelWithdrawals(group, store) {
+  const requestAction = `<div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-stockvel-withdraw="${esc(group.id)}">${icon("withdraw")} Request a withdrawal</button>
+    </div>`;
+  if (!group.withdrawals.length) return `${stockvelSectionUnavailable(store, "Withdrawal requests")}${requestAction}`;
+  return `
+    <div class="sv-card-list">${group.withdrawals.map((item) => {
+      const has = item.approvals != null && item.approvalsRequired != null && item.approvalsRequired > 0;
+      const percent = has ? Math.min(100, Math.round((item.approvals / item.approvalsRequired) * 100)) : 0;
+      const remaining = has ? Math.max(0, item.approvalsRequired - item.approvals) : null;
+      return `<article class="sv-withdrawal">
+        <div class="sv-withdrawal-head">
+          <strong>${esc(item.amount != null ? money(item.amount) : "Amount to confirm")}</strong>
+          ${stockvelStatusChip(item.status)}
+        </div>
+        ${item.requestedBy ? `<small>Requested by ${esc(item.requestedBy)}${item.requestedAt ? ` · ${esc(stockvelDate(item.requestedAt))}` : ""}</small>` : ""}
+        ${item.reason ? `<p class="sv-withdrawal-reason">${esc(item.reason)}</p>` : ""}
+        ${has ? `
+          <div class="sv-goal">
+            <div class="sv-goal-head"><span>${item.approvals} of ${item.approvalsRequired} approvals</span><strong>${remaining === 0 ? "Complete" : `${remaining} to go`}</strong></div>
+            <div class="sv-progress" role="img" aria-label="${item.approvals} of ${item.approvalsRequired} approvals received"><span data-sv-width="${percent}"></span></div>
+          </div>` : ""}
+        ${item.approvedBy.length ? `<small>Approved by ${esc(item.approvedBy.join(", "))}</small>` : ""}
+        ${/pending|awaiting|open|voting/i.test(item.status || "") && item.id ? `
+          <div class="sv-vote">
+            <button class="btn primary" type="button" data-stockvel-withdrawal-approve="${esc(item.id)}">${icon("check-circle")} Approve</button>
+            <button class="btn ghost" type="button" data-stockvel-withdrawal-decline="${esc(item.id)}">Decline</button>
+          </div>` : ""}
+      </article>`;
+    }).join("")}</div>
+    ${requestAction}`;
+}
+
+function renderStockvelSettings(group, store) {
+  const sections = [
+    ["General", [
+      ["Group name", group.name],
+      ["Purpose", group.description],
+      ["Started", group.startedAt ? stockvelDate(group.startedAt) : ""],
+      ["Your role", group.role]
+    ]],
+    ["Members", [
+      ["Members", group.memberCount != null ? String(group.memberCount) : ""],
+      ["Maximum members", group.memberLimit != null ? String(group.memberLimit) : ""],
+      ["Invite code", group.inviteCode]
+    ]],
+    ["Contributions", [
+      ["Amount per member", group.contributionAmount != null ? money(group.contributionAmount) : ""],
+      ["Frequency", group.cadence],
+      ["Contribution day", group.contributionDay],
+      ["Savings goal", group.goalAmount != null ? money(group.goalAmount) : ""]
+    ]]
+  ];
+  const rendered = sections.map(([title, rows]) => {
+    const visible = rows.filter(([, value]) => value);
+    if (!visible.length) return "";
+    return `<section aria-label="${esc(title)}">
+      <p class="sv-section-label">${esc(title)}</p>
+      <div class="activity-list">${visible.map(([label, value]) => settingsRow(label, value, "list")).join("")}</div>
+    </section>`;
+  }).filter(Boolean).join("");
+  return `
+    ${rendered || stockvelSectionUnavailable(store, "Group settings")}
+    <section aria-label="Notifications">
+      <p class="sv-section-label">Notifications</p>
+      <div class="activity-list">
+        ${settingsRow("Contribution due", "A reminder before each contribution date", "bell")}
+        ${settingsRow("Contribution missed", "Told when a contribution is not received", "bell")}
+        ${settingsRow("Goal reached", "Told when the group reaches its savings goal", "sparkles")}
+        ${settingsRow("Member joined", "Told when someone joins the group", "contacts")}
+        ${settingsRow("Vote required", "Told when the group needs your approval", "check-circle")}
+        ${settingsRow("Withdrawal approved", "Told when a withdrawal is approved", "withdraw")}
+        ${settingsRow("Announcements", "Notices from the group organiser", "chat")}
+      </div>
+      <p class="field-hint">Notification preferences are set per group once group management is live. TitoPay does not switch these off today.</p>
+    </section>
+    <section aria-label="Security">
+      <p class="sv-section-label">Security</p>
+      <section class="integration-note">
+        <p>${icon("shield")} <span><strong>Every member sees the same record.</strong> Contributions and withdrawals are visible to the whole group.</span></p>
+        <p>${icon("lock")} <span><strong>Withdrawals need group approval</strong> before any money leaves the group.</span></p>
+      </section>
+    </section>
+    <section class="sv-danger" aria-label="Danger zone">
+      <p class="sv-section-label sv-danger-label">Danger zone</p>
+      <p class="field-hint">Leaving a group does not return contributions already made. Settle anything outstanding with the organiser first.</p>
+      <button class="btn ghost sv-danger-btn" type="button" data-stockvel-leave="${esc(group.id)}">Leave this group</button>
+      ${/organiser|organizer|admin|owner|creator/i.test(group.role || "") || group.canManage ? `
+        <p class="field-hint">Closing ends the group for every member. Only do this once the balance is settled.</p>
+        <button class="btn ghost sv-danger-btn" type="button" data-stockvel-close="${esc(group.id)}">Close this group</button>` : ""}
+    </section>`;
+}
+
+// ---- Statement -------------------------------------------------------------
+
+function openStockvelStatementModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) {
+    showToast("Open the group before requesting a statement.", "error");
+    return;
+  }
+  const rows = [
+    ["Group", group.name],
+    ["Your role", group.role],
+    ["Period start", group.startedAt ? stockvelDate(group.startedAt) : ""],
+    ["Statement date", stockvelDate(new Date().toISOString())],
+    ["Contribution per member", group.contributionAmount != null ? money(group.contributionAmount) : ""],
+    ["Frequency", group.cadence],
+    ["Group balance", group.balance != null ? money(group.balance) : ""],
+    ["Total contributed", group.totalContributed != null ? money(group.totalContributed) : ""],
+    ["Your contribution", group.myContribution != null ? money(group.myContribution) : ""],
+    ["Members", group.memberCount != null ? String(group.memberCount) : ""],
+    ["Savings goal", group.goalAmount != null ? money(group.goalAmount) : ""]
+  ].filter(([, value]) => value);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Stokvel</p><h2>Group statement</h2><p class="lead">A record of this savings group built from what TitoPay holds today.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="receipt-card sv-statement">
+      <img src="./assets/titopay-logo.png" alt="TitoPay" class="receipt-logo">
+      <h2>${esc(group.name)}</h2>
+      <dl>${rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>
+      ${group.contributions.length ? `
+        <h3 class="sv-statement-sub">Contributions</h3>
+        <dl>${group.contributions.slice(0, 24).map((item) => `<div><dt>${esc([item.memberName, item.dueDate ? stockvelDate(item.dueDate) : ""].filter(Boolean).join(" · ") || "Contribution")}</dt><dd>${esc([item.amount != null ? money(item.amount) : "", stockvelStatusMeta(item.status)?.label].filter(Boolean).join(" · "))}</dd></div>`).join("")}</dl>` : ""}
+      <p class="sv-statement-note">A stokvel holds only what its members contribute. TitoPay does not add interest or a return to this balance.</p>
+    </section>
+    <div class="receipt-actions">
+      <button class="btn secondary" type="button" data-close>${icon("check-circle")} Done</button>
+      <button class="btn primary" type="button" data-stockvel-statement-print="1">${icon("download")} Save statement</button>
+    </div>
+  `);
+}
+
+// ---- Contributions, membership actions -------------------------------------
+
+// A contribution is money leaving the wallet, so it goes through the same
+// preview -> review -> confirm chain, idempotency key and double-submit guard as
+// every other TitoPay payment. Nothing bespoke is invented for the Stockvel.
+function openStockvelContributionModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  const due = group.nextContributionAmount ?? group.contributionAmount;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(group.name)}</p>
+        <h2>Make your contribution</h2>
+        <p class="lead">You will see the fee and the total before anything leaves your wallet.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="stockvel">
+      <input type="hidden" name="stockvelGroupId" value="${esc(group.id)}">
+      <input type="hidden" name="stockvelGroupName" value="${esc(group.name)}">
+      <input type="hidden" name="recipient" value="${esc(group.name)}">
+      <div class="field">
+        <label for="sv-contribute-amount">Contribution amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="sv-contribute-amount" name="amount" inputmode="decimal" value="${esc(due != null ? String(due) : "")}" required></div>
+        ${due != null ? `<p class="field-hint">The group's agreed contribution is ${esc(money(due))}.</p>` : ""}
+      </div>
+      ${group.nextContributionAt ? `<div class="field"><label for="sv-contribute-cycle">Cycle</label><input id="sv-contribute-cycle" name="reference" value="${esc(stockvelDate(group.nextContributionAt))}"></div>`
+        : `<div class="field"><label for="sv-contribute-cycle">Reference</label><input id="sv-contribute-cycle" name="reference" placeholder="Which cycle is this for?"></div>`}
+      <button class="btn primary" type="submit">${icon("wallet")} Preview contribution</button>
+    </form>
+  `);
+}
+
+function openStockvelMemberSheet(memberId) {
+  const group = activeStockvelGroup();
+  const member = group ? group.members.find((item) => item.id === memberId) : null;
+  if (!member) return;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(group.name)}</p><h2>${esc(member.name)}</h2><p class="lead">${esc([member.role, member.joinedAt ? `Joined ${stockvelDate(member.joinedAt)}` : ""].filter(Boolean).join(" · "))}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="tx-detail-actions">
+      <button class="btn secondary" type="button" data-stockvel-member-action="promote" data-stockvel-member-id="${esc(member.id)}">${icon("staff-badge")} Make organiser</button>
+      <button class="btn secondary" type="button" data-stockvel-member-action="demote" data-stockvel-member-id="${esc(member.id)}">${icon("user")} Set as member</button>
+      <button class="btn ghost sv-danger-btn" type="button" data-stockvel-member-action="remove" data-stockvel-member-id="${esc(member.id)}">Remove from group</button>
+      <button class="btn ghost" type="button" data-close>Cancel</button>
+    </div>
+  `);
+}
+
+async function runStockvelMemberAction(action, memberId) {
+  const group = activeStockvelGroup();
+  if (!group) return;
+  const paths = {
+    promote: { method: "POST", path: `${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/members/${encodeURIComponent(memberId)}/promote`, done: "Member is now an organiser." },
+    demote: { method: "POST", path: `${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/members/${encodeURIComponent(memberId)}/demote`, done: "Member role updated." },
+    remove: { method: "DELETE", path: `${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/members/${encodeURIComponent(memberId)}`, done: "Member removed from the group." }
+  };
+  const request = paths[action];
+  if (!request) return;
+  try {
+    await api(request.path, { method: request.method });
+    showToast(request.done);
+    closeModal();
+    await refreshStockvelDashboard(group.id);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    showToast(
+      status === 404 || status === 501
+        ? "Member management is not available yet. Ask the organiser to make this change once group management is live."
+        : friendlyFormError(error, "stockvel-member"),
+      "error"
+    );
+  }
+}
+
+// Leaving is not reversible from the app, so it asks first and never assumes.
+function openStockvelLeaveModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(group.name)}</p><h2>Leave this group?</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="What leaving means">
+      <p class="failure-message">Leaving does not return contributions you have already made.</p>
+      <p class="failure-guidance">Settle anything outstanding with the organiser first. You will need a new invite to rejoin.</p>
+    </section>
+    <div class="tx-detail-actions">
+      <button class="btn ghost sv-danger-btn" type="button" data-stockvel-leave-confirm="${esc(group.id)}">Yes, leave the group</button>
+      <button class="btn secondary" type="button" data-close>Stay in the group</button>
+    </div>
+  `);
+}
+
+async function confirmStockvelLeave(id) {
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(id)}/members/me`, { method: "DELETE" });
+    showToast("You have left the group.");
+    state.stockvel.status = "idle";
+    state.stockvel.detail = null;
+    openStockvelModal();
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    showToast(
+      status === 404 || status === 501
+        ? "Leaving a group is not available yet. Ask the organiser to remove you."
+        : friendlyFormError(error, "stockvel-leave"),
+      "error"
+    );
+  }
+}
+
+
+// ---- Invitations -----------------------------------------------------------
+
+// Invitations addressed to this customer. Rendered on the hub only when the API
+// actually returns them, so nothing appears that the group has not really sent.
+function normalizeStockvelInvitation(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : {};
+  const groupName = stockvelText(source, ["stockvelName", "stockvel_name", "groupName", "group_name", "name"]);
+  const id = stockvelText(source, ["id", "invitationId", "invitation_id", "inviteId", "invite_id", "code", "inviteCode", "invite_code"]);
+  if (!groupName && !id) return null;
+  return {
+    id: id || groupName,
+    groupId: stockvelText(source, ["stockvelId", "stockvel_id", "groupId", "group_id"]),
+    groupName: groupName || "Savings group",
+    invitedBy: stockvelText(source, ["invitedBy", "invited_by", "inviterName", "inviter_name", "from", "organiser"]),
+    contributionAmount: stockvelNumber(source, ["contributionAmount", "contribution_amount", "amount"]),
+    cadence: stockvelText(source, ["cadence", "frequency", "contributionFrequency", "contribution_frequency"]),
+    memberCount: stockvelNumber(source, ["memberCount", "member_count", "members"]),
+    invitedAt: stockvelText(source, ["invitedAt", "invited_at", "createdAt", "created_at"])
+  };
+}
+
+function renderStockvelInvitations(store) {
+  const invitations = store.invitations || [];
+  if (!invitations.length) return "";
+  return `
+    <section class="sv-invites" aria-label="Invitations to join a savings group">
+      <p class="sv-section-label">${invitations.length === 1 ? "You have an invitation" : `You have ${invitations.length} invitations`}</p>
+      ${invitations.map((invite) => `
+        <article class="sv-invite">
+          ${stockvelAvatar(invite.groupName)}
+          <div class="sv-invite-body">
+            <strong>${esc(invite.groupName)}</strong>
+            <small>${esc([
+              invite.invitedBy ? `Invited by ${invite.invitedBy}` : "",
+              invite.contributionAmount != null ? `${money(invite.contributionAmount)}${invite.cadence ? ` ${invite.cadence.toLowerCase()}` : ""}` : "",
+              invite.memberCount != null ? `${invite.memberCount} members` : ""
+            ].filter(Boolean).join(" · "))}</small>
+          </div>
+          <div class="sv-invite-actions">
+            <button class="btn primary" type="button" data-stockvel-invite-accept="${esc(invite.id)}">Accept</button>
+            <button class="btn ghost" type="button" data-stockvel-invite-decline="${esc(invite.id)}">Decline</button>
+          </div>
+        </article>`).join("")}
+    </section>`;
+}
+
+async function loadStockvelInvitations() {
+  const store = state.stockvel;
+  try {
+    const payload = await api(`${STOCKVEL_PATH}/invitations`);
+    store.invitations = stockvelList(payload, ["items", "invitations", "data"]).map(normalizeStockvelInvitation).filter(Boolean);
+  } catch (error) {
+    // An absent endpoint simply means there are no invitations to show.
+    store.invitations = [];
+  }
+  return store.invitations;
+}
+
+async function respondToStockvelInvitation(id, accept) {
+  try {
+    const result = await api(`${STOCKVEL_PATH}/invitations/${encodeURIComponent(id)}/${accept ? "accept" : "decline"}`, { method: "POST" });
+    const group = accept ? normalizeStockvelGroup(result.stockvel || result.group || result) : null;
+    showToast(accept ? `You have joined ${group ? group.name : "the group"}.` : "Invitation declined.");
+    state.stockvel.status = "idle";
+    if (accept && group && group.id) openStockvelDashboard(group.id);
+    else openStockvelModal();
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    showToast(
+      status === 404 || status === 501
+        ? "Responding to invitations is not available yet. Ask the organiser to add you directly."
+        : friendlyFormError(error, "stockvel-invitation"),
+      "error"
+    );
+  }
+}
+
+// Inviting people into a group that already exists. Members are normalised and
+// verified through the same recipient helper the rest of TitoPay uses.
+function openStockvelAddMembersModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  const remaining = group.memberLimit != null && group.memberCount != null ? group.memberLimit - group.memberCount : null;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(group.name)}</p>
+        <h2>Invite members</h2>
+        <p class="lead">Invite by TitoPay username, cellphone number or email address.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="stockvel-add-members">
+      <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+      ${remaining != null ? `<p class="field-hint">${remaining > 0 ? `Room for ${remaining} more ${remaining === 1 ? "member" : "members"}.` : "This group is at its member limit."}</p>` : ""}
+      ${recipientAutoMethodField("memberMethod", "Member lookup method")}
+      <div class="field">
+        <label for="sv-add-members">People to invite</label>
+        <textarea id="sv-add-members" name="members" placeholder="@username, cellphone or email — one per line" required></textarea>
+      </div>
+      <button class="btn primary" type="submit"${remaining === 0 ? " disabled" : ""}>${icon("send")} Send invitations</button>
+    </form>
+    ${group.inviteCode || group.inviteUrl ? `
+      <div class="tx-detail-actions">
+        <button class="btn secondary" type="button" data-stockvel-invite="${esc(group.id)}">${icon("share")} Share invite code instead</button>
+      </div>` : ""}
+  `);
+}
+
+async function submitStockvelAddMembers(data) {
+  const groupId = String(data.stockvelId || "");
+  const members = normalizeRecipientList(data.members, data.memberMethod || "auto");
+  if (!members.length) throw new Error("Add at least one username, cellphone number or email address.");
+  try {
+    const result = await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/invitations`, {
+      method: "POST",
+      body: { members }
+    });
+    const sent = stockvelNumber(result, ["invited", "sent", "count"]) ?? members.length;
+    showToast(`${sent} ${sent === 1 ? "invitation" : "invitations"} sent.`);
+    closeModal();
+    await refreshStockvelDashboard(groupId);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Inviting members into an existing group is not available yet. Share the invite code instead.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-invite"));
+  }
+}
+
+// ---- Withdrawals: request and approve --------------------------------------
+
+function openStockvelWithdrawalRequestModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(group.name)}</p>
+        <h2>Request a withdrawal</h2>
+        <p class="lead">The group approves a withdrawal before any money leaves it.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="stockvel-withdrawal">
+      <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+      <div class="field">
+        <label for="sv-wd-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="sv-wd-amount" name="amount" inputmode="decimal" required></div>
+        ${group.balance != null ? `<p class="field-hint">The group holds ${esc(money(group.balance))}.</p>` : ""}
+      </div>
+      <div class="field">
+        <label for="sv-wd-reason">What is it for?</label>
+        <textarea id="sv-wd-reason" name="reason" placeholder="The group will see this reason when they vote" required></textarea>
+      </div>
+      <button class="btn primary" type="submit">${icon("withdraw")} Send request to the group</button>
+    </form>
+    <section class="integration-note" aria-label="How approval works">
+      <p>${icon("shield")} <span><strong>Nothing moves yet.</strong> This asks the group to approve; money only leaves once enough members agree.</span></p>
+    </section>
+  `);
+}
+
+async function submitStockvelWithdrawal(data) {
+  const groupId = String(data.stockvelId || "");
+  const amount = Number(data.amount);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
+  const reason = String(data.reason || "").trim();
+  if (!reason) throw new Error("Tell the group what the withdrawal is for.");
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/withdrawals`, {
+      method: "POST",
+      headers: { "Idempotency-Key": createClientTransactionKey("stockvel-withdrawal") },
+      body: { amount, reason }
+    });
+    showToast("Withdrawal request sent to the group.");
+    closeModal();
+    await refreshStockvelDashboard(groupId);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Withdrawal requests are not available yet. Agree the payout with your organiser directly.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-withdrawal"));
+  }
+}
+
+async function respondToStockvelWithdrawal(withdrawalId, approve) {
+  const group = activeStockvelGroup();
+  if (!group) return;
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/withdrawals/${encodeURIComponent(withdrawalId)}/${approve ? "approve" : "decline"}`, { method: "POST" });
+    showToast(approve ? "Approval recorded." : "You declined this withdrawal.");
+    await refreshStockvelDashboard(group.id);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    showToast(
+      status === 404 || status === 501
+        ? "Voting on withdrawals is not available yet. Confirm the decision with your organiser."
+        : friendlyFormError(error, "stockvel-approval"),
+      "error"
+    );
+  }
+}
+
+// ---- Closing a group -------------------------------------------------------
+
+// Closing ends the group for everyone, so it asks twice: once for intent, then
+// for the group's name typed out.
+function openStockvelCloseModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(group.name)}</p><h2>Close this group?</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="What closing means">
+      <p class="failure-message">Closing ends the group for every member.</p>
+      <p class="failure-guidance">Settle the group balance${group.balance != null ? ` of ${esc(money(group.balance))}` : ""} before closing. Contribution records stay available in Activity.</p>
+    </section>
+    <form class="form-grid" data-form="stockvel-close">
+      <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+      <input type="hidden" name="expectedName" value="${esc(group.name)}">
+      <div class="field">
+        <label for="sv-close-name">Type the group name to confirm</label>
+        <input id="sv-close-name" name="confirmName" autocomplete="off" placeholder="${esc(group.name)}" required>
+      </div>
+      <button class="btn ghost sv-danger-btn" type="submit">Close this group permanently</button>
+      <button class="btn secondary" type="button" data-close>Keep the group</button>
+    </form>
+  `);
+}
+
+async function submitStockvelClose(data) {
+  const groupId = String(data.stockvelId || "");
+  if (String(data.confirmName || "").trim().toLowerCase() !== String(data.expectedName || "").trim().toLowerCase()) {
+    throw new Error("The group name does not match. Type it exactly to confirm.");
+  }
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+    showToast("The group has been closed.");
+    state.stockvel.status = "idle";
+    state.stockvel.detail = null;
+    openStockvelModal();
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Closing a group is not available yet. Ask TitoPay support to close it for you.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-close"));
+  }
+}
+
+// ---- Statement export ------------------------------------------------------
+
+// Prints the statement that is already on screen. The wallet's PDF builder is
+// deliberately not reused: it renders a wallet transaction statement, which is
+// not what this screen shows.
+function printStockvelStatement() {
+  const card = document.querySelector(".sv-statement");
+  if (!card) {
+    showToast("Open the statement before saving it.", "error");
+    return;
+  }
+  document.body.classList.add("sv-printing");
+  const cleanup = () => {
+    document.body.classList.remove("sv-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+  setTimeout(cleanup, 1500);
+}
+
+// ---- Invite ----------------------------------------------------------------
+
+function openStockvelInviteModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  const url = group.inviteUrl || "";
+  const code = group.inviteCode || "";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(group.name)}</p><h2>Invite members</h2><p class="lead">Share the group's invite so people can join.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${code || url ? `
+      <section class="vas-credentials" aria-label="Invite details">
+        <p class="vas-credentials-head">${icon("share")} Share these</p>
+        ${code ? `<div class="vas-credential is-mono">
+          <span class="vas-credential-label" id="sv-invite-code-label">Invite code</span>
+          <span class="vas-credential-value">${esc(code)}</span>
+          <span class="vas-credential-actions"><button class="icon-btn" type="button" data-vas-copy="${esc(code)}" data-vas-copy-label="Invite code" aria-label="Copy invite code">${icon("copy")}</button></span>
+        </div>` : ""}
+        ${url ? `<div class="vas-credential">
+          <span class="vas-credential-label">Invite link</span>
+          <span class="vas-credential-value">${esc(url)}</span>
+          <span class="vas-credential-actions"><button class="icon-btn" type="button" data-vas-copy="${esc(url)}" data-vas-copy-label="Invite link" aria-label="Copy invite link">${icon("copy")}</button></span>
+        </div>` : ""}
+      </section>
+      <div class="tx-detail-actions">
+        <button class="btn primary" type="button" data-invite-share="${esc(group.name)}" data-invite-message="Join our ${esc(group.name)} stokvel on TitoPay." data-invite-url="${esc(url || "https://app.titopay.co.za")}">${icon("send")} Share invite</button>
+      </div>`
+    : stockvelUnavailablePanel(
+        "No invite code yet",
+        "TitoPay has not issued an invite code for this group. Add members by username, cellphone or email instead."
+      )}
   `);
 }
 
@@ -4288,7 +10255,8 @@ function currentMerchantId() {
 
 function currentCustomerName() {
   const user = state.user || {};
-  return user.fullName || user.full_name || user.name || user.username || "TitoPay Customer";
+  return user.fullName || user.full_name || user.name || user.username
+    || `TitoPay ${counterpartyNoun({ capitalise: true })}`;
 }
 
 function defaultMerchantSaleState() {
@@ -4639,7 +10607,7 @@ function receiptRows(receipt) {
 function receiptHtml(receipt) {
   return `
     <section class="receipt-card">
-      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="receipt-logo">
+      <img src="./assets/titopay-logo.png" alt="TitoPay" class="receipt-logo">
       <h2>Payment Receipt</h2>
       <dl>
         ${receiptRows(receipt).map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value || "-")}</dd></div>`).join("")}
@@ -4677,6 +10645,55 @@ function receiptShareText(receipt) {
     `Amount: ${money(receipt.amount)}`,
     `Status: ${receipt.status || "PAID"}`
   ].filter(Boolean).join("\n");
+}
+
+// Sharing a saved document. TitoPay has no document delivery service, so this
+// hands the document to something that does -- the share sheet, the mail client
+// or the clipboard -- rather than claiming a link was sent.
+function businessDocumentShareText(record) {
+  const lines = [
+    `${record.kind} ${record.number}`,
+    `From: ${record.businessName}`,
+    `To: ${record.customerName}`,
+    `Issued: ${friendlyDate(record.issueDate)}`
+  ];
+  if (record.dueDate) lines.push(`${record.dateLabel || "Due date"}: ${friendlyDate(record.dueDate)}`);
+  lines.push("");
+  (record.items || []).forEach((item) => {
+    lines.push(`${item.description} - ${item.quantity} x ${money(item.unit)} = ${money(item.total)}`);
+  });
+  lines.push("");
+  lines.push(`Subtotal: ${money(record.totals.subtotal)}`);
+  if (record.totals.vatIncluded) lines.push(`VAT 15%: ${money(record.totals.vat)}`);
+  lines.push(`Total: ${money(record.totals.total)}`);
+  if (record.notes) lines.push("", record.notes);
+  if (record.disclaimer) lines.push("", record.disclaimer);
+  return lines.join("\n");
+}
+
+async function shareBusinessDocument() {
+  const record = currentBusinessDocument();
+  if (!record) {
+    showToast("Save the document before sharing it.", "error");
+    return;
+  }
+  const text = businessDocumentShareText(record);
+  const subject = `${record.kind} ${record.number} from ${record.businessName}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: subject, text });
+      showToast("Document shared.");
+      return;
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+    }
+  }
+  if (record.customerEmail) {
+    window.location.href = `mailto:${encodeURIComponent(record.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+    return;
+  }
+  await copyTextValue(text);
+  showToast("Document copied. Paste it into an email or message.");
 }
 
 async function shareReceipt(receiptId) {
@@ -4754,7 +10771,7 @@ function openWalletReceiptsModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="receipt-filters">
-      <div class="field"><label>Search receipts</label><input data-receipt-filter="search" value="${esc(state.receiptFilters.search || "")}" placeholder="Merchant, customer, reference"></div>
+      <div class="field"><label>Search receipts</label><input data-receipt-filter="search" value="${esc(state.receiptFilters.search || "")}" placeholder="Merchant, ${esc(counterpartyNoun())}, reference"></div>
       <div class="field"><label>Filter</label><select data-receipt-filter="range">
         ${[["all", "All"], ["today", "Today"], ["week", "This Week"], ["month", "This Month"]].map(([value, label]) => `<option value="${value}" ${state.receiptFilters.range === value ? "selected" : ""}>${label}</option>`).join("")}
       </select></div>
@@ -4865,7 +10882,10 @@ async function verifyRegisteredRecipientBeforeTransaction(data) {
       verified.push({ identifier: recipient, user: result.user || {}, source: result.source || "lookup" });
       continue;
     }
-    openInviteRecipientModal(recipient, result.invite || {});
+    if (!renderInlineRecipientNotRegistered(recipient, result.invite || {}, Boolean(result.lookupFailed))) {
+      if (result.lookupFailed) openRecipientLookupUnavailableModal(recipient);
+      else openInviteRecipientModal(recipient, result.invite || {});
+    }
     return false;
   }
   return verified;
@@ -4963,6 +10983,19 @@ function recipientVerificationCards(verifiedRecipients = [], fallbackRecipient =
   </section>`;
 }
 
+// Extra fields a biller asked for are shown back to the customer before they
+// commit. The label is derived from the provider's own field name.
+function vasProviderFieldLabel(key) {
+  const raw = String(key || "").replace(/^vasField_/, "").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : "Detail";
+}
+
+function vasProviderFieldRows(data = {}) {
+  return Object.keys(data)
+    .filter((key) => key.startsWith("vasField_") && String(data[key] || "").trim() !== "")
+    .map((key) => [vasProviderFieldLabel(key), String(data[key]), "list"]);
+}
+
 function transactionReviewRows(context) {
   const preview = context.preview || {};
   const data = context.data || {};
@@ -4973,10 +11006,14 @@ function transactionReviewRows(context) {
   const recipientAmount = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
   const rows = [
     ["Service", serviceLabelForCode(data.serviceCode), "grid"],
-    ["Amount", money(amount), "wallet"],
+    // Provider selection and product only appear when the journey captured them.
+    ...(data.vasProviderName || data.provider ? [["Provider", data.vasProviderName || data.provider, "bank"]] : []),
+    ...(data.vasProductName ? [["Product", data.vasProductName, "tag"]] : []),
+    ...vasProviderFieldRows(data),
+    ["Amount", money(amount), "wallet", "strong"],
     ["TitoPay fee", money(fee), "shield"],
     ["Third-party fee", money(Number(preview.thirdPartyFee || data.thirdPartyFee || 0)), "bank"],
-    ["Total debit", money(total), "withdraw"],
+    ["Total debit", money(total), "withdraw", "total"],
     ["Recipient amount", money(recipientAmount), "send"],
     ["Source wallet", displayWalletId(wallet) !== "Generating" ? `Wallet ${displayWalletId(wallet)}` : `${state.accountType === "business" ? "Business" : "Personal"} wallet`, "wallet"],
     ["Date and time", formatDate(context.createdAt), "list"],
@@ -4984,7 +11021,7 @@ function transactionReviewRows(context) {
     ["Expected processing", data.integrationFlow ? "Provider processing may be pending until confirmed." : "Usually instant after confirmation.", "refresh"],
     ["Refundability", data.serviceCode === "qr_payment" || data.serviceCode === "wallet_transfer" ? "Subject to TitoPay support review." : "Depends on provider response and service rules.", "list"]
   ];
-  return rows.map(([label, value, iconName]) => settingsRow(label, value, iconName)).join("");
+  return rows.map(([label, value, iconName, emphasis]) => settingsRow(label, value, iconName, emphasis)).join("");
 }
 
 function openTransactionReviewModal(context) {
@@ -5006,14 +11043,14 @@ function openTransactionReviewModal(context) {
     <div class="auth-actions transaction-review-actions">
       <button class="btn primary" type="button" data-action="confirm-transaction-review">${icon("check-circle")} Confirm</button>
       <button class="btn secondary" type="button" data-action="edit-transaction-review">${icon("list")} Edit</button>
-      <button class="btn secondary" type="button" data-action="cancel-transaction-review">${icon("x")} Cancel</button>
+      <button class="btn ghost" type="button" data-action="cancel-transaction-review">Cancel</button>
     </div>
   `);
 }
 
 function renderTransactionEditFields(context) {
   const data = context.data || {};
-  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "documentAction"];
+  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "vasProductCode", "vasProductName", "vasProviderName", "vasJourney", "stockvelType", "stockvelGroupId", "stockvelGroupName", "documentAction"];
   const labels = {
     recipient: "Recipient, account or reference",
     amount: "Amount",
@@ -5059,11 +11096,39 @@ function openTransactionEditModal(context) {
       <div><p class="eyebrow">Edit Transaction</p><h2>${esc(serviceLabelForCode(context.data?.serviceCode))}</h2><p class="lead">Update details, then preview fees again before confirming.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${(context.verifiedRecipients || []).length ? `
+      <div class="recipient-verify-result" role="status">
+        <p class="rv-head">${context.verifiedRecipients.length === 1 ? "Verified TitoPay user" : "Verified TitoPay users"}</p>
+        ${context.verifiedRecipients.map((item) => `<div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(reviewRecipientName(item))}</strong><small>${esc([reviewRecipientUsername(item), maskContact((item.user || {}).phone || (item.user || {}).email || item.identifier || "")].filter(Boolean).join(" · "))}</small></span></div>`).join("")}
+        <p class="rv-note">This verification is still in place. Changing the recipient will verify it again before you confirm.</p>
+      </div>` : ""}
     <form class="form-grid stable-service-form" data-form="transaction">
       ${renderTransactionEditFields(context)}
       <button class="btn primary" type="submit">${icon("refresh")} Preview again</button>
-      <button class="btn secondary" type="button" data-action="cancel-transaction-review">${icon("x")} Cancel</button>
+      <button class="btn ghost" type="button" data-action="cancel-transaction-review">Cancel</button>
     </form>
+  `);
+}
+
+// A failure after the transaction has been submitted has an ambiguous outcome:
+// funds may or may not have moved. We therefore never offer Retry here -- the
+// user is routed to Activity and Support instead, preserving the existing
+// error mapping as the headline message.
+function openTransactionFailureModal(message) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Not confirmed</p><h2>Transaction not confirmed</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="Transaction failure details">
+      <p class="failure-message">${esc(message)}</p>
+      <p class="failure-guidance">Check Activity before trying again. If the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
+    </section>
+    <div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} Check Activity</button>
+      <button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
   `);
 }
 
@@ -5108,12 +11173,44 @@ async function confirmReviewedTransaction() {
       openBusinessDocumentSavedModal(document, context.preview);
       return;
     }
+    // A contribution the client saw succeed is a real event, so it is recorded in
+    // the notification centre. Group events TitoPay never observed are not.
+    if (data.stockvelGroupName) {
+      addInAppNotification({
+        type: "success",
+        title: "Contribution recorded",
+        body: `Your ${money(context.amount)} contribution to ${data.stockvelGroupName} was recorded.`,
+        metadata: { stockvelGroupId: data.stockvelGroupId || "" }
+      });
+    }
     openSuccessModal(result.transaction || result, context.preview, data.serviceCode, context.recipient);
   } catch (error) {
-    showToast(`${friendlyFormError(error, "transaction")} No funds were deducted unless TitoPay shows this transaction in Activity.`, "error");
+    const message = friendlyFormError(error, "transaction");
+    showToast(message, "error");
+    openTransactionFailureModal(message);
   } finally {
     setButtonBusy(button, false);
   }
+}
+
+// Fallback for the rare case where there is no live form to render into.
+function openRecipientLookupUnavailableModal(identifier) {
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Recipient check</p>
+        <h2>Could not check this recipient</h2>
+        <p class="lead">TitoPay could not reach the directory to confirm ${esc(identifier)}. Nothing has been sent and no money has moved.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="empty-state compact-state">
+      ${icon("refresh")}
+      <strong>This is not a result about them</strong>
+      <p>They may well be a TitoPay user. Check your connection and try again in a moment.</p>
+    </section>
+    <button class="btn primary" type="button" data-close>${icon("arrow-left")} Back</button>
+  `);
 }
 
 function openInviteRecipientModal(identifier, invite = {}) {
@@ -5162,19 +11259,147 @@ async function shareInvite(identifier, message, url) {
   }
 }
 
+// Provider credentials that some VAS purchases return and that the customer
+// cannot use the purchase without: a prepaid electricity token, a voucher PIN,
+// the provider's own reference. These are read from whatever the API sends and
+// are never generated, defaulted or placeheld -- a row appears only when the
+// value is genuinely in the response.
+const VAS_CREDENTIAL_FIELDS = [
+  { label: "Electricity token", keys: ["token", "electricityToken", "electricity_token", "stsToken", "sts_token", "meterToken", "meter_token"], copy: true, mono: true, keep: true },
+  { label: "Voucher PIN", keys: ["pin", "voucherPin", "voucher_pin", "voucherCode", "voucher_code"], copy: true, mono: true, keep: true, sensitive: true },
+  { label: "Voucher serial", keys: ["serial", "serialNumber", "serial_number", "voucherSerial", "voucher_serial"], copy: true, mono: true, keep: true, sensitive: true },
+  { label: "Units", keys: ["units", "kwh", "unitsPurchased", "units_purchased"], keep: true },
+  { label: "Product", keys: ["productName", "product_name", "bundleName", "bundle_name"] },
+  { label: "Provider", keys: ["providerName", "provider_name", "networkName", "network_name", "billerName", "biller_name"] },
+  { label: "Provider reference", keys: ["providerReference", "provider_reference", "providerRef", "provider_ref", "vasReference", "vas_reference"], copy: true, keep: true },
+  { label: "Receipt number", keys: ["receiptNumber", "receipt_number", "providerReceipt", "provider_receipt"], copy: true, keep: true },
+  { label: "Valid until", keys: ["expiresAt", "expires_at", "tokenExpiry", "token_expiry", "validUntil", "valid_until"], keep: true }
+];
+
+const VAS_SERVICE_CODE_PATTERN = /airtime|data|electricity|voucher|bill/i;
+
+function vasCredentialSources(transaction) {
+  const root = transaction || {};
+  return [
+    root,
+    root.metadata,
+    root.vas,
+    root.provider,
+    root.providerResponse,
+    root.provider_response,
+    root.result,
+    root.credentials
+  ].filter((source) => source && typeof source === "object" && !Array.isArray(source));
+}
+
+function vasCredentials(transaction) {
+  const sources = vasCredentialSources(transaction);
+  const found = [];
+  const seen = new Set();
+  VAS_CREDENTIAL_FIELDS.forEach((field) => {
+    for (let index = 0; index < sources.length; index += 1) {
+      const value = vasText(sources[index], field.keys);
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      found.push(Object.assign({}, field, { value }));
+      return;
+    }
+  });
+  return found;
+}
+
+function vasKeepCredentials(credentials) {
+  return credentials.filter((item) => item.keep);
+}
+
+function vasInfoCredentials(credentials) {
+  return credentials.filter((item) => !item.keep);
+}
+
+function vasCredentialSlug(label) {
+  return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "detail";
+}
+
+// Keeps the shape of the value visible (grouping and length) without disclosing
+// any digit, so the customer can still tell which credential they are looking at.
+function vasMaskedValue(value) {
+  return String(value || "").replace(/[^\s-]/g, "\u2022");
+}
+
+function revealVasSecret(button) {
+  const row = button.closest(".vas-credential");
+  const target = row && row.querySelector(".vas-credential-value");
+  if (!target) return;
+  const secret = target.dataset.vasSecret || "";
+  const label = row.querySelector(".vas-credential-label")?.textContent.trim() || "Details";
+  const revealed = button.getAttribute("aria-pressed") === "true";
+  target.textContent = revealed ? vasMaskedValue(secret) : secret;
+  button.setAttribute("aria-pressed", revealed ? "false" : "true");
+  button.setAttribute("aria-label", `${revealed ? "Reveal" : "Hide"} ${label}`);
+  button.innerHTML = icon(revealed ? "eye" : "eye-off");
+}
+
+function vasCredentialPanel(allCredentials) {
+  const credentials = vasKeepCredentials(allCredentials || []);
+  if (!credentials.length) return "";
+  return `
+    <section class="vas-credentials" aria-label="Provider details">
+      <p class="vas-credentials-head">${icon("shield")} Keep these details</p>
+      ${credentials.map((item) => `
+        <div class="vas-credential${item.mono ? " is-mono" : ""}${item.sensitive ? " is-sensitive" : ""}">
+          <span class="vas-credential-label" id="vas-cred-${esc(vasCredentialSlug(item.label))}">${esc(item.label)}</span>
+          <span class="vas-credential-value"${item.sensitive ? ` data-vas-secret="${esc(item.value)}" aria-labelledby="vas-cred-${esc(vasCredentialSlug(item.label))}"` : ""}>${esc(item.sensitive ? vasMaskedValue(item.value) : item.value)}</span>
+          <span class="vas-credential-actions">
+            ${item.sensitive ? `<button class="icon-btn" type="button" data-vas-reveal="${esc(vasCredentialSlug(item.label))}" aria-pressed="false" aria-label="Reveal ${esc(item.label)}">${icon("eye")}</button>` : ""}
+            ${item.copy ? `<button class="icon-btn" type="button" data-vas-copy="${esc(item.value)}" data-vas-copy-label="${esc(item.label)}" aria-label="Copy ${esc(item.label)}">${icon("copy")}</button>` : ""}
+          </span>
+        </div>`).join("")}
+    </section>`;
+}
+
+function transactionOutcomeState(transaction) {
+  const status = String(transaction && transaction.status || "").toLowerCase();
+  if (/fail|declin|reject|error/.test(status)) return { tone: "failed", eyebrow: "Not completed", heading: "Purchase not completed" };
+  if (/pending|processing|submitted|queued|awaiting/.test(status)) return { tone: "pending", eyebrow: "In progress", heading: "Purchase in progress" };
+  return { tone: "complete", eyebrow: "Success", heading: "Purchase complete" };
+}
+
 function openSuccessModal(transaction, preview, serviceCode, recipient) {
+  const record = transaction || {};
+  const credentials = vasCredentials(record);
+  const outcome = transactionOutcomeState(record);
+  const isVasService = VAS_SERVICE_CODE_PATTERN.test(String(serviceCode || ""));
+  const status = String(record.status || "").toLowerCase();
+  const awaitingCredentials = isVasService
+    && !credentials.length
+    && /pending|processing|submitted|queued|awaiting/.test(status);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Success</p><h2>Transaction recorded</h2><p class="lead">TitoPay has recorded this ${esc(serviceCode)} transaction.</p></div>
+      <div>
+        <p class="eyebrow">${esc(outcome.eyebrow)}</p>
+        <h2>${esc(isVasService ? outcome.heading : "Transaction recorded")}</h2>
+        <p class="lead">${esc(serviceLabelForCode(serviceCode))} &middot; ${esc(money(preview && preview.total || record.total))} debited</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${vasCredentialPanel(credentials)}
+    ${awaitingCredentials ? `
+      <section class="vas-notice" role="status">
+        <p class="vas-notice-head">Waiting for the provider</p>
+        <p class="vas-notice-body">TitoPay has submitted this purchase and is waiting for the provider to confirm it. Any token or PIN will appear on this transaction in Activity once the provider responds. Do not buy again.</p>
+      </section>` : ""}
     <section class="activity-list">
-      ${settingsRow("Reference", transaction && (transaction.reference || transaction.id) || `TP-${Date.now()}`, "list")}
-      ${settingsRow("Recipient", recipient || "TitoPay", "user")}
-      ${settingsRow("Amount", money(preview && preview.amount || transaction && transaction.amount), "wallet")}
-      ${settingsRow("Total debited", money(preview && preview.total || transaction && transaction.total), "shield")}
-      ${settingsRow("Status", transaction && transaction.status || "processed", "sparkles")}
+      ${settingsRow("Reference", record.reference || record.id || "Recorded", "list")}
+      ${settingsRow("Destination", recipient || "TitoPay", "user")}
+      ${vasInfoCredentials(credentials).map((item) => settingsRow(item.label, item.value, item.label === "Provider" ? "bank" : "tag")).join("")}
+      ${settingsRow("Amount", money(preview && preview.amount || record.amount), "wallet", "strong")}
+      ${settingsRow("Total debited", money(preview && preview.total || record.total), "withdraw", "total")}
+      ${settingsRow("Status", transactionStatusLabel(record.status), "sparkles")}
     </section>
+    <div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} View in Activity</button>
+      <button class="btn ghost" type="button" data-close>Done</button>
+    </div>
   `);
 }
 
@@ -5328,81 +11553,133 @@ function canUseFinancialService(service = {}) {
   return false;
 }
 
+// The build the browser actually loaded, read off the script tag. The menu
+// used to state "Version 1.0.0", which had not been true for a long time.
+function appBuildVersion() {
+  const script = document.querySelector('script[src*="app.js"]');
+  const match = script && /[?&]v=(\d+)/.exec(script.getAttribute("src") || "");
+  return match ? `v${match[1]}` : "not available";
+}
+
+// The "What you can do" list is read off the live catalogue rather than a
+// sentence someone has to remember to edit. A service that is not published
+// is not advertised here either.
+function landingMenuServiceNames() {
+  const seen = new Set();
+  const names = [];
+  hideDuplicateAirtimeDataTiles(activeServices()).forEach((service) => {
+    const label = String(service.label || "").trim();
+    const key = label.toLowerCase();
+    if (!label || seen.has(key)) return;
+    seen.add(key);
+    names.push(label);
+  });
+  return names;
+}
+
+const LANDING_MENU_BENEFITS = [
+  ["Registration is free", "Join TitoPay without paying a registration fee."],
+  ["Zero monthly wallet fees", "Keep your wallet active without monthly maintenance fees."],
+  ["Free wallet transfers", "Send money between TitoPay wallets at no cost."]
+];
+
+function landingMenuSection(section) {
+  const links = (section.links || []).filter(Boolean);
+  return `
+    <section class="menu-section" aria-labelledby="menu-${esc(section.id)}">
+      <header class="menu-section-head">
+        <span class="icon-bubble">${icon(section.icon)}</span>
+        <h3 id="menu-${esc(section.id)}">${esc(section.title)}</h3>
+      </header>
+      ${section.body ? `<p class="menu-section-body">${esc(section.body)}</p>` : ""}
+      ${section.benefits ? `<dl class="menu-benefits">${section.benefits.map(([term, detail]) => `<div><dt>${esc(term)}</dt><dd>${esc(detail)}</dd></div>`).join("")}</dl>` : ""}
+      ${section.tags && section.tags.length ? `<ul class="menu-tag-list">${section.tags.map((tag) => `<li>${esc(tag)}</li>`).join("")}</ul>` : ""}
+      ${links.length ? `<div class="menu-section-links">${links.map((link) => `<a class="text-link" href="${esc(link.href)}"${link.href.startsWith("http") ? ' target="_blank" rel="noopener"' : ""}>${esc(link.label)}</a>`).join("")}</div>` : ""}
+    </section>
+  `;
+}
+
 function openLandingMenu() {
-  const items = [
+  const serviceNames = landingMenuServiceNames();
+  const sections = [
     {
+      id: "about",
       title: "About TitoPay",
       icon: "home",
       body: "TitoPay is a South African digital wallet for people and businesses. It helps you send and receive money, accept QR payments, buy everyday services, manage wallet activity and keep transactions in one secure app.",
-      href: "https://titopay.co.za/about"
+      links: [
+        { label: "www.titopay.co.za", href: "https://www.titopay.co.za" },
+        { label: "About us", href: "https://titopay.co.za/about" }
+      ]
     },
     {
-      title: "Why TitoPay?",
+      id: "why",
+      title: "Why TitoPay",
       icon: "check-circle",
-      body: `Registration is Free
-Join TitoPay without paying a registration fee.
-
-Zero Monthly Wallet Fees
-Keep your wallet active without monthly maintenance fees.
-
-Free Wallet Transfers
-Send money between TitoPay wallets at no cost.`
+      benefits: LANDING_MENU_BENEFITS
     },
     {
-      title: "What You Can Do",
+      id: "services",
+      title: "What you can do",
       icon: "grid",
-      body: "Use TitoPay for wallet top ups, withdrawals, QR payments, payment requests, airtime, data, electricity, vouchers, bill payments, bill split, send gift, tip QR, stokvels, transaction history and statements."
+      body: serviceNames.length ? "" : "Wallet top ups, withdrawals, QR payments, payment requests, everyday services, transaction history and statements.",
+      tags: serviceNames
     },
     {
-      title: "For Businesses",
+      id: "business",
+      title: "For businesses",
       icon: "store",
       body: "Businesses can accept customer payments, generate QR codes, track transactions, request payouts, create invoices, quotes and proforma invoices, and access business learning tools."
     },
     {
-      title: "Fees & Transparency",
+      id: "fees",
+      title: "Fees and transparency",
       icon: "wallet",
       body: "TitoPay shows applicable fees before a transaction is confirmed, so users can review the cost clearly before they act."
     },
     {
-      title: "Safety & Verification",
+      id: "safety",
+      title: "Safety and verification",
       icon: "shield",
-      body: "TitoPay supports secure login, OTP verification, wallet lock, device and session controls, FICA document submission and transaction records. Never share your PIN, password or OTP.\n\nFor more: www.titopay.co.za.",
-      href: "https://www.titopay.co.za"
+      body: "TitoPay supports secure login, OTP verification, wallet lock, device and session controls, FICA document submission and transaction records. Never share your PIN, password or OTP.",
+      links: [{ label: "titopay.co.za", href: "https://www.titopay.co.za" }]
     },
     {
-      title: "Privacy Policy",
+      id: "legal",
+      title: "Privacy and terms",
       icon: "lock",
-      body: "TitoPay uses personal information to provide wallet, verification, security, transaction and support services. Your information should only be used for legitimate TitoPay account activity.",
-      href: "https://titopay.co.za/legal#legal-privacy"
+      body: "TitoPay uses personal information to provide wallet, verification, security, transaction and support services. Wallet limits, service availability, transaction confirmations, fees and acceptable platform use are set out in the terms.",
+      links: [
+        { label: "Privacy policy", href: "https://titopay.co.za/legal#legal-privacy" },
+        { label: "Terms and conditions", href: "https://titopay.co.za/legal#legal-terms" }
+      ]
     },
     {
-      title: "Terms & Conditions",
-      icon: "list",
-      body: "TitoPay users should understand wallet limits, service availability, transaction confirmations, fees, account security responsibilities and acceptable platform use.",
-      href: "https://titopay.co.za/legal#legal-terms"
-    },
-    {
-      title: "Contact Us",
+      id: "contact",
+      title: "Contact us",
       icon: "chat",
-      body: "For fast help, sign in and use the free TitoPay Customer Care chatbot. If you cannot log in, WhatsApp us on 0726671183 or email support@titopay.co.za.",
-      href: "mailto:support@titopay.co.za",
-      cta: "Email support"
+      body: "Signed in, the free TitoPay Customer Care chatbot is the fastest route. If you cannot sign in, reach us on WhatsApp or by email.",
+      links: [
+        { label: "WhatsApp 072 667 1183", href: "https://wa.me/27726671183" },
+        { label: "support@titopay.co.za", href: "mailto:support@titopay.co.za" }
+      ]
     }
   ];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2></div>
+      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2><p class="lead">What TitoPay is, what it costs, and how to reach us.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${securityTipCard()}
-    <section class="activity-list">
-      ${items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon(item.icon)}</span><div><p><strong>${esc(item.title)}</strong></p><small>${esc(item.body).replace(/\n/g, "<br>")}</small>${item.href ? `<a class="text-link" href="${esc(item.href)}" target="_blank" rel="noopener">${esc(item.cta || "Read more")}</a>` : ""}</div></article>`).join("")}
-    </section>
+    <div class="menu-sections">
+      ${sections.map(landingMenuSection).join("")}
+    </div>
     <footer class="landing-menu-footer" aria-label="TitoPay company information">
+      <p><a class="text-link" href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a></p>
       <p><strong>TitoPay (Pty) Ltd.</strong></p>
       <p>Reg No: 2026/399418/07</p>
-      <p>Version 1.0.0</p>
-      <p>© 2026 TitoPay (Pty) Ltd.<br>All Rights Reserved.</p>
+      <p>App build ${esc(appBuildVersion())}</p>
+      <p>© 2026 TitoPay (Pty) Ltd. All rights reserved.</p>
     </footer>
   `);
 }
@@ -6648,7 +12925,12 @@ function handleTitoPayChatSocketEvent(event = {}) {
   }
 }
 
+// Set by resolveTitoPayChatUser when a lookup could not be completed, as
+// opposed to completing and finding nobody.
+let lastChatLookupFailed = false;
+
 async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
+  lastChatLookupFailed = false;
   const lookup = normalizeChatLookupIdentifier(rawIdentifier, method);
   const lookupValues = recipientLookupVariants(lookup.value);
   const payload = {
@@ -6663,6 +12945,12 @@ async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
     () => api("/v1/chat/users/lookup", { method: "POST", body: payload }),
     () => api(`/v1/chat/users/lookup?identifier=${encodeURIComponent(lookup.value)}`)
   ];
+  // Every attempt below swallows its error and falls through. Without tracking
+  // that, a lookup that failed for network or server reasons was indistinguishable
+  // from a lookup that succeeded and found nobody -- and the caller then told the
+  // user the person was not registered on TitoPay. The flag lets the caller tell
+  // "no such user" apart from "we could not check".
+  let attemptFailed = false;
   try {
     for (const request of requests) {
       try {
@@ -6674,6 +12962,7 @@ async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
         }
       } catch (error) {
         if (error.status === 401 || error.status === 403) throw error;
+        attemptFailed = true;
       }
     }
   } catch (error) {
@@ -6685,9 +12974,16 @@ async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
       const user = normalizeResolvedChatUser(verified.user || verified.account || verified.recipient || verified.profile || {}, lookup);
       if (user.verified) return user;
     }
+    // A clean "no such user" from the directory settles it. A result that says
+    // registered but cannot be verified settles nothing, so an earlier failure
+    // must not be cleared by it -- that path is reached from the locally cached
+    // contact list, which is not a directory answer.
+    else attemptFailed = attemptFailed || Boolean(verified && verified.lookupFailed);
   } catch (error) {
     if (error.status === 401 || error.status === 403) throw error;
+    attemptFailed = true;
   }
+  lastChatLookupFailed = attemptFailed;
   return null;
 }
 
@@ -6775,11 +13071,16 @@ function openTitoPayChatModal() {
         <p>Only verified TitoPay users can chat. If the person is not registered, you can send an invitation link first.</p>
       </section>
       <h3 class="section-title small-title">Recent chats</h3>
-      ${renderTitoPayChatThreadList()}
+      <div data-chat-thread-list>${renderTitoPayChatThreadList()}</div>
+      <button class="btn ghost chat-clear-all-btn" type="button" data-action="chat-clear-all">${icon("refresh")} Clear chat history on this device</button>
     </section>
   `);
+  // Paint new threads into the list rather than reopening this modal. The old
+  // call reopened the chat home from inside itself, which restarted this same
+  // sync and could re-enter indefinitely while the lookup field was cleared
+  // underneath the user on every pass.
   syncTitoPayChatThreads().then((changed) => {
-    if (changed && !sessionStorage.getItem("titopay_active_chat_thread")) openTitoPayChatModal();
+    if (changed && !sessionStorage.getItem("titopay_active_chat_thread")) repaintChatThreadList();
   }).catch(() => null);
   startTitoPayChatPolling();
 }
@@ -6790,24 +13091,61 @@ async function submitTitoPayChatLookup(data) {
   const lookup = normalizeChatLookupIdentifier(identifier, lookupMethod);
   const submitButton = document.querySelector('form[data-form="titopay-chat-lookup"] button[type="submit"]');
   const originalButtonHtml = submitButton ? submitButton.innerHTML : "";
-  if (submitButton) submitButton.innerHTML = `${icon("refresh")} Checking`;
+  if (submitButton) {
+    // The button previously only changed its label, so it stayed clickable and
+    // a slow lookup could be fired several times over.
+    submitButton.innerHTML = `${icon("refresh")} Checking`;
+    submitButton.disabled = true;
+  }
   try {
     let user = null;
+    let failed = false;
     try {
       user = await resolveTitoPayChatUser(identifier, lookupMethod);
+      failed = !user && lastChatLookupFailed;
     } catch (error) {
       if (error.status === 401 || error.status === 403) throw error;
       user = null;
+      failed = true;
     }
     if (!user) {
-      openTitoPayChatInviteScreen(lookup);
+      // Only offer the invite when the lookup actually completed and found
+      // nobody. Telling someone their contact is not registered because the
+      // request failed is worse than telling them nothing.
+      if (failed) openTitoPayChatLookupFailedScreen(lookup);
+      else openTitoPayChatInviteScreen(lookup);
       return;
     }
     sessionStorage.setItem("titopay_pending_chat_user", JSON.stringify(user));
     openTitoPayChatUserPreview(user);
   } finally {
-    if (submitButton && document.body.contains(submitButton)) submitButton.innerHTML = originalButtonHtml;
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.innerHTML = originalButtonHtml;
+      submitButton.disabled = false;
+    }
   }
+}
+
+function openTitoPayChatLookupFailedScreen(lookup) {
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Chat</p>
+        <h2>Could not check that contact</h2>
+        <p class="lead">TitoPay could not reach the directory to confirm whether ${esc(lookup.value)} is a registered user. This is not a result about them.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="empty-state compact-state">
+      ${icon("refresh")}
+      <strong>Check your connection and try again</strong>
+      <p>If you are online and this keeps happening, the chat directory is temporarily unavailable. Your messages and existing chats are unaffected.</p>
+    </section>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="chat-retry-lookup" data-chat-identifier="${esc(lookup.value)}" data-chat-method="${esc(lookup.method || "auto")}">${icon("refresh")} Try again</button>
+      <button class="btn secondary" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
+    </div>
+  `);
 }
 
 function openTitoPayChatUserPreview(user) {
@@ -6928,8 +13266,9 @@ function openTitoPayChatThread(threadId) {
       <div class="chat-header-actions">
         ${customerCareThread ? `<button class="chat-action-btn primary" type="button" data-action="chatbot" aria-label="Contact Customer Care">${icon("phone")}<span>Call</span></button>` : ""}
         <button class="chat-action-btn" type="button" data-action="chat-mute" aria-label="${thread.muted ? "Unmute conversation" : "Mute conversation"}">${icon("bell")}<span>${thread.muted ? "Unmute" : "Mute"}</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-clear-thread" aria-label="Clear this chat from this device">${icon("refresh")}<span>Clear</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-report" aria-label="Report conversation">${icon("shield")}<span>Report</span></button>
-        <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("x")}<span>${blocked ? "Blocked" : "Block"}</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("ban")}<span>${blocked ? "Blocked" : "Block"}</span></button>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
     </div>
@@ -6944,13 +13283,103 @@ function openTitoPayChatThread(threadId) {
     </form>
     <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
   `);
+  const card = document.querySelector(".modal-card");
+  // The list rows already own the name "titopay-chat-thread-card" with a
+  // three-column grid; giving the modal card the same class handed it those
+  // columns and scattered the thread sideways. The modal surface gets its
+  // own name.
+  if (card) card.classList.add("titopay-chat-thread-modal");
   const windowEl = document.querySelector(".titopay-chat-window");
   if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
+  restoreChatDraft(threadId);
   sendTitoPaySocketEvent("chat:read", { payload: titoPayChatSignalPayload(thread) });
+  // Refresh the messages in place. Reopening the whole modal here rebuilt the
+  // composer, which threw away whatever the user was part-way through typing.
   syncTitoPayChatThread(threadId).then((changed) => {
-    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) openTitoPayChatThread(threadId);
+    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) repaintChatThread(threadId);
   }).catch(() => null);
   startTitoPayChatPolling(threadId);
+}
+
+// ---------------------------------------------------------------------------
+// Chat re-render safety
+//
+// Both the thread view and the thread list used to answer "something changed"
+// by calling openModal() again, which destroys and rebuilds every node inside
+// it. With polling running every few seconds, an open chat rebuilt itself
+// repeatedly: the composer was recreated empty, the scroll position jumped to
+// the bottom, and focus was lost. Typing a message of any length became a race
+// against the next poll.
+//
+// Nothing about the transport changes here. The same data is fetched; it is
+// just painted into the existing nodes instead of replacing the modal.
+// ---------------------------------------------------------------------------
+
+const chatDrafts = new Map();
+
+function chatComposer() {
+  return document.querySelector('form[data-form="titopay-chat-message"] textarea[name="message"]');
+}
+
+function rememberChatDraft(threadId) {
+  const field = chatComposer();
+  if (!field) return;
+  const key = threadId || sessionStorage.getItem("titopay_active_chat_thread") || "";
+  if (!key) return;
+  if (field.value) chatDrafts.set(key, field.value);
+  else chatDrafts.delete(key);
+}
+
+function restoreChatDraft(threadId) {
+  const field = chatComposer();
+  if (!field) return;
+  const draft = chatDrafts.get(threadId);
+  if (!draft) return;
+  field.value = draft;
+  field.focus();
+  field.setSelectionRange(draft.length, draft.length);
+}
+
+function clearChatDraft(threadId) {
+  if (threadId) chatDrafts.delete(threadId);
+}
+
+// Repaints the message list only. The composer, its draft, the header and the
+// scroll position are left exactly as the user left them.
+function repaintChatThread(threadId) {
+  const windowEl = document.querySelector(".titopay-chat-window");
+  if (!windowEl) return;
+  if (sessionStorage.getItem("titopay_active_chat_thread") !== threadId) return;
+  const thread = titoPayChatThreads().find((item) => item.id === threadId);
+  if (!thread) return;
+  // A signature of ids and statuses. If the conversation on screen already
+  // matches, do not touch the DOM at all -- replacing identical nodes is what
+  // stopped scroll momentum dead and dropped text selections.
+  const signature = thread.messages.map((message) => `${message.id}:${message.status || ""}`).join("|");
+  if (windowEl.dataset.chatSignature === signature) return;
+  // Only follow the conversation down if the user was already reading the end
+  // of it. Yanking someone back from older messages is its own bug.
+  const atBottom = windowEl.scrollHeight - windowEl.scrollTop - windowEl.clientHeight < 48;
+  windowEl.innerHTML = thread.messages.map(renderTitoPayChatMessage).join("");
+  windowEl.dataset.chatSignature = signature;
+  if (atBottom) windowEl.scrollTop = windowEl.scrollHeight;
+}
+
+// Repaints the recent-chats list in the chat home without rebuilding the modal,
+// so the lookup field keeps its value and its focus.
+function repaintChatThreadList() {
+  const shell = document.querySelector(".titopay-chat-shell");
+  if (!shell) return;
+  const list = shell.querySelector("[data-chat-thread-list]");
+  if (!list) return;
+  const active = document.activeElement;
+  const restoreLookup = active instanceof HTMLElement && active.closest(".titopay-chat-lookup") ? active : null;
+  const caret = restoreLookup && typeof restoreLookup.selectionStart === "number" ? restoreLookup.selectionStart : null;
+  list.innerHTML = renderTitoPayChatThreadList();
+  if (restoreLookup && document.body.contains(restoreLookup)) {
+    restoreLookup.focus();
+    if (caret != null && typeof restoreLookup.setSelectionRange === "function") restoreLookup.setSelectionRange(caret, caret);
+  }
 }
 
 async function toggleActiveChatMute() {
@@ -6970,6 +13399,61 @@ async function toggleActiveChatMute() {
   showToast(muted ? "Conversation muted" : "Conversation unmuted");
 }
 
+// ---------------------------------------------------------------------------
+// Clearing chat history
+//
+// Chat threads and messages are cached on the device (localStorage) so
+// conversations open instantly. Clearing removes that local copy -- which is
+// what frees space -- and says so; it does not pretend to delete anything from
+// the other person's phone or from TitoPay's servers, because no API for that
+// exists.
+// ---------------------------------------------------------------------------
+
+function openChatClearConfirm(scope) {
+  const threadId = scope === "thread" ? sessionStorage.getItem("titopay_active_chat_thread") : "";
+  const thread = threadId ? titoPayChatThreads().find((item) => item.id === threadId) : null;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Chat</p>
+        <h2>${scope === "thread" ? `Clear chat with ${esc(thread ? thread.title : "this user")}?` : "Clear all chat history?"}</h2>
+        <p class="lead">${scope === "thread"
+          ? "The messages in this conversation are removed from this device to free space. The other person keeps their copy, and you can keep chatting afterwards."
+          : "All conversations and messages are removed from this device to free space. Blocked users stay blocked. This does not delete messages from anyone else's phone."}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="${scope === "thread" ? "chat-back-to-thread" : "titopay-chat"}">Cancel</button>
+      <button class="btn primary" type="button" data-action="${scope === "thread" ? "chat-clear-thread-confirm" : "chat-clear-all-confirm"}">${icon("refresh")} Clear ${scope === "thread" ? "this chat" : "everything"}</button>
+    </section>
+  `);
+}
+
+function clearTitoPayChatHistory(scope) {
+  if (scope === "thread") {
+    const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+    const threads = titoPayChatThreads();
+    const thread = threads.find((item) => item.id === threadId);
+    if (thread) {
+      thread.messages = [];
+      thread.clearedAt = new Date().toISOString();
+      saveTitoPayChatThreads(threads);
+      clearChatDraft(threadId);
+    }
+    showToast("Chat cleared on this device.");
+    if (thread) openTitoPayChatThread(threadId);
+    else openTitoPayChatModal();
+    return;
+  }
+  saveTitoPayChatThreads([]);
+  localStorage.setItem(TITOPAY_CHAT_CLEARED_KEY, new Date().toISOString());
+  chatDrafts.clear();
+  sessionStorage.removeItem("titopay_active_chat_thread");
+  showToast("Chat history cleared on this device.");
+  openTitoPayChatModal();
+}
+
 function stopTitoPayChatPolling() {
   if (window.titoPayChatPollTimer) {
     clearInterval(window.titoPayChatPollTimer);
@@ -6985,18 +13469,22 @@ function startTitoPayChatPolling(threadId = "") {
     try {
       const notificationChanged = await syncTitoPayChatNotifications().catch(() => false);
       const threadsChanged = await syncTitoPayChatThreads().catch(() => false);
+      // Every branch below used to reopen a modal. On a chat that is open and
+      // receiving messages that meant a full rebuild on each tick, wiping the
+      // composer. Painting in place keeps the conversation live without taking
+      // the keyboard away from the person using it.
       if (activeThreadId) {
         const changed = await syncTitoPayChatThread(activeThreadId);
         if (changed && sessionStorage.getItem("titopay_active_chat_thread") === activeThreadId) {
-          openTitoPayChatThread(activeThreadId);
+          repaintChatThread(activeThreadId);
         } else if ((threadsChanged || notificationChanged) && document.querySelector(".titopay-chat-shell")) {
-          openTitoPayChatModal();
+          repaintChatThreadList();
         } else if ((threadsChanged || notificationChanged) && !document.querySelector(".modal-backdrop")) {
           render();
         }
         return;
       }
-      if (threadsChanged && document.querySelector(".titopay-chat-shell")) openTitoPayChatModal();
+      if (threadsChanged && document.querySelector(".titopay-chat-shell")) repaintChatThreadList();
       else if ((threadsChanged || notificationChanged) && !document.querySelector(".modal-backdrop")) render();
     } catch (error) {
       if (error.status === 401 || error.status === 403) stopTitoPayChatPolling();
@@ -7035,7 +13523,17 @@ function normalizeTitoPayChatApiMessage(item, thread) {
 
 function mergeTitoPayChatMessages(thread, messages) {
   let changed = false;
-  const incoming = messages.map((item) => normalizeTitoPayChatApiMessage(item, thread)).filter(Boolean);
+  // Cleared is cleared: without this watermark the very next poll would pull
+  // the same history straight back from the server, and "clear chat to save
+  // space" would last five seconds. New messages still arrive normally.
+  const clearedAt = Math.max(
+    new Date(thread.clearedAt || 0).getTime() || 0,
+    new Date(localStorage.getItem(TITOPAY_CHAT_CLEARED_KEY) || 0).getTime() || 0
+  );
+  const incoming = messages
+    .map((item) => normalizeTitoPayChatApiMessage(item, thread))
+    .filter(Boolean)
+    .filter((item) => !clearedAt || (new Date(item.createdAt).getTime() || Date.now()) > clearedAt);
   if (!Array.isArray(thread.messages)) thread.messages = [];
   incoming.forEach((item) => {
     const index = thread.messages.findIndex((existing) => {
@@ -7044,11 +13542,19 @@ function mergeTitoPayChatMessages(thread, messages) {
       return false;
     });
     if (index >= 0) {
-      thread.messages[index] = Object.assign({}, thread.messages[index], item, {
-        text: item.text || thread.messages[index].text,
-        status: item.status || thread.messages[index].status
+      const existing = thread.messages[index];
+      const next = Object.assign({}, existing, item, {
+        text: item.text || existing.text,
+        status: item.status || existing.status
       });
-      changed = true;
+      // The poll returns the same messages every five seconds. Reporting
+      // "changed" for an identical merge made the caller rebuild the message
+      // list on every tick -- which is what made the open chat jump around
+      // under the reader's finger. Only a real difference counts.
+      if (next.text !== existing.text || next.status !== existing.status || next.id !== existing.id) {
+        thread.messages[index] = next;
+        changed = true;
+      }
     } else {
       thread.messages.push(item);
       changed = true;
@@ -7333,7 +13839,12 @@ async function submitTitoPayChatMessage(form, snapshotFormData) {
   thread.messages.push(message);
   updateTitoPayChatThread(thread);
   form.reset();
-  openTitoPayChatThread(threadId);
+  clearChatDraft(threadId);
+  // Paint the sent message into the open thread rather than rebuilding the
+  // modal, so the composer keeps focus and the keyboard stays up.
+  repaintChatThread(threadId);
+  const composer = chatComposer();
+  if (composer) composer.focus();
   try {
     const result = await sendTitoPayChatMessageToApi(thread, text, message.clientMessageId || message.id);
     const liveThread = titoPayChatThreads().find((item) => item.id === threadId);
@@ -7353,9 +13864,16 @@ async function submitTitoPayChatMessage(form, snapshotFormData) {
     }
     showToast(error.message && !/request failed|not reachable|timed out/i.test(error.message) ? error.message : "Unable to send message. Please try again.", "error");
   }
-  openTitoPayChatThread(threadId);
+  repaintChatThread(threadId);
+  // setBusy() disables every control while the send is in flight, and disabling
+  // the focused textarea blurs it. Re-focusing has to wait until the shared
+  // submit handler has re-enabled the form, which happens after this returns.
+  setTimeout(() => {
+    const restored = chatComposer();
+    if (restored && !restored.disabled) restored.focus();
+  }, 0);
   syncTitoPayChatThread(threadId).then((changed) => {
-    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) openTitoPayChatThread(threadId);
+    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) repaintChatThread(threadId);
   }).catch(() => null);
 }
 
@@ -8054,6 +14572,149 @@ function filteredTransactions() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Statements
+//
+// The Statements tile used to navigate to the wallet activity list and stop
+// there. Everything a statement needs already existed -- the date filters, the
+// PDF builder and the CSV builder -- but nothing tied them together, told you
+// what period you were about to export, or summarised what was in it.
+//
+// This screen drives the same state.transactionFilters the activity list uses,
+// so the summary on screen and the exported file are always the same set of
+// transactions. No totals are calculated anywhere else.
+// ---------------------------------------------------------------------------
+
+const STATEMENT_PERIODS = [
+  { id: "this-month", label: "This month" },
+  { id: "last-month", label: "Last month" },
+  { id: "three-months", label: "Last 3 months" },
+  { id: "this-year", label: "This year" },
+  { id: "all", label: "All time" }
+];
+
+function statementPeriodRange(id, today = new Date()) {
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  if (id === "this-month") return { from: isoDate(new Date(year, month, 1)), to: isoDate(today) };
+  if (id === "last-month") return { from: isoDate(new Date(year, month - 1, 1)), to: isoDate(new Date(year, month, 0)) };
+  if (id === "three-months") return { from: isoDate(new Date(year, month - 2, 1)), to: isoDate(today) };
+  if (id === "this-year") return { from: isoDate(new Date(year, 0, 1)), to: isoDate(today) };
+  return { from: "", to: "" };
+}
+
+function statementTotals(items) {
+  return items.reduce((totals, item) => {
+    const value = Math.abs(Number(item.total ?? item.amount ?? 0) || 0);
+    if ((item.direction || "debit") === "credit") totals.in += value;
+    else totals.out += value;
+    return totals;
+  }, { in: 0, out: 0 });
+}
+
+function statementPeriodLabel() {
+  const { from, to } = state.transactionFilters;
+  if (!from && !to) return "All transactions on this account";
+  if (from && to) return `${friendlyDate(from)} to ${friendlyDate(to)}`;
+  if (from) return `From ${friendlyDate(from)}`;
+  return `Up to ${friendlyDate(to)}`;
+}
+
+function renderStatementSummary() {
+  const host = document.querySelector("[data-statement-summary]");
+  if (!host) return;
+  const items = filteredTransactions();
+  const totals = statementTotals(items);
+  const net = totals.in - totals.out;
+  host.innerHTML = `
+    <p class="statement-period">${esc(statementPeriodLabel())}</p>
+    <div class="statement-figures">
+      <div><span>Transactions</span><strong>${items.length}</strong></div>
+      <div><span>Money in</span><strong class="is-credit">${esc(money(totals.in))}</strong></div>
+      <div><span>Money out</span><strong class="is-debit">${esc(money(totals.out))}</strong></div>
+      <div class="statement-net"><span>Net movement</span><strong>${esc(`${net < 0 ? "-" : ""}${money(Math.abs(net))}`)}</strong></div>
+    </div>
+    ${items.length
+      ? `<p class="field-hint">These ${items.length} transaction${items.length === 1 ? "" : "s"} are exactly what the PDF and CSV will contain.</p>`
+      : `<p class="field-hint">No transactions fall in this period, so an export would be empty. Choose a wider period.</p>`}`;
+
+  const exports = document.querySelectorAll("[data-statement-export]");
+  exports.forEach((button) => { button.disabled = items.length === 0; });
+}
+
+function applyStatementPeriod(id) {
+  const range = statementPeriodRange(id);
+  state.transactionFilters.from = range.from;
+  state.transactionFilters.to = range.to;
+  const form = document.querySelector("[data-statement-form]");
+  if (form) {
+    const fromField = form.querySelector("[data-statement-from]");
+    const toField = form.querySelector("[data-statement-to]");
+    if (fromField) fromField.value = range.from;
+    if (toField) toField.value = range.to;
+  }
+  document.querySelectorAll("[data-statement-period]").forEach((chip) => {
+    const active = chip.dataset.statementPeriod === id;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  renderStatementSummary();
+}
+
+function applyStatementCustomRange() {
+  const from = document.querySelector("[data-statement-from]");
+  const to = document.querySelector("[data-statement-to]");
+  state.transactionFilters.from = from ? from.value : "";
+  state.transactionFilters.to = to ? to.value : "";
+  document.querySelectorAll("[data-statement-period]").forEach((chip) => {
+    chip.classList.remove("is-active");
+    chip.setAttribute("aria-pressed", "false");
+  });
+  renderStatementSummary();
+}
+
+function openStatementsModal() {
+  // A statement is a period, not a search. Clearing these means the summary on
+  // screen and the exported file can never disagree with each other.
+  state.transactionFilters.search = "";
+  state.transactionFilters.direction = "all";
+  const isBusiness = state.accountType === "business";
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Statements</p>
+        <h2>${isBusiness ? "Business statements" : "Wallet statements"}</h2>
+        <p class="lead">Choose a period, check the summary, then download it as a PDF statement or a CSV export.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    <div class="statement-periods" role="group" aria-label="Statement period">
+      ${STATEMENT_PERIODS.map((period) => `<button class="chip" type="button" data-statement-period="${esc(period.id)}" aria-pressed="false">${esc(period.label)}</button>`).join("")}
+    </div>
+
+    <div class="statement-range" data-statement-form>
+      <div class="field">
+        <label for="statement-from">From</label>
+        <input id="statement-from" type="date" data-statement-from value="${esc(state.transactionFilters.from || "")}">
+      </div>
+      <div class="field">
+        <label for="statement-to">To</label>
+        <input id="statement-to" type="date" data-statement-to value="${esc(state.transactionFilters.to || "")}">
+      </div>
+    </div>
+
+    <section class="statement-summary" data-statement-summary aria-live="polite"></section>
+
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-statement-export data-action="export-pdf">${icon("statement")} Download PDF statement</button>
+      <button class="btn secondary" type="button" data-statement-export data-action="export-csv">${icon("download")} Export CSV</button>
+    </div>
+    <p class="field-hint">The statement is built from the transactions TitoPay holds for this account. It is a record of wallet activity, not a bank statement.</p>
+  `);
+  applyStatementPeriod("this-month");
+}
+
 function downloadTransactionsCsv() {
   const items = filteredTransactions();
   const rows = [
@@ -8347,7 +15008,9 @@ function businessDocumentPdf(document) {
   stroke(52, 560, 491, 22, "0.82 0.88 0.98");
   text(64, 568, `Document no: ${documentNoLine}`, 8.5, "F2", "0.04 0.11 0.27");
   text(250, 568, `Reference: ${documentRefLine}`, 8.2, "F1", "0.42 0.46 0.55");
-  rightText(532, 568, `Issued ${documentTimestamp(issued)}`, 8.2, "F1", "0.42 0.46 0.55");
+  const issuedLabel = document.issueDate ? friendlyDate(document.issueDate) : documentTimestamp(issued);
+  const dueLabel = document.dueDate ? `${document.dateLabel || "Due"}: ${friendlyDate(document.dueDate)}` : "";
+  rightText(532, 568, dueLabel ? `Issued ${issuedLabel} | ${dueLabel}` : `Issued ${issuedLabel}`, 8.2, "F1", "0.42 0.46 0.55");
 
   text(52, 528, "ITEMS", 10, "F2", "0.12 0.32 0.62");
   fill(52, 498, 491, 22, "0.03 0.08 0.22");
@@ -8377,6 +15040,13 @@ function businessDocumentPdf(document) {
 
   text(52, 190, "NOTES", 10, "F2", "0.12 0.32 0.62");
   splitStatementText(document.notes || "Thank you for your business.", 72, 2).forEach((lineValue, index) => text(52, 174 - index * 11, lineValue, 8.5, "F1", "0.42 0.46 0.55"));
+  // A quote that does not say it is an offer, or a proforma that does not say
+  // it is not a tax invoice, is the kind of document that causes a dispute.
+  if (document.disclaimer) {
+    fill(52, 138, 491, 24, "0.96 0.97 1.00");
+    stroke(52, 138, 491, 24, "0.86 0.90 0.98");
+    splitStatementText(document.disclaimer, 92, 1).forEach((lineValue) => text(62, 146, lineValue, 7.6, "F2", "0.12 0.32 0.62"));
+  }
   text(52, 126, "PDF EXTRACTION", 10, "F2", "0.12 0.32 0.62");
   text(52, 110, `Fee paid: ${document.pdfFeePaid ? "Yes" : "No"} | Fee: ${statementMoney(DOCUMENT_PDF_FEE)} | Ref: ${compactStatementReference(document.pdfFeeReference || "Pending", 30)}`, 8, "F1", "0.42 0.46 0.55");
 
@@ -8619,12 +15289,66 @@ async function shareQrCode(button) {
   await copyTextValue(shareValue, button.closest("[data-qr-card]"));
 }
 
+const MODAL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function modalFocusable(card) {
+  return Array.from(card.querySelectorAll(MODAL_FOCUSABLE)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+}
+
+// Escape only dismisses a modal that already offers a close affordance, so
+// flows that intentionally withhold one stay non-dismissible.
+function modalIsDismissible(card) {
+  const closer = card.querySelector("[data-close]");
+  return Boolean(closer && !closer.disabled);
+}
+
+// A completed transaction calls render(), which replaces #app and destroys the
+// control that opened the flow. Remembering how to find that control again --
+// not just the element itself -- lets focus return to it afterwards, without
+// touching render() or the navigation architecture.
+const MODAL_OPENER_ATTRIBUTES = ["data-service", "data-route", "data-transaction-open", "data-receipt-open", "data-action"];
+
+function modalOpenerSelector(element) {
+  if (!(element instanceof HTMLElement)) return "";
+  for (let index = 0; index < MODAL_OPENER_ATTRIBUTES.length; index += 1) {
+    const attribute = MODAL_OPENER_ATTRIBUTES[index];
+    const value = element.getAttribute(attribute);
+    if (value == null || value === "") continue;
+    return `[${attribute}="${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+  }
+  return "";
+}
+
+function isFocusRestorationTarget(element) {
+  return element instanceof HTMLElement
+    && element !== document.body
+    && element !== document.documentElement;
+}
+
+function resolveModalOpener(opener, selector) {
+  if (isFocusRestorationTarget(opener) && document.contains(opener)) return opener;
+  if (!selector) return null;
+  let replacement = null;
+  try {
+    replacement = document.querySelector(selector);
+  } catch (error) {
+    return null;
+  }
+  return isFocusRestorationTarget(replacement) && replacement.offsetParent !== null ? replacement : null;
+}
+
 function openModal(html) {
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
+  const opener = keepPrevious ? state.modalOpener : active;
+  const openerSelector = keepPrevious ? state.modalOpenerSelector : modalOpenerSelector(active);
   closeModal();
+  state.modalOpener = opener;
+  state.modalOpenerSelector = openerSelector || "";
   lockPageScroll();
   const wrapper = document.createElement("div");
   wrapper.className = "modal-backdrop";
-  wrapper.innerHTML = `<section class="modal-card">${html}</section>`;
+  wrapper.innerHTML = `<section class="modal-card" role="dialog" aria-modal="true" tabindex="-1">${html}</section>`;
   wrapper.addEventListener("click", async (event) => {
     if (event.target === wrapper || event.target.closest("[data-close]")) {
       closeModal();
@@ -8653,8 +15377,49 @@ function openModal(html) {
     }
   });
   document.body.appendChild(wrapper);
+  paintProgressBars(wrapper);
   document.body.classList.add("modal-open");
   enhanceContactPickerControls(wrapper);
+
+  const card = wrapper.querySelector(".modal-card");
+  // Associate the dialog with its own heading for screen readers.
+  const heading = card.querySelector("h2, h3");
+  if (heading) {
+    if (!heading.id) heading.id = `titopay-modal-title-${Date.now().toString(36)}`;
+    card.setAttribute("aria-labelledby", heading.id);
+  } else {
+    card.setAttribute("aria-label", "TitoPay dialog");
+  }
+
+  // Move focus into the dialog without stealing it from an autofocused field.
+  const firstField = card.querySelector("input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])");
+  (firstField || card).focus({ preventScroll: true });
+
+  wrapper.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (!modalIsDismissible(card)) return;
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = modalFocusable(card);
+    if (!focusable.length) {
+      event.preventDefault();
+      card.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === card || !card.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
 }
 
 function closeModal() {
@@ -8663,8 +15428,16 @@ function closeModal() {
   if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
   stopTitoPayChatPolling();
   resetProfilePhotoCrop();
+  activeVasJourney = null;
   document.body.classList.remove("modal-open");
   unlockPageScroll();
+  const opener = state.modalOpener;
+  const openerSelector = state.modalOpenerSelector;
+  state.modalOpener = null;
+  state.modalOpenerSelector = "";
+  if (!backdrop) return;
+  const target = resolveModalOpener(opener, openerSelector);
+  if (target) target.focus({ preventScroll: true });
 }
 
 function lockPageScroll() {
@@ -8684,7 +15457,19 @@ function unlockPageScroll() {
   document.body.style.left = "";
   document.body.style.right = "";
   document.body.style.width = "";
-  if (scrollY) window.scrollTo(0, scrollY);
+  if (scrollY) {
+    window.scrollTo(0, scrollY);
+    // While the body was fixed the document had no scrollable height, so the
+    // synchronous call above can be clamped to 0 before layout catches up.
+    // Re-applying on the next frame is what actually returns the reader to
+    // where they were. Skipped if another modal opened in the meantime, so the
+    // deferred call cannot fight a fresh scroll lock.
+    requestAnimationFrame(() => {
+      if (document.body.classList.contains("modal-open")) return;
+      if (Math.abs(currentScrollY() - scrollY) > 2) window.scrollTo(0, scrollY);
+      syncTopbarScrollState();
+    });
+  }
   state.modalScrollY = 0;
 }
 
@@ -8711,6 +15496,12 @@ function showToast(message, type = "") {
   if (currentToast && currentToast.parentNode) currentToast.parentNode.removeChild(currentToast);
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
+  // Financial outcomes must reach assistive technology. Errors interrupt
+  // (alert/assertive); everything else is announced politely. One live element
+  // at a time, so no duplicate announcements.
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+  toast.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
+  toast.setAttribute("aria-atomic", "true");
   toast.textContent = message;
   document.body.appendChild(toast);
   setTimeout(() => {
@@ -8756,6 +15547,8 @@ function icon(name) {
     "bank-transfer": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M7 10v7"/><path d="M12 10v7"/><path d="M17 10v7"/><path d="M4 17h16"/><path d="m8 21 8-8"/><path d="M16 17v-4h-4"/>`,
     send: `<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>`,
     download: `<path d="m12 5 0 14"/><path d="m18 13-6 6-6-6"/><path d="M5 21h14"/>`,
+    "chevron-down": `<path d="m6 9 6 6 6-6"/>`,
+    plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
     copy: `<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
     qr: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h2"/><path d="M20 14v2"/><path d="M16 18h4"/><path d="M14 20h2"/>`,
     "qr-receive": `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M15 16h5"/><path d="m17 14-2 2 2 2"/><path d="M20 20h-6"/>`,
@@ -8764,9 +15557,11 @@ function icon(name) {
     phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
     "sim-card": `<path d="M8 2h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h4"/><path d="M9 14h6"/><path d="M9 18h3"/><path d="M10 10h.01"/><path d="M14 10h.01"/>`,
     signal: `<path d="M4 18h2"/><path d="M9 18v-4"/><path d="M14 18v-8"/><path d="M19 18V6"/>`,
+    "voice-bundle": `<path d="M7.5 3.5 10 8 8 9.5a10 10 0 0 0 6.5 6.5L16 14l4.5 2.5-1 3a2 2 0 0 1-2.1 1.4C10.6 20 4 13.4 3.1 6.6A2 2 0 0 1 4.5 4.5Z"/><path d="M15.5 4.2a5.5 5.5 0 0 1 4.3 4.3"/>`,
+    "sms-bundle": `<path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16h-8.5L7 20v-4H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 4Z"/><path d="M7 8.5h10"/><path d="M7 12h6"/>`,
     "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
     zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
-    electricity: `<path d="m13 2-9 13h7l-1 7 10-14h-7z"/><path d="M5 21h14"/>`,
+    electricity: `<path d="M12 2.6a6.4 6.4 0 0 0-3.7 11.6c.5.4.8 1 .8 1.6v.6h5.8v-.6c0-.6.3-1.2.8-1.6A6.4 6.4 0 0 0 12 2.6Z"/><path d="M9.4 19h5.2"/><path d="M10.2 21.6h3.6"/>`,
     tag: `<path d="M20 13 11 22l-9-9V4h9z"/><path d="M7 7h.01"/>`,
     voucher: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M9 9h.01"/><path d="M9 15h.01"/><path d="M13 9h4"/><path d="M13 15h4"/>`,
     gift: `<path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7Z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z"/>`,
@@ -8799,14 +15594,14 @@ function icon(name) {
     grid: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/>`,
     list: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`,
     "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
-    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h4"/>`,
+    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 19v-3.5"/><path d="M12 19v-6"/><path d="M14.5 19v-4.5"/>`,
     invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
-    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 11v2.6"/><path d="M12.5 11v2.6"/><path d="M9.5 17h5"/>`,
-    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 11h7"/><path d="M9 15h7"/><path d="M9 19h5"/>`,
-    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/><path d="M7 16h4"/>`,
+    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M10 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M14.5 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M9 19h7"/>`,
+    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h2"/><path d="M13 20h3"/>`,
+    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h5"/><path d="M7 14.5h3"/><path d="M19 12h-5.5"/><path d="m16 9 -2.6 3 2.6 3"/>`,
     "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
-    chat: `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="M8.5 11.8h.01"/><path d="M12 11.8h.01"/><path d="M15.5 11.8h.01"/>`,
-    chatbot: `<path d="M7.3 18.6 4 20l1.15-3.3A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.7-1.4Z"/><path d="m12 8.4 1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1z"/>`,
+    chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,
+    chatbot: `<path d="M3 11.5a9 9 0 0 1 18 0"/><path d="M3 11.5h2.4a1.6 1.6 0 0 1 1.6 1.6v3a1.6 1.6 0 0 1-1.6 1.6h-.8A1.6 1.6 0 0 1 3 16.1z"/><path d="M21 11.5h-2.4a1.6 1.6 0 0 0-1.6 1.6v3a1.6 1.6 0 0 0 1.6 1.6h.8a1.6 1.6 0 0 0 1.6-1.6z"/><path d="M21 16.1v1.9a3.5 3.5 0 0 1-3.5 3.5H13"/>`,
     feedback: `<path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6A3.5 3.5 0 0 1 16.5 16H11l-5 4v-4.4A3.5 3.5 0 0 1 4 12.5z"/><path d="m9 9 2 2 4-4"/><path d="M9 13h6"/>`,
     bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
     search: `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
@@ -8825,7 +15620,8 @@ function icon(name) {
     maintenance: `<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`,
     menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
     "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
-    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`
+    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+    ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`
   };
   return `<svg ${common}>${paths[resolvedName] || paths.grid}</svg>`;
 }

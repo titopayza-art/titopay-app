@@ -152,15 +152,16 @@ a:focus-visible {
   text-align: center;
 }
 
+/* The wordmark is a transparent PNG cropped to the ink, so it needs no
+   rounded card and no blend mode to hide a white canvas -- both of those
+   were what drew the frame around the logo. */
 .launch-logo,
 .offline-card img,
 .brand-logo {
-  width: min(220px, 58vw);
+  width: min(186px, 49vw);
   height: auto;
   display: block;
   border: 0;
-  border-radius: clamp(18px, 4vw, 24px);
-  mix-blend-mode: multiply;
 }
 
 .loader {
@@ -200,6 +201,23 @@ a:focus-visible {
   overflow-x: clip;
   overflow-y: visible;
   overscroll-behavior: contain;
+}
+
+/* Authenticated screens sit under the fixed bar. The reserved space is the bar
+   height plus a 20px gutter, which is the first thing the hero or wallet card
+   is measured from. The safe-top inset is already inside --app-header-h, so it
+   must not be added again here. */
+body:not(.landing-static) .screen {
+  padding-top: calc(var(--app-header-h) + 20px);
+  scroll-padding-top: calc(var(--app-header-h) + 12px);
+}
+
+/* The screen's own padding sets the distance from the bar. A first child that
+   also carries a top margin -- .hero does -- made that distance 32px on some
+   routes and 20px on others, so the gap under the header depended on which
+   page you were looking at. */
+body:not(.landing-static) .screen > *:first-child {
+  margin-top: 0;
 }
 
 .screen > *,
@@ -243,6 +261,71 @@ a:focus-visible {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: clamp(16px, 4vw, 24px);
+}
+
+/* Fixed top app bar -------------------------------------------------------
+   The authenticated header is chrome, not content: it leaves the scrolling
+   flow entirely and the screen reserves its height as padding. That is what
+   guarantees nothing can pass underneath it, rather than relying on stacking
+   order alone.
+
+   Height resolves to 64px where there is no inset (Android, desktop) and to
+   roughly 91px on a notched iPhone, where the 44px bar sits below a ~47px
+   inset. The status bar area is part of the bar and shares its background, so
+   there is never a strip of page colour above it. */
+:root {
+  --app-bar-row: 64px;
+  /* The content row has to clear the 48px buttons, not just fit the wordmark.
+     At 44px they were pressed against both edges of the bar and the logo had
+     to shrink to match; 56px gives all three room and uses the white space
+     that was sitting empty under the status bar. */
+  --app-bar-min-row: 56px;
+  --app-header-h: max(var(--app-bar-row), calc(var(--app-bar-min-row) + var(--safe-top)));
+}
+
+.app-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  height: var(--app-header-h);
+  margin-bottom: 0;
+  padding: var(--safe-top) max(var(--screen-pad-x), var(--safe-right)) 0 max(var(--screen-pad-x), var(--safe-left));
+  background: #fff;
+  border-bottom: 1px solid transparent;
+  /* Nothing in the bar may paint below its own edge. Without this the logo
+     overhung the divider and read as a curved notch over the wallet card. */
+  overflow: hidden;
+  transition: border-color 180ms var(--ease-premium), box-shadow 180ms var(--ease-premium);
+}
+
+/* The divider and shadow only appear once there is content behind the bar, so
+   a page sitting at the top reads as one continuous surface. */
+.app-topbar.is-scrolled {
+  border-bottom-color: var(--line);
+  box-shadow: 0 1px 12px rgba(6, 26, 61, 0.06);
+}
+
+/* Sized by height, not width, so the wordmark can never be taller than the
+   bar's content row on a device with a large safe-area inset. The bar row is
+   44-64px and the wordmark was taking 32 of it, which left the mark small and
+   the two buttons crowded into the corner beside a band of empty white. */
+.topbar.app-topbar {
+  gap: clamp(12px, 4vw, 24px);
+}
+
+.topbar.app-topbar .brand-logo {
+  flex: 0 0 auto;
+  width: auto;
+  height: clamp(30px, calc(var(--app-header-h) - var(--safe-top) - 6px), 42px);
+}
+
+/* The chat and notification buttons had a 10px gap and sat hard against the
+   right inset. Both now breathe. */
+.app-topbar > div {
+  gap: clamp(10px, 3vw, 16px);
 }
 
 .topbar > div {
@@ -415,31 +498,61 @@ h3 {
   margin-inline: auto;
 }
 
+/* Segmented control: a thumb that slides between the two options rather than
+   two buttons swapping colour. The track is the positioning context and the
+   thumb is a real element, so the movement is a transform rather than a repaint
+   and stays smooth on a phone. */
 .segment {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-  padding: 6px;
+  gap: 0;
+  padding: 5px;
   margin: 0 auto clamp(16px, 4vw, 22px);
   max-width: 380px;
   background: #eef4ff;
   border: 1px solid var(--line);
   border-radius: 999px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), var(--shadow-soft);
+  touch-action: pan-y;
+}
+
+.segment-thumb {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  bottom: 5px;
+  width: calc(50% - 5px);
+  border-radius: 999px;
+  background: var(--blue);
+  box-shadow: 0 4px 12px rgba(10, 77, 255, 0.22);
+  transition: transform 320ms var(--ease-premium);
+  pointer-events: none;
+}
+
+.segment.is-business .segment-thumb {
+  transform: translateX(100%);
 }
 
 .segment button {
+  position: relative;
+  z-index: 1;
   min-height: 46px;
   border-radius: 999px;
   color: var(--muted);
   background: transparent;
   font-weight: 600;
+  transition: color 240ms var(--ease-premium);
 }
 
 .segment button.active {
   color: #fff;
-  background: var(--blue);
-  box-shadow: 0 4px 12px rgba(10, 77, 255, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment-thumb {
+    transition: none;
+  }
 }
 
 .trust-strip,
@@ -485,6 +598,22 @@ h3 {
 .section-head.quick-services-head {
   margin-top: 2px;
   margin-bottom: -2px;
+}
+
+/* Home is meant to fit the screen. A stacked eyebrow and heading spent ~60px
+   introducing three numbers, so they share a baseline instead. */
+.home-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.home-summary-head h2,
+.home-summary-head .eyebrow {
+  margin: 0;
 }
 
 .landing-flow .section-head {
@@ -834,6 +963,11 @@ h3 {
   padding-bottom: 22px;
 }
 
+/* A page that fits must feel fixed: no rubber-band scroll on the landing. */
+body.landing-static {
+  overscroll-behavior-y: none;
+}
+
 .landing-flow {
   gap: clamp(10px, 2.2vw, 14px);
 }
@@ -843,12 +977,11 @@ h3 {
 }
 
 .landing-flow .brand-logo {
-  width: min(188px, 50vw);
+  width: min(160px, 42vw);
 }
 
 .screen:not(.auth-screen) > .topbar .brand-logo {
-  width: min(156px, 42vw);
-  border-radius: clamp(14px, 3vw, 20px);
+  width: min(132px, 36vw);
 }
 
 .landing-flow .icon-btn {
@@ -889,15 +1022,15 @@ h3 {
 }
 
 .landing-flow .preview-grid .service-tile {
-  min-height: clamp(92px, 22vw, 112px);
-  gap: 8px;
-  padding: 12px 7px;
+  min-height: clamp(86px, 21vw, 108px);
+  gap: 7px;
+  padding: 11px 6px;
   border-radius: 20px;
 }
 
 .landing-flow .preview-grid .icon-bubble {
-  width: clamp(46px, 11.5vw, 54px);
-  height: clamp(46px, 11.5vw, 54px);
+  width: clamp(43px, 11vw, 52px);
+  height: clamp(43px, 11vw, 52px);
 }
 
 .landing-flow .auth-actions {
@@ -922,6 +1055,129 @@ h3 {
 .landing-flow .scan-card p {
   margin-bottom: 8px;
   line-height: 1.36;
+}
+
+/* The landing closes on its call to action rather than on a link. The card
+   runs to the edges of the screen and carries a tinted ground so it reads as
+   the foot of the page instead of one more tile in the stack -- the website
+   link that used to sit under it moved into the menu. */
+.landing-flow .scan-card.landing-cta-footer {
+  border: 0;
+  border-top: 1px solid rgba(10, 77, 255, 0.16);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(79, 163, 255, 0.1), rgba(79, 163, 255, 0.18));
+  box-shadow: none;
+}
+
+/* The footer is the QR pitch, so it is built as a band rather than a strip:
+   a navy ground, the mark at poster size, the claim, three proof points and a
+   filled action. It is the last thing on the page and the first thing the
+   product is about. */
+.landing-flow .scan-card.landing-cta-footer {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: clamp(12px, 3vw, 22px);
+  color: #fff;
+  background: linear-gradient(135deg, #06214f 0%, #0a4dff 100%);
+  border-top: 0;
+}
+
+.landing-cta-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.landing-cta-eyebrow {
+  margin: 0;
+  color: var(--blue-2);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.landing-cta-footer h3 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1.14rem, 4.6vw, 1.6rem);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.landing-flow .scan-card.landing-cta-footer p.landing-cta-lead {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: clamp(0.82rem, 3vw, 0.95rem);
+  line-height: 1.4;
+}
+
+.landing-cta-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-cta-points li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.landing-cta-points svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--blue-2);
+}
+
+.landing-cta-footer .icon-bubble {
+  width: clamp(48px, 13vw, 64px);
+  height: clamp(48px, 13vw, 64px);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.landing-cta-footer .icon-bubble svg {
+  width: 55%;
+  height: 55%;
+}
+
+.landing-flow .scan-card.landing-cta-footer .btn.landing-cta-btn {
+  min-height: 52px;
+  padding-inline: clamp(16px, 4vw, 26px);
+  color: #06214f;
+  font-weight: 800;
+  white-space: nowrap;
+  background: #fff;
+  border-color: #fff;
+  box-shadow: 0 10px 24px rgba(3, 15, 65, 0.28);
+}
+
+/* On a phone the three-column row squeezes the claim into four wrapped lines
+   and the band grows to 250px. The action moves under the copy and runs the
+   full width instead, and the proof points -- which are a desktop nicety --
+   stand down. The band lands at ~150px, which is a footer. */
+@media (max-width: 599px) {
+  .landing-flow .scan-card.landing-cta-footer {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  .landing-flow .scan-card.landing-cta-footer .btn.landing-cta-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .landing-cta-points {
+    display: none;
+  }
 }
 
 .landing-site-footer {
@@ -964,14 +1220,19 @@ body.landing-static .app-shell {
   overflow: hidden;
 }
 
+/* space-between distributed all leftover height between every section, so the
+   same rule produced five dead bands on a tall phone and 5px clustering on a
+   short one. Centring collects the leftover into one margin above and below the
+   block instead, and the gap below keeps the rhythm identical at every height. */
 body.landing-static .landing-flow.auth-screen {
   height: 100vh;
   height: 100svh;
   min-height: 100vh;
   min-height: 100svh;
   overflow: hidden;
-  align-content: space-between;
+  align-content: center;
   grid-auto-rows: max-content;
+  row-gap: clamp(10px, 1.8vh, 18px);
 }
 
 @media (max-height: 760px) {
@@ -982,7 +1243,7 @@ body.landing-static .landing-flow.auth-screen {
   }
 
   body.landing-static .landing-flow .brand-logo {
-    width: min(166px, 44vw);
+    width: min(140px, 37vw);
   }
 
   body.landing-static .landing-flow .topbar {
@@ -1075,7 +1336,7 @@ body.landing-static .landing-flow.auth-screen {
 .business-landing.auth-screen {
   padding-top: calc(max(8px, var(--safe-top)) + 2px);
   padding-bottom: 12px;
-  align-content: space-between;
+  align-content: center;
 }
 
 .business-landing .topbar {
@@ -1083,7 +1344,7 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .business-landing .brand-logo {
-  width: min(182px, 48vw);
+  width: min(154px, 41vw);
 }
 
 .business-landing .landing-hero {
@@ -1094,11 +1355,18 @@ body.landing-static .landing-flow.auth-screen {
   margin-bottom: clamp(8px, 1.8vh, 12px);
 }
 
+/* nowrap forced "Accept payments. Grow your business." onto one line, which
+   ran past the hero and was clipped at every width below 430px -- 63px of it
+   was lost on a 320px screen. Balanced wrapping keeps the two sentences even
+   instead. */
 .business-landing h1 {
   margin-bottom: 5px;
-  font-size: clamp(1.12rem, 3.6vw, 1.58rem);
-  line-height: 1.03;
-  white-space: nowrap;
+  /* Matched to .landing-flow h1 so the headline is the same size on both
+     account types. It was two-thirds the size on business. */
+  font-size: clamp(1.48rem, 4.7vw, 2.05rem);
+  line-height: 1.08;
+  text-wrap: balance;
+  overflow-wrap: break-word;
 }
 
 .business-landing .lead {
@@ -1393,6 +1661,764 @@ body.landing-static .landing-flow.auth-screen {
 .document-fee-card strong {
   color: var(--navy);
   text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Business documents: invoice, quote, proforma ---------------------------- */
+
+.document-form {
+  min-width: 0;
+}
+
+.doc-section {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.doc-section > legend {
+  padding: 0 8px;
+  margin-left: 4px;
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.doc-item-head,
+.doc-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px minmax(0, 96px) minmax(0, 84px) 40px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.doc-item-head {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.doc-item-head span:nth-child(2),
+.doc-item-head span:nth-child(3),
+.doc-item-head span:nth-child(4) {
+  text-align: right;
+}
+
+.doc-items {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.doc-item-field {
+  min-width: 0;
+  margin: 0;
+}
+
+/* The row is compact, so the standard 58px field height is tightened -- but
+   never below the 44px touch target. */
+.doc-item-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  padding-inline: 12px;
+  font-size: 0.9rem;
+}
+
+.doc-item-qty input,
+.doc-item-unit input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-item-unit .input-affix {
+  min-width: 0;
+}
+
+.doc-item-total {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.86rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.doc-item-remove {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+}
+
+.doc-item-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.doc-add-item {
+  justify-self: start;
+}
+
+.doc-totals {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.doc-totals div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.doc-totals span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.doc-totals strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.doc-total-row {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.doc-total-row span {
+  color: var(--navy);
+  font-weight: 700;
+}
+
+.doc-total-row strong {
+  color: var(--blue);
+  font-size: 1.12rem;
+}
+
+.doc-dates {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.doc-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.doc-terms .chip {
+  min-height: 44px;
+  padding-inline: 14px;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.doc-terms .chip.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.doc-disclaimer {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+  color: var(--navy);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* The five-column row needs ~500px of viewport before the description column
+   is wide enough for its own heading; below that "DESCRIPTION" ran straight
+   into "QTY" and the description input collapsed to a stub. Every phone,
+   including the 440pt models, gets the stacked card instead. */
+@media (max-width: 560px) {
+  .doc-item-head {
+    display: none;
+  }
+
+  .doc-item {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+    grid-template-areas:
+      "desc desc remove"
+      "qty unit unit"
+      "total total total";
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+    background: var(--soft);
+  }
+
+  .doc-item-desc { grid-area: desc; }
+  .doc-item-qty { grid-area: qty; }
+  .doc-item-unit { grid-area: unit; }
+  .doc-item-total { grid-area: total; text-align: right; }
+  .doc-item-remove { grid-area: remove; }
+
+  .doc-item-qty input,
+  .doc-item-unit input {
+    text-align: left;
+  }
+
+  /* On the stacked layout the fields need their own visible names. */
+  .doc-item-qty .visually-hidden,
+  .doc-item-unit .visually-hidden {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0 0 6px;
+    clip: auto;
+    clip-path: none;
+    overflow: visible;
+    white-space: normal;
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+}
+
+@media (min-width: 480px) {
+  .doc-dates {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Statements -------------------------------------------------------------- */
+
+.statement-periods {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.statement-periods::-webkit-scrollbar {
+  display: none;
+}
+
+.statement-periods .chip {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding-inline: 14px;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.statement-periods .chip.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.statement-range {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 14px;
+}
+
+.statement-summary {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 16px;
+  padding: 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--soft);
+}
+
+.statement-period {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.statement-figures {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.statement-figures div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.statement-figures span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.statement-figures strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.statement-figures .is-credit {
+  color: var(--success);
+}
+
+.statement-figures .is-debit {
+  color: var(--navy);
+}
+
+.statement-net {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.statement-net span {
+  color: var(--navy);
+  font-weight: 700;
+}
+
+.statement-net strong {
+  color: var(--blue);
+  font-size: 1.08rem;
+}
+
+/* Bill split -------------------------------------------------------------- */
+
+.split-participants {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.split-participant {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) 40px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.split-participant .field {
+  min-width: 0;
+  margin: 0;
+}
+
+.split-participant input {
+  width: 100%;
+  min-width: 0;
+}
+
+.split-share {
+  margin: 0;
+  color: var(--blue);
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.split-share:empty {
+  display: none;
+}
+
+.split-remove {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+}
+
+.split-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.split-add {
+  justify-self: start;
+}
+
+.split-summary {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--soft);
+}
+
+.split-summary .field-hint {
+  margin: 0;
+}
+
+.split-figures {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.split-figures div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.split-figures span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.split-figures strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 380px) {
+  .split-participant {
+    grid-template-columns: minmax(0, 1fr) 40px;
+  }
+
+  .split-share {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+
+@media (min-width: 480px) {
+  .statement-range {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Business ticketing ------------------------------------------------------ */
+
+.ticket-event {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.ticket-event.is-loading {
+  gap: 10px;
+}
+
+.ticket-event-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.ticket-event-title {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.ticket-event-title strong {
+  color: var(--navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ticket-event-title small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.ticket-status {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ticket-status.is-approved {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.ticket-status.is-pending {
+  color: var(--warning);
+  background: rgba(183, 121, 31, 0.12);
+}
+
+.ticket-status.is-attention {
+  color: var(--warning);
+  background: rgba(183, 121, 31, 0.18);
+}
+
+.ticket-status.is-rejected {
+  color: var(--danger);
+  background: rgba(217, 66, 66, 0.12);
+}
+
+.ticket-status.is-draft {
+  color: var(--muted);
+  background: var(--soft);
+}
+
+.ticket-event-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.ticket-event-figures div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.ticket-event-figures span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.ticket-event-figures strong {
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ticket-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--soft-blue);
+  overflow: hidden;
+}
+
+.ticket-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.ticket-event-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ticket-event-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* .mini was already in use on ticketing buttons but had no rule, so those
+   buttons rendered at full size. */
+.btn.mini {
+  flex: 0 1 auto;
+  min-height: 42px;
+  padding-inline: 14px;
+  font-size: 0.84rem;
+}
+
+/* Issued ticket ----------------------------------------------------------- */
+
+.ticket-stub-list {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.ticket-stub {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.ticket-stub-head {
+  display: grid;
+  gap: 4px;
+  padding: 16px 16px 14px;
+  background: var(--navy);
+  color: #fff;
+}
+
+.ticket-stub-head .eyebrow {
+  margin: 0;
+  color: var(--blue-2);
+}
+
+.ticket-stub-head strong {
+  font-size: 1.04rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ticket-stub-head span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+/* The notch between the header and the body reads as a torn ticket without
+   needing an image. */
+.ticket-stub-body {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px 16px 16px;
+  border-top: 2px dashed var(--line);
+}
+
+.ticket-stub-body::before,
+.ticket-stub-body::after {
+  content: "";
+  position: absolute;
+  top: -11px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.ticket-stub-body::before {
+  left: -11px;
+}
+
+.ticket-stub-body::after {
+  right: -11px;
+}
+
+.ticket-stub-meta {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ticket-stub-meta div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.ticket-stub-meta span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ticket-stub-meta strong {
+  color: var(--navy);
+  font-size: 0.88rem;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.ticket-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.ticket-stub-scan {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.ticket-stub-scan img {
+  width: min(200px, 100%);
+  height: auto;
+  border-radius: var(--radius-control);
+  background: #fff;
+}
+
+.ticket-stub-nocode {
+  display: grid;
+  gap: 8px;
+  place-items: center;
+  width: 100%;
+  padding: 22px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.ticket-stub-foot {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+@media (min-width: 460px) {
+  .ticket-stub-body {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .ticket-stub-scan img {
+    width: 150px;
+  }
 }
 
 .payout-order-card {
@@ -1644,10 +2670,13 @@ body.landing-static .landing-flow.auth-screen {
   padding-bottom: 2px;
 }
 
+/* 38px was under the 44px minimum touch target, app-wide: contact suggestions,
+   quick amounts, Learn categories, statement periods and document terms all
+   inherit from here. */
 .chip {
-  min-height: 38px;
+  min-height: 44px;
   flex: 0 0 auto;
-  padding: 0 12px;
+  padding: 0 14px;
   color: var(--blue);
   background: var(--soft-blue);
   border: 1px solid rgba(10, 77, 255, 0.16);
@@ -1658,7 +2687,7 @@ body.landing-static .landing-flow.auth-screen {
 .contact-picker-btn {
   display: inline-flex;
   width: fit-content;
-  min-height: 40px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -1698,7 +2727,7 @@ body.landing-static .landing-flow.auth-screen {
 .recipient-verify-btn {
   display: inline-flex;
   width: fit-content;
-  min-height: 40px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -1749,9 +2778,190 @@ body.landing-static .landing-flow.auth-screen {
   font-weight: 600;
 }
 
-.guide-list {
+/* Learn ------------------------------------------------------------------- */
+
+.learn-search-field {
+  margin-top: 4px;
+}
+
+/* One scrolling row rather than three wrapped rows: the categories are a
+   filter, not the content, and should not push the guides off screen. */
+.learn-categories {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 12px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.learn-categories::-webkit-scrollbar {
+  display: none;
+}
+
+.learn-categories .chip {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding-inline: 14px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.learn-categories .chip.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.learn-count {
+  margin: 14px 0 8px;
+  font-size: 0.8rem;
+}
+
+.learn-list {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.learn-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.learn-group-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.learn-item {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.learn-item.is-open {
+  border-color: var(--blue);
+}
+
+.learn-item h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.learn-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 16px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.learn-head-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.learn-head-text strong {
+  color: var(--navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.learn-head-text small {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.learn-chevron {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  color: var(--blue);
+  transition: transform 160ms ease;
+}
+
+.learn-item.is-open .learn-chevron {
+  transform: rotate(180deg);
+}
+
+.learn-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--line);
+  margin-top: 0;
+  padding-top: 14px;
+}
+
+.learn-points {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.learn-points li {
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.learn-points li::marker {
+  color: var(--blue);
+}
+
+.learn-note {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.learn-note strong {
   display: block;
-  margin-top: 6px;
+  margin-bottom: 4px;
+  color: var(--navy);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .learn-chevron {
+    transition: none;
+  }
 }
 
 .promo-carousel {
@@ -2557,8 +3767,8 @@ body.landing-static .landing-flow.auth-screen {
 
 .install-stage {
   padding: 16px;
-  color: var(--ink);
-  background: var(--surface-soft);
+  color: var(--text);
+  background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 16px;
 }
@@ -2628,6 +3838,111 @@ body.landing-static .landing-flow.auth-screen {
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.97);
   backdrop-filter: blur(16px);
+}
+
+/* ---------------------------------------------------------------------------
+   Landing menu
+
+   Nine identical rows of small grey text is a document, not a menu. Each topic
+   is now its own card with a heading you can scan for, and the parts that were
+   prose lists -- the benefits, the service catalogue -- are set as lists.
+   --------------------------------------------------------------------------- */
+
+.menu-sections {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.menu-section {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.menu-section-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.menu-section-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.menu-section-head .icon-bubble {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+}
+
+.menu-section-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.menu-benefits {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.menu-benefits div {
+  display: grid;
+  gap: 2px;
+  padding-left: 14px;
+  border-left: 2px solid var(--soft-blue);
+}
+
+.menu-benefits dt {
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.menu-benefits dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.menu-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-tag-list li {
+  padding: 6px 10px;
+  color: var(--navy);
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.menu-section-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: center;
+}
+
+.menu-section-links .text-link {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .landing-menu-footer {
@@ -2799,13 +4114,6 @@ body.landing-static .landing-flow.auth-screen {
   padding-inline: 12px;
 }
 
-#qr-scanner-output video {
-  width: 100%;
-  max-height: 280px;
-  border-radius: 16px;
-  object-fit: cover;
-}
-
 .merchant-pos-home {
   display: grid;
   gap: 16px;
@@ -2887,7 +4195,11 @@ body.landing-static .landing-flow.auth-screen {
   max-height: calc(100dvh - 20px);
   min-height: min(760px, calc(100dvh - 20px));
   padding: 0;
-  overflow: hidden;
+  /* The card is capped at the viewport, so anything taller than that used to
+     be clipped outright -- on a laptop that hid Generate QR, the one control
+     the till needs. The keypad now compresses to fit, and this is the net
+     underneath it: content that still cannot fit scrolls instead of vanishing. */
+  overflow: auto;
   background: #fff;
 }
 
@@ -2897,6 +4209,32 @@ body.landing-static .landing-flow.auth-screen {
   align-content: start;
   gap: 18px;
   padding: max(18px, var(--safe-top)) max(18px, var(--safe-right)) max(18px, var(--safe-bottom)) max(18px, var(--safe-left));
+}
+
+/* Till layout: everything but the keypad keeps its natural height, and the
+   keypad takes what is left. On a short viewport the keys shrink rather than
+   pushing the primary action off the bottom of the card. */
+.merchant-sale-screen:not(.merchant-qr-screen) {
+  align-content: stretch;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: clamp(10px, 1.8vh, 18px);
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-keypad {
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-keypad button {
+  min-height: clamp(44px, 8.4vh, 68px);
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-sale-amount {
+  padding: clamp(4px, 1.4vh, 18px) 8px clamp(2px, 0.8vh, 8px);
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-sale-amount strong {
+  font-size: clamp(2rem, 6.4vh, 3.8rem);
 }
 
 .merchant-sale-header {
@@ -3101,10 +4439,9 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .receipt-logo {
-  width: 132px;
+  width: 112px;
   height: auto;
   justify-self: center;
-  border-radius: 16px;
 }
 
 .receipt-card h2 {
@@ -3533,6 +4870,25 @@ input[data-profile-photo-zoom] {
   font-weight: 700;
 }
 
+/* The FICA status badge is the most-looked-at thing on the profile and it did
+   nothing when tapped. As a button it needs a real target and a pressed state. */
+.badge-btn {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 160ms var(--ease-premium), border-color 160ms var(--ease-premium);
+}
+
+.badge-btn:hover,
+.badge-btn:focus-visible {
+  border-color: var(--blue);
+}
+
+.badge-btn:active {
+  background: #dfe9ff;
+}
+
 .error-box {
   padding: 14px;
   color: #7a1e1e;
@@ -3542,6 +4898,12 @@ input[data-profile-photo-zoom] {
 }
 
 .hidden {
+  display: none !important;
+}
+
+/* Component rules set display on these elements, which beats the user-agent
+   rule for [hidden]. Without this, hiding by attribute silently does nothing. */
+[hidden] {
   display: none !important;
 }
 
@@ -3670,15 +5032,19 @@ input[data-profile-photo-zoom] {
   }
 
   .brand-logo {
-    width: min(172px, 48vw);
+    width: min(146px, 41vw);
   }
 
   .service-grid {
     gap: 9px;
   }
 
+  /* The landing preview stays three across at every width. It sits directly
+     under the three-up trust strip, so two columns broke the alignment, made
+     three rows where two do, and left a hole in the last row whenever the
+     catalogue returned five services rather than six. */
   .preview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .service-tile {
@@ -4191,8 +5557,7 @@ li {
   }
 
   body.landing-static .landing-flow .brand-logo {
-    width: min(166px, 44vw);
-    border-radius: 16px;
+    width: min(140px, 37vw);
   }
 
   body.landing-static .landing-flow .icon-btn {
@@ -4311,12 +5676,13 @@ li {
   body.landing-static .business-landing.auth-screen {
     gap: 8px;
     padding-bottom: 10px;
-    align-content: space-between;
+    align-content: center;
   }
 
   body.landing-static .business-landing h1 {
-    font-size: clamp(1.06rem, 3.4vw, 1.45rem);
-    white-space: nowrap;
+    font-size: clamp(1.32rem, 4.4vw, 1.78rem);
+    text-wrap: balance;
+    overflow-wrap: break-word;
   }
 
   body.landing-static .business-landing .trust-item {
@@ -4586,14 +5952,3506 @@ body:has(.install-float-wrap.with-nav) .screen {
   padding-bottom: calc(var(--nav-space) + 60px);
 }
 
+/* Reserve only the band the fixed install pill occupies (22px offset + 52px
+   pill + 10px gap), inside the existing single-viewport landing layout.
+   The :has() selector drops the reservation the moment the pill is
+   dismissed or unavailable. */
 body:has(.install-float-wrap.public-install) .auth-screen {
-  padding-bottom: calc(92px + var(--safe-bottom));
+  padding-bottom: calc(62px + var(--safe-bottom));
 }
 
-body.landing-static:has(.install-float-wrap.public-install),
-body.landing-static:has(.install-float-wrap.public-install) .app-shell,
-body.landing-static:has(.install-float-wrap.public-install) .landing-flow.auth-screen {
+/* ============================================================
+   Landing art-direction pass: upper-composition rhythm, brand
+   tagline, compact QR card, balanced business CTA.
+   Scoped to the public landing (.landing-flow) so authenticated
+   screens are unaffected.
+   ============================================================ */
+
+/* Wordmark sizing. The asset is cropped to the ink, so the box height is
+   the letter height -- no dead canvas above the segmented control. */
+.landing-flow .brand-logo,
+body.landing-static .landing-flow .brand-logo,
+body.landing-static .business-landing .brand-logo {
+  width: min(126px, 34vw);
+}
+
+.landing-flow .topbar {
+  margin-bottom: clamp(10px, 3vw, 16px);
+}
+
+/* Segment -> headline -> tagline reads as one deliberate block. */
+.landing-flow .segment {
+  margin-bottom: clamp(14px, 3.4vw, 18px);
+}
+
+.landing-flow h1 {
+  margin-bottom: 4px;
+}
+
+.landing-tagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-align: center;
+}
+
+.landing-flow .trust-item {
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+/* QR card: single-row composition -- capability reads left to right and the
+   sign-in action sits inline instead of stacking a third row. */
+.landing-flow .scan-card,
+body.landing-static .landing-flow .scan-card,
+body.landing-static .business-landing .scan-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.landing-flow .scan-card > div {
+  min-width: 0;
+}
+
+.landing-flow .scan-card p {
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
+.landing-flow .scan-card .btn {
+  white-space: nowrap;
+}
+
+/* Very narrow phones: let the action drop under the copy rather than squeeze. */
+@media (max-width: 359px) {
+  .landing-flow .scan-card,
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .landing-flow .scan-card .btn {
+    grid-column: 1 / -1;
+  }
+}
+
+.landing-flow .scan-card .icon-bubble {
+  width: 46px;
+  height: 46px;
+}
+
+.landing-flow .scan-card h3 {
+  margin-bottom: 2px;
+  font-size: 1.02rem;
+}
+
+.landing-flow .scan-card p {
+  margin-bottom: 10px;
+  font-size: 0.86rem;
+  line-height: 1.3;
+}
+
+.landing-flow .scan-card .btn {
+  min-height: 42px;
+  padding-inline: 14px;
+  font-size: 0.88rem;
+}
+
+/* Business CTA: give the longer label the width it needs so both
+   actions stay on one line at the same type size. */
+.business-landing .auth-actions {
+  grid-template-columns: 0.82fr 1.18fr;
+}
+
+/* Footer reads as a deliberate closing element. */
+.landing-flow .landing-site-footer {
+  margin-top: 2px;
+  padding-top: 2px;
+}
+
+/* Pay for the tagline line by trimming slack the composition does not need,
+   without compressing touch targets below 40px. */
+.landing-tagline {
+  font-size: 0.8rem;
+}
+
+body.landing-static .landing-flow .trust-item,
+body.landing-static .business-landing .trust-item {
+  min-height: 52px;
+}
+
+body.landing-static .landing-flow .preview-grid .service-tile,
+body.landing-static .business-landing .preview-grid .service-tile {
+  min-height: 84px;
+}
+
+body.landing-static .landing-flow .scan-card .btn,
+body.landing-static .business-landing .scan-card .btn {
+  min-height: 40px;
+}
+
+body.landing-static .landing-flow .scan-card,
+body.landing-static .business-landing .scan-card {
+  padding: 12px 14px;
+  gap: 12px;
+}
+
+.landing-flow .trust-item {
+  font-size: clamp(0.68rem, 2.9vw, 0.75rem);
+  text-wrap: balance;
+}
+
+body.landing-static .landing-flow .preview-grid .service-tile,
+body.landing-static .business-landing .preview-grid .service-tile {
+  min-height: 80px;
+}
+
+/* The install promo is the lowest-priority element on the landing; size it as
+   a promo rather than a primary action so it needs less clearance. */
+.install-float-wrap.public-install {
+  bottom: calc(10px + var(--safe-bottom));
+}
+
+.install-float-wrap.public-install .install-float {
+  min-height: 46px;
+  padding: 9px 14px 9px 11px;
+}
+
+.install-float-wrap.public-install .install-float span {
+  width: 30px;
+  height: 30px;
+}
+
+.install-float-wrap.public-install .install-float strong {
+  font-size: 0.84rem;
+}
+
+/* Reclaim the remaining slack without dropping any touch target below 40px. */
+body.landing-static .landing-flow .trust-item,
+body.landing-static .business-landing .trust-item {
+  min-height: 48px;
+}
+
+body.landing-static .landing-flow .preview-grid .service-tile,
+body.landing-static .business-landing .preview-grid .service-tile {
+  min-height: 76px;
+}
+
+body.landing-static .landing-flow .preview-grid .icon-bubble,
+body.landing-static .business-landing .preview-grid .icon-bubble {
+  width: 40px;
+  height: 40px;
+}
+
+body.landing-static .landing-flow .scan-card .icon-bubble,
+body.landing-static .business-landing .scan-card .icon-bubble {
+  width: 42px;
+  height: 42px;
+}
+
+.landing-flow .topbar {
+  margin-bottom: clamp(8px, 2.4vw, 12px);
+}
+
+.landing-flow .segment {
+  margin-bottom: clamp(10px, 2.6vw, 14px);
+}
+
+/* The rhythm scales with viewport height. A fixed 6px looked tight on a tall
+   phone and, now that the block is centred rather than justified, left all the
+   reclaimed height sitting as one void above and below it. */
+body.landing-static .landing-flow.auth-screen,
+body.landing-static .business-landing.auth-screen {
+  gap: 6px;
+}
+
+body.landing-static .landing-flow .preview-grid,
+body.landing-static .business-landing .preview-grid {
+  gap: 7px;
+}
+
+body.landing-static .landing-flow .preview-grid .service-tile,
+body.landing-static .business-landing .preview-grid .service-tile {
+  min-height: 72px;
+  gap: 6px;
+  padding: 8px 6px;
+}
+
+body.landing-static .landing-flow .trust-item,
+body.landing-static .business-landing .trust-item {
+  min-height: 44px;
+  gap: 3px;
+}
+
+body.landing-static .landing-flow .scan-card,
+body.landing-static .business-landing .scan-card {
+  padding: 10px 12px;
+}
+
+body.landing-static .landing-flow .scan-card .icon-bubble,
+body.landing-static .business-landing .scan-card .icon-bubble {
+  width: 40px;
+  height: 40px;
+}
+
+/* Small guaranteed gap between the footer link and the promo pill. */
+.landing-tagline {
+  font-size: 0.78rem;
+}
+
+body.landing-static .landing-flow .topbar,
+body.landing-static .business-landing .topbar {
+  margin-bottom: 6px;
+}
+
+
+.install-float-wrap.public-install .install-float {
+  min-height: 44px;
+  padding: 8px 13px 8px 10px;
+}
+
+.install-float-wrap.public-install .install-float span {
+  width: 28px;
+  height: 28px;
+}
+
+/* Trust strip: all three statements read on one line so the row scans as
+   three equal reasons rather than ragged blocks. */
+body.landing-static .landing-flow .trust-item,
+body.landing-static .business-landing .trust-item {
+  font-size: clamp(0.66rem, 2.75vw, 0.72rem);
+  padding-inline: 4px;
+  letter-spacing: -0.005em;
+}
+
+/* Business CTA: the longer label gets proportionally more width so both
+   actions stay on one line at the same type size. */
+body.landing-static .business-landing .auth-actions,
+.business-landing .auth-actions {
+  grid-template-columns: 0.74fr 1.26fr;
+}
+
+/* ============================================================
+   Landing overflow behaviour + large-viewport composition
+   ============================================================ */
+
+/* Never clip. The landing still fills exactly one viewport when the content
+   fits (so no artificial scrolling is introduced), but when the content
+   genuinely exceeds the viewport it grows and scrolls naturally instead of
+   hiding the QR card and footer behind overflow:hidden. */
+body.landing-static {
   height: auto;
   min-height: 100svh;
   overflow-y: auto;
+}
+
+body.landing-static .app-shell {
+  height: auto;
+  min-height: 100svh;
+  overflow: visible;
+}
+
+body.landing-static .landing-flow.auth-screen,
+body.landing-static .business-landing.auth-screen {
+  height: auto;
+  min-height: 100svh;
+  overflow: visible;
+}
+
+/* ------------------------------------------------------------------------
+   Landing: tablet portrait
+
+   A tall, narrow viewport keeps the single column -- splitting it in two would
+   only make the block shorter and the empty bands larger. Instead the parts
+   grow with the height that is actually there, so the composition fills the
+   screen rather than floating in the middle of it.
+   ------------------------------------------------------------------------ */
+@media (min-width: 700px) and (max-width: 899px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    max-width: 640px;
+    gap: clamp(20px, 3.4vh, 46px);
+  }
+
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(2rem, 5.2vw, 2.5rem);
+  }
+
+  body.landing-static .landing-flow .landing-tagline {
+    font-size: clamp(0.98rem, 1.9vw, 1.1rem);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(118px, 13vh, 172px);
+    gap: 12px;
+    padding: 18px 12px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble,
+  body.landing-static .business-landing .preview-grid .icon-bubble {
+    width: clamp(48px, 6vh, 60px);
+    height: clamp(48px, 6vh, 60px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span,
+  body.landing-static .business-landing .preview-grid .service-tile span {
+    font-size: clamp(0.86rem, 1.6vw, 0.96rem);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(66px, 7.5vh, 96px);
+    font-size: 0.86rem;
+  }
+
+  body.landing-static .landing-flow .auth-actions .btn,
+  body.landing-static .business-landing .auth-actions .btn {
+    min-height: clamp(54px, 6.2vh, 68px);
+  }
+
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    padding: clamp(18px, 2.6vh, 30px);
+  }
+
+  body.landing-static .landing-flow .segment {
+    max-width: 420px;
+  }
+
+  body.landing-static .landing-flow .segment button {
+    min-height: 52px;
+  }
+}
+
+/* ------------------------------------------------------------------------
+   Landing: two-column composition from tablet up
+
+   Below this width the landing is a single stacked column, which is right for
+   a phone. Above it, stacking one narrow column in the middle of a wide screen
+   is just the mobile design stretched: it left ~460px of content in a 1440px
+   viewport with large empty bands above and below. The same sections are
+   re-laid into two columns so the width carries the composition and the height
+   stops being padding.
+   ------------------------------------------------------------------------ */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    max-width: min(1080px, 92vw);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.06fr);
+    grid-template-areas:
+      "bar   bar"
+      "hero  grid"
+      "trust grid"
+      "cta   grid";
+    align-content: space-between;
+    align-content: center;
+    justify-content: center;
+    column-gap: clamp(36px, 4.6vw, 68px);
+    row-gap: clamp(24px, 5.2vh, 60px);
+  }
+
+  body.landing-static .landing-flow .topbar { grid-area: bar; }
+  body.landing-static .landing-flow .landing-hero { grid-area: hero; }
+  body.landing-static .landing-flow .trust-strip { grid-area: trust; }
+  body.landing-static .landing-flow .preview-grid { grid-area: grid; align-self: center; }
+  body.landing-static .landing-flow .auth-actions { grid-area: cta; align-self: start; }
+
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  /* The left column reads as a column of text, so it aligns left. */
+  body.landing-static .landing-flow .landing-hero {
+    text-align: left;
+    align-self: end;
+  }
+
+  body.landing-static .landing-flow .segment {
+    margin-inline: 0;
+    max-width: 320px;
+  }
+
+  /* A 43px headline on a 1440px screen reads as a phone layout enlarged. This
+     is the size a fintech homepage actually uses at this width. */
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(2.2rem, 3.7vw, 3.4rem);
+    line-height: 1.06;
+    text-wrap: balance;
+  }
+
+  /* The tagline is set centre on mobile. In the two-column layout it belongs to
+     the left text column and has to follow the headline. */
+  body.landing-static .landing-flow .landing-tagline {
+    font-size: clamp(0.98rem, 1.15vw, 1.12rem);
+    text-align: left;
+  }
+
+  /* Three across keeps the tiles square-ish instead of stretching into
+     letterboxes at this width. */
+  body.landing-static .landing-flow .preview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(12px, 1.1vw, 16px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile {
+    min-height: clamp(126px, 18.5vh, 196px);
+    gap: 14px;
+    padding: 22px 12px;
+  }
+
+  body.landing-static .landing-flow .trust-item {
+    min-height: clamp(70px, 9.5vh, 104px);
+  }
+
+  body.landing-static .landing-flow .auth-actions .btn {
+    min-height: clamp(52px, 6.4vh, 66px);
+  }
+
+  body.landing-static .landing-flow .scan-card {
+    padding: clamp(16px, 2.4vh, 26px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble {
+    width: 50px;
+    height: 50px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span {
+    font-size: 0.88rem;
+  }
+
+  body.landing-static .landing-flow .trust-strip {
+    align-self: start;
+  }
+
+  body.landing-static .landing-flow .auth-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-self: center;
+  }
+
+  body.landing-static .landing-flow .scan-card {
+    align-self: center;
+  }
+
+  body.landing-static .landing-flow .landing-site-footer {
+    justify-self: center;
+    padding-top: 4px;
+  }
+}
+
+/* From tablet up there is far more height than the composition needs.
+   Hold it together as one centred block with whitespace around it rather
+   than stretching the sections apart into voids. */
+@media (min-width: 768px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    align-content: center;
+    gap: clamp(16px, 2.8vh, 42px);
+    padding-top: calc(max(20px, var(--safe-top)) + 4px);
+    padding-bottom: calc(24px + var(--safe-bottom));
+  }
+
+  /* The promo pill sits at the right edge, clear of the centred column, so it
+     needs only its own height reserved -- not a mobile-sized band. */
+  body:has(.install-float-wrap.public-install) .auth-screen {
+    padding-bottom: calc(64px + var(--safe-bottom));
+  }
+}
+
+/* ============================================================
+   Fintech remediation pass: interactive transaction rows,
+   transaction detail, review hierarchy, failure state, offline.
+   ============================================================ */
+
+/* Transaction rows are now buttons; keep the established row appearance. */
+button.activity-item {
+  width: 100%;
+  font: inherit;
+  color: var(--navy);
+  text-align: left;
+  cursor: pointer;
+}
+
+button.activity-item:focus-visible {
+  outline: 3px solid rgba(10, 77, 255, 0.28);
+  outline-offset: 3px;
+}
+
+/* Review disclosure: amount and total debit lead, without shouting. */
+.row-emphasis small {
+  font-size: 1.02rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--navy);
+}
+
+.row-emphasis-total {
+  border-color: rgba(10, 77, 255, 0.28);
+  background: #f4f8ff;
+}
+
+.row-emphasis-total small {
+  font-size: 1.18rem;
+  font-weight: 800;
+  color: var(--blue);
+}
+
+.row-emphasis-total p strong {
+  color: var(--navy);
+}
+
+.transaction-review-actions {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+/* Transaction detail sheet */
+.tx-detail-summary {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 4px 0 16px;
+  text-align: center;
+}
+
+.tx-detail-amount {
+  margin: 0;
+  font-size: clamp(1.9rem, 7vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--navy);
+}
+
+.tx-detail-amount.credit {
+  color: var(--success);
+}
+
+.tx-detail-status {
+  margin: 0;
+}
+
+.tx-status.settled {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.tx-detail-meaning {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.tx-detail-rows {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.tx-detail-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Persistent failure treatment */
+.failure-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(217, 66, 66, 0.24);
+  border-radius: var(--radius-control);
+  background: #fff5f5;
+}
+
+.failure-message {
+  margin: 0;
+  color: #7a1e1e;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.failure-guidance {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Offline banner: restrained, above content, respects safe areas */
+.connectivity-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: calc(10px + var(--safe-top)) max(14px, var(--safe-right)) 10px max(14px, var(--safe-left));
+  color: #fff;
+  background: var(--navy);
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+  box-shadow: 0 4px 14px rgba(6, 26, 61, 0.18);
+}
+
+.connectivity-banner svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+/* The dialog container receives programmatic focus so screen readers announce
+   it; that is not keyboard navigation, so it must not paint a focus ring.
+   Interactive controls inside keep their own visible focus styles. */
+.modal-card[tabindex="-1"]:focus {
+  outline: none;
+}
+
+/* ============================================================
+   Landing scale & rhythm (mobile only, max-width 767px).
+   Space is reclaimed from the stacked CTA block and tight gaps,
+   then spent on component presence. Tablet/desktop untouched.
+   ============================================================ */
+@media (max-width: 767px) {
+  /* Both CTAs sit side by side at every mobile height, which frees the
+     ~58px the stacked block consumed on full-height iPhones. */
+  body.landing-static .landing-flow .auth-actions,
+  body.landing-static .business-landing .auth-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  body.landing-static .business-landing .auth-actions {
+    grid-template-columns: 0.74fr 1.26fr;
+  }
+
+  /* Wordmark presence */
+  .landing-flow .brand-logo,
+  body.landing-static .landing-flow .brand-logo,
+  body.landing-static .business-landing .brand-logo {
+    width: min(140px, 37vw);
+  }
+
+  /* Trust strip: taller row, larger label and icon */
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: 58px;
+    gap: 5px;
+    font-size: clamp(0.7rem, 2.9vw, 0.78rem);
+  }
+
+  body.landing-static .landing-flow .trust-item svg,
+  body.landing-static .business-landing .trust-item svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Service cards: taller tile, larger icon circle */
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: 90px;
+    gap: 8px;
+    padding: 10px 7px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble,
+  body.landing-static .business-landing .preview-grid .icon-bubble {
+    width: 50px;
+    height: 50px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span,
+  body.landing-static .business-landing .preview-grid .service-tile span {
+    font-size: clamp(0.8rem, 2.9vw, 0.88rem);
+  }
+
+  /* CTA presence */
+  body.landing-static .landing-flow .auth-actions .btn,
+  body.landing-static .business-landing .auth-actions .btn {
+    min-height: 56px;
+    font-size: clamp(0.94rem, 3vw, 1.02rem);
+  }
+
+  /* Horizontal QR card presence (composition preserved) */
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    padding: 14px 16px;
+    gap: 14px;
+  }
+
+  body.landing-static .landing-flow .scan-card .icon-bubble,
+  body.landing-static .business-landing .scan-card .icon-bubble {
+    width: 50px;
+    height: 50px;
+  }
+
+  body.landing-static .landing-flow .scan-card h3,
+  body.landing-static .business-landing .scan-card h3 {
+    font-size: 1.1rem;
+  }
+
+  body.landing-static .landing-flow .scan-card p,
+  body.landing-static .business-landing .scan-card p {
+    font-size: 0.9rem;
+  }
+
+  body.landing-static .landing-flow .scan-card .btn,
+  body.landing-static .business-landing .scan-card .btn {
+    min-height: 44px;
+    font-size: 0.92rem;
+  }
+
+  .landing-tagline {
+    font-size: 0.86rem;
+  }
+}
+
+/* Tall mobile viewports (iPhone 12/13/14/15 at full height and PWA) have real
+   height to spend. Spending it on the rhythm keeps the sections evenly related
+   instead of banking it all into margins at the top and bottom. */
+@media (max-width: 767px) and (min-height: 780px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    gap: clamp(12px, 2.1vh, 24px);
+  }
+}
+
+/* The largest phones -- 6.7" and 6.9" -- still had ~115px of void above the
+   wordmark and below the footer once the block was centred, and cropping the
+   logo to its ink returned another 20px on top of that. Spend it on the cards
+   and the rhythm so the composition reaches the edges of the screen. The gate
+   is 880px because at 800-850 the same numbers push the block past the fold. */
+/* The tile row absorbs whatever height is left over, so these are the minimum
+   sizes rather than the target ones -- the cards grow into the space that used
+   to sit empty above and below the block. */
+/* The third row of services appears only where there is height for it. Nine
+   tiles on a screen that cannot hold them push the footer off the bottom, so
+   the default below tablet-landscape is two full rows -- six tiles, no orphan
+   -- and the third row is switched back on at the heights that measured clear.
+   The business thresholds are higher because its headline runs to two lines
+   and its labels are longer. */
+@media (max-width: 899px) {
+  body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 7) {
+    display: none;
+  }
+}
+
+/* One threshold for both account types. Personal used to gain its third row
+   at 880px while business waited for 950px, so in the 880-949 band -- which is
+   exactly a big iPhone running Safari with its chrome visible -- personal
+   overflowed and scrolled while business sat fixed. The two sides of the same
+   page must behave identically. */
+@media (max-width: 767px) and (min-height: 950px) {
+  body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 7),
+  body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 899px) and (min-height: 1120px) {
+  body.landing-static .landing-flow:not(.business-landing) .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 899px) and (min-height: 1260px) {
+  body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
+@media (max-width: 767px) and (min-height: 880px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    gap: clamp(12px, 1.8vh, 19px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(72px, 8.1vh, 92px);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(56px, 6.4vh, 68px);
+  }
+}
+
+@media (max-width: 767px) and (min-height: 780px) and (max-height: 879px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    gap: clamp(9px, 1.5vh, 16px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(68px, 7.8vh, 82px);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(50px, 5.8vh, 60px);
+  }
+
+  /* The proof points are the first thing to go when the sheet is short. */
+  body.landing-static .landing-cta-points {
+    display: none;
+  }
+}
+
+/* Shorter mobile viewports (iPhone SE/8 at full height, and Safari with
+   browser chrome): a moderate scale increase that still fits, rather than
+   forcing the full scale and scrolling. */
+@media (max-width: 767px) and (max-height: 779px) {
+  body.landing-static .landing-cta-points {
+    display: none;
+  }
+
+  .landing-flow .brand-logo,
+  body.landing-static .landing-flow .brand-logo,
+  body.landing-static .business-landing .brand-logo {
+    width: min(128px, 34vw);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: 50px;
+    gap: 4px;
+    font-size: clamp(0.68rem, 2.8vw, 0.74rem);
+  }
+
+  body.landing-static .landing-flow .trust-item svg,
+  body.landing-static .business-landing .trust-item svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Sized so a two-line label ("Airtime & Data") still leaves the landing
+     inside the fold on a 667px-tall screen. The label is not shortened here:
+     the same service is named the same way everywhere in the app. */
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: 72px;
+    gap: 5px;
+    padding: 7px 5px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble,
+  body.landing-static .business-landing .preview-grid .icon-bubble {
+    width: 36px;
+    height: 36px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble svg,
+  body.landing-static .business-landing .preview-grid .icon-bubble svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span,
+  body.landing-static .business-landing .preview-grid .service-tile span {
+    font-size: clamp(0.72rem, 2.7vw, 0.78rem);
+    line-height: 1.16;
+  }
+
+  body.landing-static .landing-flow .auth-actions .btn,
+  body.landing-static .business-landing .auth-actions .btn {
+    min-height: 50px;
+    font-size: clamp(0.9rem, 2.9vw, 0.96rem);
+  }
+
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    padding: 11px 13px;
+    gap: 12px;
+  }
+
+  body.landing-static .landing-flow .scan-card .icon-bubble,
+  body.landing-static .business-landing .scan-card .icon-bubble {
+    width: 44px;
+    height: 44px;
+  }
+
+  body.landing-static .landing-flow .scan-card h3,
+  body.landing-static .business-landing .scan-card h3 {
+    font-size: 1.04rem;
+  }
+
+  body.landing-static .landing-flow .scan-card .btn,
+  body.landing-static .business-landing .scan-card .btn {
+    min-height: 42px;
+    font-size: 0.88rem;
+  }
+
+  .landing-tagline {
+    font-size: 0.8rem;
+  }
+}
+
+/* Inline recipient verification result: verification is a step inside the
+   transaction, so its outcome renders in the form rather than in a modal
+   that would replace it. */
+.recipient-verify-result {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(11, 159, 106, 0.28);
+  border-radius: var(--radius-control);
+  background: #f2fbf7;
+}
+
+.recipient-verify-result.is-missing {
+  border-color: rgba(183, 121, 31, 0.3);
+  background: #fdf8ef;
+}
+
+/* "Could not check" is a neutral, retryable state -- not a warning about the
+   recipient, who may well be a TitoPay user. It reads in brand blue rather
+   than the amber used for a genuine not-found. */
+.recipient-verify-result.is-unknown {
+  border-color: rgba(10, 77, 255, 0.26);
+  background: var(--soft-blue);
+}
+
+.rv-head {
+  margin: 0;
+  color: var(--success);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.rv-head-missing {
+  color: var(--warning);
+}
+
+.rv-head-unknown {
+  color: var(--blue);
+}
+
+.rv-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.rv-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+  border-radius: 50%;
+}
+
+.rv-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rv-row strong,
+.rv-row small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-row strong {
+  color: var(--navy);
+  font-size: 0.95rem;
+}
+
+.rv-row small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.rv-note {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.recipient-verify-result .btn {
+  min-height: 44px;
+  margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   VAS purchase journey: provider, product catalogue, validation, credentials
+   --------------------------------------------------------------------------- */
+
+.vas-progress {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vas-catalogue {
+  display: grid;
+  gap: 10px;
+}
+
+.vas-catalogue:empty {
+  display: none;
+}
+
+.vas-section-label {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.vas-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.vas-product {
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  min-height: 82px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.18s var(--ease-premium), background 0.18s var(--ease-premium);
+}
+
+.vas-product:hover {
+  border-color: var(--blue-2);
+}
+
+.vas-product:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.vas-product.is-selected {
+  border-color: var(--blue);
+  background: var(--soft-blue);
+}
+
+.vas-product-name {
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.vas-product-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.vas-product-price {
+  margin-top: 2px;
+  color: var(--blue);
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.vas-product-open .vas-product-price {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.vas-product-skeleton {
+  display: block;
+  height: 82px;
+  border-radius: var(--radius-control);
+}
+
+.vas-loading-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.vas-notice {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.vas-notice-head {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.vas-notice-body {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.vas-notice .vas-retry {
+  justify-self: start;
+  min-height: 40px;
+  margin-top: 2px;
+  padding-inline: 14px;
+}
+
+.vas-validate {
+  justify-self: start;
+  min-height: 44px;
+  margin-top: 8px;
+  padding-inline: 14px;
+}
+
+.vas-validation {
+  margin-top: 12px;
+}
+
+.vas-credentials {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(10, 77, 255, 0.22);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+}
+
+.vas-credentials-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  color: var(--deep-blue);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vas-credentials-head svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.vas-credential {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.vas-credential-label {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vas-credential-value {
+  grid-column: 1;
+  min-width: 0;
+  color: var(--navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.vas-credential.is-mono .vas-credential-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.02rem;
+  letter-spacing: 0.04em;
+}
+
+.vas-credential .icon-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.vas-form input[readonly] {
+  color: var(--navy);
+  background: var(--soft);
+  font-weight: 700;
+}
+
+@media (max-width: 400px) {
+  .vas-product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  }
+}
+
+.vas-switch {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.vas-switch-btn {
+  min-height: 44px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.18s var(--ease-premium), color 0.18s var(--ease-premium);
+}
+
+.vas-switch-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.vas-switch-btn.is-active {
+  color: var(--blue);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+
+.vas-form.vas-unavailable .field {
+  opacity: 0.55;
+}
+
+.vas-form.vas-unavailable .vas-catalogue,
+.vas-form.vas-unavailable .vas-switch {
+  opacity: 1;
+}
+
+/* Screen-reader-only text (used by VAS search labels and the QR copy field). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Provider-defined account fields */
+
+.vas-account {
+  display: grid;
+  gap: 14px;
+}
+
+.vas-account:empty {
+  display: none;
+}
+
+.vas-field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Journey actions match the contact-picker chips they sit beside. */
+.vas-field-actions .btn,
+.recipient-tools .vas-self,
+.recipient-tools .vas-validate,
+.vas-self,
+.vas-validate {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 0;
+  padding: 0 14px;
+  color: var(--blue);
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid rgba(10, 77, 255, 0.16);
+  border-radius: 999px;
+  background: var(--soft-blue);
+}
+
+.vas-self svg,
+.vas-validate svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+/* Searchable provider picker */
+
+.vas-provider-field {
+  position: relative;
+}
+
+select.is-picker-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vas-picker {
+  position: relative;
+}
+
+.vas-picker:empty {
+  display: none;
+}
+
+.vas-picker-input {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 52px 0 16px;
+  color: var(--navy);
+  font-family: inherit;
+  font-size: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.vas-picker-input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.vas-picker-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.vas-picker-clear svg {
+  width: 16px;
+  height: 16px;
+}
+
+.vas-picker-clear:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.vas-picker-list {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+}
+
+.vas-picker-option {
+  min-height: 44px;
+  padding: 11px 12px;
+  color: var(--text);
+  font-size: 0.95rem;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.vas-picker-option.is-active,
+.vas-picker-option:hover {
+  background: var(--soft-blue);
+}
+
+.vas-picker-option.is-selected {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.vas-picker-empty {
+  padding: 11px 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Product search */
+
+.vas-product-search {
+  display: grid;
+  gap: 4px;
+}
+
+.vas-search-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px;
+  color: var(--navy);
+  font-family: inherit;
+  font-size: 0.98rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.vas-search-input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* Sensitive credentials */
+
+.vas-credential-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.vas-credential.is-sensitive .vas-credential-value {
+  letter-spacing: 0.06em;
+}
+
+.vas-credential.is-sensitive .vas-credential-value:not([data-revealed]) {
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Stockvel: digital savings group
+   --------------------------------------------------------------------------- */
+
+.sv-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  color: hsl(var(--sv-hue, 220) 62% 34%);
+  font-size: 0.92rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  border-radius: 14px;
+  background: hsl(var(--sv-hue, 220) 82% 94%);
+  object-fit: cover;
+}
+
+.sv-avatar.lg {
+  width: 56px;
+  height: 56px;
+  font-size: 1.1rem;
+  border-radius: 18px;
+}
+
+.sv-hub {
+  display: grid;
+  gap: 12px;
+}
+
+.sv-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.sv-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "avatar body aside"
+    "goal   goal goal";
+  gap: 10px 12px;
+  align-items: start;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.18s var(--ease-premium), box-shadow 0.18s var(--ease-premium);
+}
+
+.sv-card:hover {
+  border-color: var(--blue-2);
+  box-shadow: var(--shadow-soft);
+}
+
+.sv-card:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.sv-card.is-loading {
+  cursor: default;
+}
+
+.sv-card > .sv-avatar {
+  grid-area: avatar;
+}
+
+.sv-card-body {
+  grid-area: body;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sv-card .sv-goal {
+  grid-area: goal;
+}
+
+.sv-card-body strong {
+  color: var(--navy);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.sv-card-body small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sv-card-aside {
+  grid-area: aside;
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+
+/* Below this width three columns squeeze the group name into a narrow ribbon,
+   so the amount and status move to their own row. */
+@media (max-width: 460px) {
+  .sv-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "avatar body"
+      "aside  aside"
+      "goal   goal";
+  }
+
+  .sv-card-aside {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-start;
+  }
+}
+
+.sv-card-amount {
+  color: var(--navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sv-chip {
+  display: inline-block;
+  padding: 3px 9px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: var(--soft);
+}
+
+.sv-chip.settled {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.sv-chip.warn {
+  color: var(--warning);
+  background: rgba(183, 121, 31, 0.14);
+}
+
+.sv-chip.failed {
+  color: var(--danger);
+  background: rgba(217, 66, 66, 0.12);
+}
+
+/* Goal progress */
+
+.sv-goal-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+}
+
+.sv-goal {
+  display: grid;
+  gap: 6px;
+}
+
+.sv-goal-head {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.sv-goal-head strong {
+  flex: 0 0 auto;
+  color: var(--blue);
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sv-goal-head > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sv-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(10, 77, 255, 0.14);
+}
+
+.sv-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue);
+  transition: width 0.5s var(--ease-premium);
+}
+
+/* Stats */
+
+.sv-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.sv-stat {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.sv-stat strong {
+  color: var(--navy);
+  font-size: 1.06rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.sv-stat span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.sv-stat small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* Next contribution */
+
+.sv-next {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid rgba(10, 77, 255, 0.2);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.sv-next strong {
+  display: block;
+  color: var(--navy);
+  font-size: 1.24rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-next small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* Cycle strip */
+
+.sv-calendar {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sv-cycle {
+  display: grid;
+  gap: 1px;
+  place-items: center;
+  min-width: 64px;
+  padding: 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.sv-cycle-month {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sv-cycle strong {
+  color: var(--navy);
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-cycle small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.sv-cycle.settled {
+  border-color: rgba(11, 159, 106, 0.32);
+  background: #f2fbf7;
+}
+
+.sv-cycle.settled small {
+  color: var(--success);
+}
+
+.sv-cycle.warn {
+  border-color: rgba(183, 121, 31, 0.32);
+  background: #fdf8ef;
+}
+
+.sv-cycle.failed {
+  border-color: rgba(217, 66, 66, 0.28);
+  background: #fdf4f4;
+}
+
+.sv-cycle.failed small {
+  color: var(--danger);
+}
+
+/* Dashboard chrome */
+
+.sv-dash-head {
+  align-items: flex-start;
+}
+
+.sv-dash-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.sv-tabs {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sv-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.sv-tab {
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  transition: color 0.18s var(--ease-premium), background 0.18s var(--ease-premium), border-color 0.18s var(--ease-premium);
+}
+
+.sv-tab:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.sv-tab.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.sv-section {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* A grid item defaults to min-width:auto, so a horizontally scrolling strip or
+   an auto-fit stat grid can push the whole dashboard wider than the modal.
+   Every Stockvel container is explicitly allowed to shrink instead. */
+.sv-section > *,
+.sv-section > * > *,
+.sv-tabs,
+.sv-hub,
+.sv-hub > *,
+.sv-card-list,
+.sv-card-list > *,
+.sv-stat-grid,
+.sv-goal-card,
+.sv-filter-row,
+.sv-calendar,
+.sv-next,
+.sv-withdrawal,
+.sv-danger,
+.sv-search,
+.sv-member,
+.sv-member-body,
+.sv-steps,
+.sv-panel,
+.sv-panel > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sv-section-label {
+  margin: 0 0 8px;
+  color: var(--navy);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.sv-more {
+  min-height: 44px;
+  margin-top: 8px;
+}
+
+/* Steps */
+
+.sv-steps {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-step {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 0;
+  justify-items: center;
+  min-width: 0;
+}
+
+.sv-step-dot {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+}
+
+.sv-step-dot svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sv-step-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  hyphens: auto;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 360px) {
+  .sv-step-label {
+    font-size: 0.66rem;
+  }
+}
+
+.sv-step.is-active .sv-step-dot {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.sv-step.is-active .sv-step-label {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.sv-step.is-done .sv-step-dot {
+  color: var(--success);
+  border-color: rgba(11, 159, 106, 0.34);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.sv-panel {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.sv-panel[hidden] {
+  display: none;
+}
+
+.sv-optional {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.sv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sv-actions .btn {
+  flex: 1 1 140px;
+  min-height: 52px;
+}
+
+.sv-actions .btn[hidden] {
+  display: none;
+}
+
+.sv-summary:empty {
+  display: none;
+}
+
+/* Members */
+
+.sv-member {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.sv-member-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sv-member-body strong {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  color: var(--navy);
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sv-member-body small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sv-member-aside {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.sv-verified {
+  display: inline-grid;
+  place-items: center;
+  color: var(--success);
+}
+
+.sv-verified svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Search and filters */
+
+.sv-search {
+  display: grid;
+}
+
+.sv-filter-row {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sv-filter-row::-webkit-scrollbar {
+  display: none;
+}
+
+.sv-filter-row .chip {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.sv-filter-row .chip.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+/* Withdrawals */
+
+.sv-withdrawal {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.sv-withdrawal-head {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sv-withdrawal-head strong {
+  color: var(--navy);
+  font-size: 1.12rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-withdrawal small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.sv-withdrawal-reason {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+/* Empty and notice states */
+
+.sv-empty {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 28px 20px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.sv-empty.compact {
+  padding: 20px 16px;
+}
+
+.sv-empty strong {
+  color: var(--navy);
+  font-size: 1.04rem;
+}
+
+.sv-empty p {
+  max-width: 40ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.sv-notice {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.sv-notice-head {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.sv-notice-body {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.sv-notice .sv-retry {
+  justify-self: start;
+  min-height: 44px;
+  margin-top: 4px;
+  padding-inline: 14px;
+}
+
+/* Danger zone */
+
+.sv-danger {
+  padding: 14px 16px;
+  border: 1px solid rgba(217, 66, 66, 0.26);
+  border-radius: var(--radius-control);
+  background: #fdf6f6;
+}
+
+.sv-danger-label {
+  color: var(--danger);
+}
+
+.sv-danger-btn {
+  min-height: 48px;
+  margin-top: 8px;
+  color: var(--danger);
+  border: 1px solid rgba(217, 66, 66, 0.3);
+}
+
+/* Statement */
+
+.sv-statement-sub {
+  margin: 18px 0 8px;
+  color: var(--navy);
+  font-size: 0.95rem;
+}
+
+.sv-statement-note {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+@media (min-width: 768px) {
+  .sv-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-card,
+  .sv-tab,
+  .sv-progress > span {
+    transition: none;
+  }
+}
+
+/* Invitations, voting, outstanding balances */
+
+.sv-invites {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(10, 77, 255, 0.2);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+}
+
+.sv-invite {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "avatar body"
+    "actions actions";
+  gap: 10px 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.sv-invite > .sv-avatar {
+  grid-area: avatar;
+}
+
+.sv-invite-body {
+  grid-area: body;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sv-invite-body strong {
+  color: var(--navy);
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.sv-invite-body small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sv-invite-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 8px;
+}
+
+.sv-invite-actions .btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.sv-vote {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sv-vote .btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.sv-owed {
+  color: var(--warning) !important;
+  font-weight: 600;
+}
+
+@media (min-width: 560px) {
+  .sv-invite {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "avatar body actions";
+  }
+
+  .sv-invite-actions .btn {
+    flex: 0 0 auto;
+  }
+}
+
+/* Printing a group statement: only the statement card goes on the page. */
+@media print {
+  body.sv-printing > *:not(.modal-backdrop) {
+    display: none !important;
+  }
+
+  body.sv-printing .modal-backdrop {
+    position: static;
+    display: block;
+    padding: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  body.sv-printing .modal-card {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  body.sv-printing .modal-card > *:not(.sv-statement) {
+    display: none !important;
+  }
+
+  body.sv-printing .sv-statement {
+    border: 0;
+    box-shadow: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Bulk Distribution
+
+   The screen was three stacked forms and a `.list-row` class that had no
+   styles at all, so batches rendered as unstyled text. Batches and
+   beneficiaries are now real rows, and the five-step sequence is stated up
+   front because the order is the safety model, not a nicety.
+   --------------------------------------------------------------------------- */
+
+.ed-steps {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.ed-steps h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ed-steps ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: ed-step;
+}
+
+.ed-steps li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  counter-increment: ed-step;
+}
+
+.ed-steps li::before {
+  content: counter(ed-step);
+  grid-row: span 2;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: var(--blue);
+  border-radius: 50%;
+}
+
+.ed-steps li strong {
+  color: var(--navy);
+  font-size: 0.92rem;
+}
+
+.ed-steps li span {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.ed-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ed-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.ed-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.ed-row-main strong {
+  color: var(--navy);
+  overflow-wrap: anywhere;
+}
+
+.ed-row-main small,
+.ed-row-meta small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.ed-row-meta {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+
+.ed-row-meta strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-row .btn {
+  flex: 0 0 auto;
+}
+
+.ed-invalid {
+  color: var(--danger);
+}
+
+.ed-status {
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.ed-progress {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.ed-row-number {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ed-status-released,
+.ed-status-completed {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.1);
+  border-color: rgba(11, 159, 106, 0.24);
+}
+
+.ed-status-draft_validation_failed,
+.ed-status-failed {
+  color: var(--danger);
+  background: rgba(217, 66, 66, 0.08);
+  border-color: rgba(217, 66, 66, 0.22);
+}
+
+.ed-status-funding_locked {
+  color: var(--navy);
+  background: var(--soft);
+}
+
+.ed-status-draft_validated {
+  color: var(--blue);
+  background: var(--soft-blue);
+  border-color: rgba(10, 77, 255, 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+   Printable payment QR poster
+
+   On screen it is a preview scaled to the modal. On paper it is a single A4
+   portrait sheet: the aspect ratio is fixed either way so what a shop sees is
+   what comes out of the printer.
+   --------------------------------------------------------------------------- */
+
+.qr-poster {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 0;
+  /* Type scales with the sheet, not the screen, so the preview and the print
+     read identically. */
+  container-type: inline-size;
+  aspect-ratio: 210 / 297;
+  padding: 6.5% 7% 5.5%;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  text-align: center;
+  overflow: hidden;
+}
+
+.qr-poster-head {
+  display: grid;
+  justify-items: center;
+  gap: clamp(4px, 1.2%, 12px);
+}
+
+/* The wordmark is the first thing read from across a shop, so it carries the
+   top of the sheet rather than sitting on it as a credit. */
+.qr-poster-logo {
+  width: 62%;
+  min-width: 150px;
+  max-width: 118mm;
+  height: auto;
+}
+
+.qr-poster-tagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(0.7rem, 2.2cqw, 0.98rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* The tip sheet has to be distinguishable from the payment sheet at a glance
+   on a wall, so it leads with what it is. */
+.qr-poster-banner {
+  margin: 0;
+  padding: 0.5% 5%;
+  color: #fff;
+  font-size: clamp(1rem, 3.6cqw, 1.7rem);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--navy);
+  border-radius: 999px;
+}
+
+.qr-poster-body {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(8px, 2%, 20px);
+  min-height: 0;
+}
+
+.qr-poster-eyebrow {
+  margin: 0;
+  color: var(--blue);
+  font-size: clamp(0.82rem, 2.6cqw, 1.15rem);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.qr-poster-name {
+  margin: 0;
+  max-width: 100%;
+  color: var(--navy);
+  font-size: clamp(1.15rem, 4.4cqw, 2.1rem);
+  line-height: 1.15;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+}
+
+.qr-poster-qr {
+  display: grid;
+  place-items: center;
+  width: min(62%, 300px);
+  aspect-ratio: 1;
+  padding: 4%;
+  border: 2px solid var(--navy);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.qr-poster-qr img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.qr-poster-qr-missing {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.qr-poster-qr-missing strong {
+  color: var(--navy);
+}
+
+.qr-poster-qr-missing p {
+  margin: 0;
+}
+
+.qr-poster-steps {
+  margin: 0;
+  color: var(--navy);
+  font-size: clamp(0.72rem, 2.3cqw, 1rem);
+  font-weight: 600;
+}
+
+.qr-poster-foot {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding-top: 3%;
+  border-top: 1px solid var(--line);
+}
+
+.qr-poster-id {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0;
+  font-size: clamp(0.66rem, 2cqw, 0.9rem);
+}
+
+.qr-poster-id span {
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.qr-poster-id strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.qr-poster-site {
+  margin: 0;
+  color: var(--blue);
+  font-size: clamp(0.66rem, 2cqw, 0.9rem);
+  font-weight: 700;
+}
+
+/* The poster isolates itself whenever it is on screen and the page prints --
+   including from the browser's own share-sheet print, which never runs our
+   print handler and used to print the entire app around the poster. The
+   body class from printQrPoster() remains as the fallback for engines
+   without :has(). Sizing is aspect-ratio, never 100vh: viewport units inside
+   a paged context are what tore the layout apart on iOS. */
+@media print {
+  body.qr-poster-printing > *:not(.modal-backdrop),
+  body:has(.modal-backdrop [data-qr-poster]) > *:not(.modal-backdrop) {
+    display: none !important;
+  }
+
+  html,
+  body.qr-poster-printing,
+  body:has(.modal-backdrop [data-qr-poster]) {
+    background: #fff !important;
+  }
+
+  body.qr-poster-printing .modal-backdrop,
+  body:has(.modal-backdrop [data-qr-poster]) .modal-backdrop {
+    position: static;
+    display: block;
+    padding: 0;
+    background: #fff;
+    backdrop-filter: none;
+  }
+
+  body.qr-poster-printing .modal-card,
+  body:has(.modal-backdrop [data-qr-poster]) .modal-card {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  body.qr-poster-printing .modal-card > *:not(.qr-poster),
+  body:has(.modal-backdrop [data-qr-poster]) .modal-card > *:not(.qr-poster) {
+    display: none !important;
+  }
+
+  body.qr-poster-printing .qr-poster,
+  body:has(.modal-backdrop [data-qr-poster]) .qr-poster {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 210 / 297;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    page-break-inside: avoid;
+  }
+
+  body.qr-poster-printing .qr-poster-qr,
+  body:has(.modal-backdrop [data-qr-poster]) .qr-poster-qr {
+    width: min(62%, 120mm);
+  }
+
+  body.qr-poster-printing .qr-poster-logo,
+  body:has(.modal-backdrop [data-qr-poster]) .qr-poster-logo {
+    width: 62%;
+    max-width: 118mm;
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+/* ---------------------------------------------------------------------------
+   Money forms: balance context and quick amounts
+   --------------------------------------------------------------------------- */
+
+.balance-context {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.balance-context strong {
+  color: var(--navy);
+  font-size: 1.02rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quick-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quick-amount {
+  min-height: 44px;
+  padding-inline: 14px;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quick-amount-all {
+  flex: 1 1 100%;
+}
+
+.quick-amount.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.field-optional {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.field-label {
+  margin: 0 0 8px;
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------------
+   Send Gift
+   --------------------------------------------------------------------------- */
+
+.gift-occasions,
+.gift-when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gift-occasion,
+.gift-timing {
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.gift-occasion.is-active,
+.gift-timing.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.gift-scan {
+  justify-self: start;
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.gift-form [data-gift-counter].is-low {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Tickets
+   --------------------------------------------------------------------------- */
+
+.ticket-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ticket-search {
+  display: grid;
+  min-width: 0;
+}
+
+.ticket-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "date body"
+    "cta  cta";
+  gap: 10px 14px;
+  align-items: start;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  transition: border-color 0.18s var(--ease-premium), box-shadow 0.18s var(--ease-premium);
+}
+
+.ticket-card:hover {
+  border-color: var(--blue-2);
+  box-shadow: var(--shadow-soft);
+}
+
+.ticket-card.is-loading,
+.ticket-card.is-sold-out:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.ticket-card.is-sold-out {
+  opacity: 0.72;
+}
+
+.ticket-date {
+  grid-area: date;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  width: 56px;
+  padding: 8px 4px;
+  border-radius: 14px;
+  background: var(--soft-blue);
+}
+
+.ticket-date span {
+  color: var(--blue);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ticket-date strong {
+  color: var(--navy);
+  font-size: 1.3rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.ticket-body {
+  grid-area: body;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ticket-body > strong {
+  color: var(--navy);
+  font-size: 1rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.ticket-body small {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ticket-body small svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.ticket-price {
+  color: var(--blue);
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ticket-cta {
+  grid-area: cta;
+  min-height: 44px;
+}
+
+.ticket-cta[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (min-width: 520px) {
+  .ticket-card {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "date body cta";
+    align-items: center;
+  }
+
+  .ticket-cta {
+    align-self: center;
+    padding-inline: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket-card {
+    transition: none;
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   Landing footer: the page ends on the call to action
+
+   The container gives up its bottom padding to the footer so the band sits
+   flush against the bottom of the screen, and the footer carries the safe-area
+   inset -- and the clearance for the install pill when that is showing.
+   --------------------------------------------------------------------------- */
+/* Reaching the bottom of the page, without reserving a guessed height.
+   The footer stays in normal flow as the last row; the tile row above it is
+   the one that takes the leftover height. So the block always ends flush at
+   the foot of the screen, the slack that used to sit above and below it goes
+   into the cards, and nothing can ever overlap the footer when its copy wraps
+   to a second line. */
+@media (max-width: 899px) {
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    /* Giving one row the leftover height turned it into a void inside that
+       row instead of above the block. Distributing it across the section gaps
+       keeps the rhythm even and still ends the page on the footer. */
+    align-content: space-between;
+    padding-bottom: 0;
+  }
+}
+
+/* Geometry last, so it survives the later .scan-card padding rules that the
+   card shared when it was still a card in the middle of the page.
+
+   Full bleed at every width: 50% is half the column the footer sits in and
+   50vw is half the screen, so the negative margin is exactly the distance from
+   the column edge to the screen edge -- the phone gutter, the centred tablet
+   column, or the desktop grid. The same figure returns as padding so the text
+   stays on the column. The shared max-width:100% has to go, or it caps the
+   border box at the column width and the margins only shift the band. */
+body.landing-static .landing-flow .scan-card.landing-cta-footer,
+body.landing-static .business-landing .scan-card.landing-cta-footer {
+  width: auto;
+  max-width: none;
+  align-content: center;
+  margin: 0 calc(50% - 50vw);
+  padding: clamp(16px, 2.4vh, 24px) max(calc(50vw - 50%), var(--screen-pad-x), var(--safe-right))
+    calc(clamp(16px, 2.4vh, 24px) + var(--safe-bottom))
+    max(calc(50vw - 50%), var(--screen-pad-x), var(--safe-left));
+}
+
+/* The two-column grid area is not the same width as the visible column, so the
+   desktop gutter is measured off the column itself. */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    padding-inline: max(calc((100vw - min(1080px, 92vw)) / 2), var(--screen-pad-x));
+  }
+
+  /* From tablet landscape up there is far more height than the composition
+     needs, and spreading it across four gaps pushed them to 90px. The block
+     stays centred and the footer is pinned to the foot of the page instead --
+     safe at this width because its copy is a single line. */
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    position: relative;
+    align-content: center;
+    padding-bottom: calc(112px + var(--safe-bottom));
+  }
+
+  /* The containing block is the centred 1080px column, so left:0 would anchor
+     to the column edge. The column is centred on the viewport, so centring the
+     band on the column and giving it 100vw is exact full bleed. */
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    position: absolute;
+    left: 50%;
+    right: auto;
+    bottom: 0;
+    width: 100vw;
+    transform: translateX(-50%);
+    min-height: calc(112px + var(--safe-bottom));
+    margin: 0;
+  }
+}
+
+/* Tablet portrait has the most height to give away, so the cards take the
+   largest share of it -- otherwise the section gaps grow to 80px and the page
+   reads as five strips floating apart. */
+@media (min-width: 700px) and (max-width: 899px) {
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(78px, 7.5vh, 120px);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(54px, 4.7vh, 74px);
+  }
+
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(2rem, 3.2vh, 2.9rem);
+  }
+}
+
+/* 360x800 with the business copy wrapping to three lines was 3px over. */
+@media (max-width: 380px) and (max-height: 820px) {
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    padding-block: 12px calc(12px + var(--safe-bottom));
+  }
+}
+
+
+
+/* The install pill floats over the foot of the page, so the footer clears it
+   instead of the container reserving that space a second time. */
+body:has(.install-float-wrap.public-install) .auth-screen:has(.landing-cta-footer) {
+  padding-bottom: 0;
+}
+
+body:has(.install-float-wrap.public-install) .landing-flow .scan-card.landing-cta-footer,
+body:has(.install-float-wrap.public-install) .business-landing .scan-card.landing-cta-footer {
+  padding-bottom: calc(clamp(16px, 2.4vh, 24px) + 56px + var(--safe-bottom));
+}
+
+
+/* ---------------------------------------------------------------------------
+   Landing: fit by construction, not by tuning
+
+   Every earlier attempt sized the tiles per height band and hoped the bands
+   covered reality. They could not: media queries cannot see safe-area insets,
+   so an installed PWA lost ~93px the maths never knew about, and the page
+   scrolled by exactly the difference -- a few px on some phones, 70px on a
+   6.9" screen with the third service row. The user-visible symptom was one
+   account type scrolling while the other sat fixed.
+
+   This block replaces the guessing for every one-column landing (phones and
+   portrait tablets): the container is the dynamic viewport, the service grid
+   is the one flexible row, and the tiles shrink into whatever height is left
+   after the insets take theirs. The page cannot overflow, so it cannot
+   scroll; the cap keeps tiles card-shaped when there is room to spare.
+   --------------------------------------------------------------------------- */
+@media (max-width: 899px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    height: 100dvh;
+    min-height: 100svh;
+    align-content: stretch;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+    overflow: hidden;
+  }
+
+  body.landing-static .landing-flow .preview-grid,
+  body.landing-static .business-landing .preview-grid {
+    min-height: 0;
+    align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: 44px;
+    height: auto;
+    max-height: 160px;
+    align-self: stretch;
+  }
+
+  /* The rigid rows give back a little too, so the flexible row is never asked
+     to go below a usable tile. */
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(44px, 5.4vh, 72px);
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   Notification centre: filters and payment rows
+   --------------------------------------------------------------------------- */
+
+.notification-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+
+.notification-filters .chip.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+/* Money in and money out must read apart at a glance, before the words. */
+.icon-bubble.notice-bubble-credit {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.icon-bubble.notice-bubble-debit {
+  color: var(--navy);
+  background: var(--soft);
+}
+
+
+/* ---------------------------------------------------------------------------
+   Business wallet card: dark navy
+
+   Personal stays TitoPay blue; business goes dark navy, so a user who runs
+   both accounts knows which wallet is on screen before reading a word.
+   --------------------------------------------------------------------------- */
+.wallet-card.wallet-card-business {
+  background: linear-gradient(150deg, #0b2350 0%, var(--navy) 100%);
+  box-shadow: 0 10px 26px rgba(6, 26, 61, 0.32);
+}
+
+/* ---------------------------------------------------------------------------
+   Chat thread: a real chat surface
+
+   The thread used to be ordinary modal content: the card scrolled, the message
+   window scrolled inside it, and the two fought -- scrolling messages spilled
+   into scrolling the card, the composer drifted off-screen, and the keyboard
+   made it worse. Now the card is the chat: fixed header, the message window is
+   the single flexible, single scrollable row, composer pinned beneath it. On a
+   phone it is simply full-screen, which is what a chat is.
+   --------------------------------------------------------------------------- */
+.modal-card.titopay-chat-thread-modal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  height: min(88svh, 820px);
+  max-height: min(88svh, 820px);
+  overflow: hidden;
+}
+
+.titopay-chat-thread-modal .titopay-chat-window {
+  min-height: 0;
+  max-height: none;
+  height: auto;
+}
+
+.titopay-chat-thread-modal .modal-head {
+  margin-bottom: 0;
+}
+
+@media (max-width: 599px) {
+  .modal-backdrop:has(.modal-card.titopay-chat-thread-modal) {
+    padding: 0;
+  }
+
+  .modal-card.titopay-chat-thread-modal {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding: calc(10px + var(--safe-top)) 12px calc(10px + var(--safe-bottom));
+    border-radius: 0;
+  }
+
+  /* Five labelled pills do not fit a phone header; they wrapped into two
+     bulky rows that crushed the contact's name. The labels go, the
+     aria-labels stay, and the actions hold one compact row. */
+  .titopay-chat-thread-modal .chat-action-btn span {
+    display: none;
+  }
+
+  .titopay-chat-thread-modal .chat-action-btn {
+    min-width: 40px;
+    padding: 8px;
+  }
+
+  .titopay-chat-thread-modal .chat-header-actions {
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+}
+
+/* The typing indicator reserves its line permanently. Appearing and
+   disappearing text used to shove the composer up and down. */
+.chat-typing-status {
+  min-height: 20px;
+  margin: 0;
+}
+
+.chat-clear-all-btn {
+  justify-self: start;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Desktop landing on short viewports
+
+   The two-column landing always showed all nine tiles. A MacBook Air running
+   Safari with its toolbars has ~750px of page height, and the third tile row
+   slid underneath the QR footer band -- squeezed exactly where the photo
+   showed it, with spare room sitting above. Below 860px of height the desktop
+   drops to two full rows and compacts its rhythm; the space that is there
+   gets used, and nothing ever sits under the footer.
+   --------------------------------------------------------------------------- */
+@media (min-width: 900px) and (max-height: 859px) {
+  body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 7),
+  body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
+    display: none;
+  }
+
+  /* Centring banked the leftover height above the logo -- ~150px of blank
+     band up top while the rows below sat squeezed together. Distributing
+     instead pins the bar near the top and spends the leftover between the
+     rows, which is where the eye wants it. */
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    align-content: space-between;
+    padding-top: calc(max(18px, var(--safe-top)) + 4px);
+    /* space-between parks the last row exactly on the content-box edge, so
+       the reservation must cover the footer's real height (proof points
+       included), not its minimum. */
+    padding-bottom: calc(160px + var(--safe-bottom));
+  }
+
+  /* When the install pill is showing, the footer grows 56px taller to clear
+     it -- so the reservation grows too, and the footer sheds its proof-point
+     row to give some of that height back. Without both, the sign-in row slid
+     under the band on a first visit and the business page scrolled. */
+  body:has(.install-float-wrap.public-install) .landing-flow .landing-cta-points,
+  body:has(.install-float-wrap.public-install) .business-landing .landing-cta-points {
+    display: none;
+  }
+
+  body:has(.install-float-wrap.public-install) .landing-flow.auth-screen:has(.landing-cta-footer),
+  body:has(.install-float-wrap.public-install) .business-landing.auth-screen:has(.landing-cta-footer) {
+    padding-bottom: calc(192px + var(--safe-bottom));
+  }
+
+  body:has(.install-float-wrap.public-install) .landing-flow .preview-grid .service-tile,
+  body:has(.install-float-wrap.public-install) .business-landing .preview-grid .service-tile {
+    min-height: clamp(88px, 13vh, 126px);
+  }
+
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    row-gap: clamp(16px, 3.4vh, 34px);
+  }
+
+  /* Pill state again: the taller footer costs the rows 56px of working
+     height, so the rhythm between them tightens to match and the hero eases
+     off a step. Business carries one more line than personal, which is the
+     page that tipped into scroll without this. */
+  body.landing-static:has(.install-float-wrap.public-install) .landing-flow.auth-screen,
+  body.landing-static:has(.install-float-wrap.public-install) .business-landing.auth-screen {
+    row-gap: clamp(12px, 2.6vh, 26px);
+  }
+
+  body.landing-static:has(.install-float-wrap.public-install) .landing-flow h1,
+  body.landing-static:has(.install-float-wrap.public-install) .business-landing h1 {
+    font-size: clamp(1.7rem, 4.4vh, 2.6rem);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(108px, 16vh, 150px);
+  }
+}
+
+/* Even shorter -- a small laptop with devtools or a half-height window: the
+   composition compacts further rather than colliding with the footer. */
+@media (min-width: 900px) and (max-height: 719px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    row-gap: clamp(10px, 2vh, 18px);
+    padding-bottom: calc(100px + var(--safe-bottom));
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(88px, 13vh, 118px);
+  }
+
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(1.8rem, 4.4vh, 2.6rem);
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   QR scanner frame
+
+   The camera video used to be appended with no sizing: zero-height until the
+   stream started, then it snapped to the camera's native dimensions, overflowed
+   the card, and collapsed again into a one-line note on capture. Every state
+   change bounced the whole modal -- the "wobble". The frame now reserves its
+   box before the camera starts and keeps it through every state, and the video
+   fills that box instead of dictating it.
+   --------------------------------------------------------------------------- */
+#qr-scanner-output:not(.hidden) {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 12px;
+  border-radius: 20px;
+}
+
+#qr-scanner-output video {
+  width: 100%;
+  height: 276px;
+  display: block;
+  object-fit: cover;
+  border-radius: 14px;
+  background: #0b1220;
+}
+
+
+/* Tall desktop with the install pill: the pinned footer grows 56px, so the
+   centred block's reservation grows with it. */
+@media (min-width: 900px) and (min-height: 860px) {
+  body:has(.install-float-wrap.public-install) .landing-flow.auth-screen:has(.landing-cta-footer),
+  body:has(.install-float-wrap.public-install) .business-landing.auth-screen:has(.landing-cta-footer) {
+    padding-bottom: calc(172px + var(--safe-bottom));
+  }
 }
