@@ -607,3 +607,14 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
 .btn-google:hover { background: #F6F8FB; }
 .or-line { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; }
 .or-line::before, .or-line::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* Signed-out portal pages have no menu: no empty sidebar column, card centred on every screen. */
+.shell:has(> .sidenav:empty) { grid-template-columns: minmax(0, 1fr); }
+.shell:has(> .sidenav:empty) > .main { margin-inline: auto; display: flex; flex-direction: column; justify-content: flex-start; }
+.shell:has(> .sidenav:empty) .welcome { width: 100%; }
+.welcome .row { flex-wrap: wrap; gap: 10px; }
+.welcome .btn { min-height: 44px; }
+@media (max-width: 560px) { .welcome .row .btn { flex: 1 1 100%; } }
+/* The Help button and the cookie bar never cover each other or the page content. */
+@media (max-width: 719px) { .cookie-banner { left: 10px; right: 10px; bottom: 10px; max-height: 70vh; overflow: auto; } body:has(.cookie-banner) .chat-launch { bottom: calc(var(--cookie-h, 0px) + 16px); } }
+.sidenav:empty { display: none; }
