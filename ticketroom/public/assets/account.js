@@ -170,7 +170,7 @@ async function tags() {
     </div>
     <h2 class="mt-lg">Your tags</h2>
     ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Tag</th><th>Type</th><th>Event</th><th>Status</th><th>Last used</th><th></th></tr></thead><tbody>
-      ${list.map((t) => html`<tr><td class="mono">${t.display_code}</td><td>${t.tag_type.replace("_", " ")}</td><td>${t.event_title || "—"}</td><td>${badge(t.status)}</td><td>${t.last_used_at ? fmtDateTime(t.last_used_at) : "—"}</td>
+      ${list.map((t) => html`<tr><td class="mono">${t.display_code}</td><td>${t.tag_type.replace("_", " ")}</td><td>${t.event_title || "–"}</td><td>${badge(t.status)}</td><td>${t.last_used_at ? fmtDateTime(t.last_used_at) : "–"}</td>
         <td>${t.status === "active" ? html`<button class="btn btn-danger btn-sm" data-lost="${t.id}">Report lost</button>` : ""}</td></tr>`)}</tbody></table></div>` : empty("No tags linked yet.")}`);
   if ($("#link")) onSubmit($("#link"), async (v, f) => { await post("/api/me/tags/link", v); f.reset(); toast("Tag linked and active.", "good"); tags(); });
   $$("[data-lost]").forEach((b) => b.addEventListener("click", async () => {
@@ -310,7 +310,7 @@ async function settings() {
         <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="newPasswordConfirm" type="password" required minlength="10" autocomplete="new-password"></div>
         <button class="btn btn-dark">Change password</button><p class="tiny muted mb-0">Other devices will be signed out.</p></form></section>
       <section class="card"><h2>Marketing preferences</h2>
-        ${consents.length ? html`<div class="stack">${consents.map((c) => html`<label class="check"><input type="checkbox" data-consent data-org="${c.organiser_id || ""}" data-ch="${c.channel}" ${raw(c.granted ? "checked" : "")}><span>${c.organiser_name || "TicketRoom"} — ${c.channel === "sms" ? "SMS" : "email"}</span></label>`)}</div>`
+        ${consents.length ? html`<div class="stack">${consents.map((c) => html`<label class="check"><input type="checkbox" data-consent data-org="${c.organiser_id || ""}" data-ch="${c.channel}" ${raw(c.granted ? "checked" : "")}><span>${c.organiser_name || "TicketRoom"} by ${c.channel === "sms" ? "SMS" : "email"}</span></label>`)}</div>`
           : html`<p class="muted">You haven't opted in to any marketing.</p>`}
         <label class="check mt"><input type="checkbox" data-consent data-org="" data-ch="email" ${raw(consents.some((c) => !c.organiser_id && c.channel === "email" && c.granted) ? "checked" : "")}><span>TicketRoom event news by email</span></label>
         <button class="btn btn-ghost btn-sm mt" id="unall">Unsubscribe from all marketing</button>
