@@ -327,6 +327,7 @@ export async function header(el, { portal, active, box: signInBox } = {}) {
     : u ? [main, ...(main === "customer" && mine.includes("scanner") ? ["scanner"] : [])] : [];
   const links = [...(here ? [["/", "TicketRoom website"]] : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"]]), ...shown.map((k) => [PORTALS[k].href, PORTALS[k].name])];
   render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand()}
+    ${here ? "" : html`<button class="country-btn head-country" data-country aria-label="Country: ${SADC[0][1]}. Change country">${countryLabel(true)}</button>`}
     <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav class="nav" id="nav" aria-label="Main">
       ${here ? html`<span class="nav-here">You're in the ${here.name}</span>` : ""}
@@ -348,6 +349,7 @@ export async function header(el, { portal, active, box: signInBox } = {}) {
       el.after(b);
     }
   } else bar?.remove();
+  $("[data-country]", el)?.addEventListener("click", () => countryDialog());
   const toggle = $(".menu-toggle", el);
   toggle.addEventListener("click", () => { const open = $("#nav", el).classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); });
   const box = signInBox || (here ? portal : "site");
@@ -428,11 +430,42 @@ export function footer(el) {
     <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Contact us</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li><li><button type="button" class="btn-link footer-link" data-cookie-settings>Cookie settings</button></li></ul></div>
-  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
+  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za <button type="button" class="country-btn footer-link" data-country>${countryLabel()}</button></div></div>`);
   $("[data-sub]", el).append(subscribeForm("footer"));
   $("[data-cookie-settings]", el).addEventListener("click", () => cookiePreferences());
+  $("[data-country]", el).addEventListener("click", () => countryDialog());
   cookieBanner();
   siteExtras().catch(() => {});
+}
+
+// ---------- country ----------
+// TicketRoom runs in South Africa today; the rest of SADC is coming. Choosing
+// another country explains that and offers updates for it.
+export const SADC = [
+  ["ZA", "South Africa", "🇿🇦"], ["AO", "Angola", "🇦🇴"], ["BW", "Botswana", "🇧🇼"], ["KM", "Comoros", "🇰🇲"], ["CD", "DR Congo", "🇨🇩"],
+  ["SZ", "Eswatini", "🇸🇿"], ["LS", "Lesotho", "🇱🇸"], ["MG", "Madagascar", "🇲🇬"], ["MW", "Malawi", "🇲🇼"], ["MU", "Mauritius", "🇲🇺"],
+  ["MZ", "Mozambique", "🇲🇿"], ["NA", "Namibia", "🇳🇦"], ["SC", "Seychelles", "🇸🇨"], ["TZ", "Tanzania", "🇹🇿"], ["ZM", "Zambia", "🇿🇲"], ["ZW", "Zimbabwe", "🇿🇼"],
+];
+const LIVE_COUNTRIES = ["ZA"];
+function countryLabel(short = false) { const [code, name, flag] = SADC[0]; return short ? html`<span aria-hidden="true">${flag}</span><span class="cc"> ${code}</span>` : `${flag} ${name}`; }
+export function countryDialog() {
+  const d = dialog("Choose your country", html`<div class="stack">
+    <p class="small muted mb-0">TicketRoom is live in South Africa. We're bringing it to the rest of the SADC region next.</p>
+    <ul class="country-list">${SADC.map(([code, name, flag]) => html`<li><button type="button" class="country-row" data-pick="${code}">
+      <span class="flag" aria-hidden="true">${flag}</span><span class="grow">${name}</span>
+      ${LIVE_COUNTRIES.includes(code) ? html`<span class="badge good">Available</span>` : html`<span class="badge plain">Coming soon</span>`}</button></li>`)}</ul></div>`);
+  $$("[data-pick]", d).forEach((b) => b.addEventListener("click", () => {
+    const [code, name, flag] = SADC.find((c) => c[0] === b.dataset.pick);
+    if (LIVE_COUNTRIES.includes(code)) { d.close(); return; }
+    render($(".dialog-body", d), html`<div class="stack center">
+      <div class="flag-lg" aria-hidden="true">${flag}</div>
+      <h3 class="mb-0">TicketRoom is coming to ${name}</h3>
+      <p class="mb-0">We're not selling tickets in ${name} yet. Leave your email and we'll tell you the day we launch there. Until then you can browse and buy tickets for events in South Africa.</p>
+      <div data-sub></div>
+      <div class="row center"><button type="button" class="btn btn-ghost" data-back>Choose another country</button><button type="button" class="btn btn-primary" data-close>Browse South African events</button></div></div>`);
+    $("[data-sub]", d).append(subscribeForm(`country:${code}`));
+    $("[data-back]", d).addEventListener("click", () => { d.close(); countryDialog(); });
+  }));
 }
 
 // ---------- cookie consent ----------

@@ -44,6 +44,25 @@ const step = (m) => console.log(`  ok  ${m}`);
     assert.equal((await p.evaluate(() => JSON.parse(localStorage.getItem("tr_consent")))).analytics, false);
     step("cookie consent: banner once, Customise with Necessary always active, saved choice respected, changeable from the footer");
 
+    // 1b. Country: South Africa available, the rest of SADC coming soon (with updates for that country).
+    await p.goto(BASE);
+    await p.locator(".head-country").click();
+    const cd = p.locator("dialog[open]");
+    assert.equal(await cd.locator(".country-row").count(), 16, "all 16 SADC countries");
+    assert.equal(await cd.locator(".country-row", { hasText: "South Africa" }).getByText("Available").count(), 1);
+    assert.equal(await cd.getByText("Coming soon").count(), 15);
+    if (process.env.TR_SHOTS) await p.screenshot({ path: path.join(process.env.TR_SHOTS, "country-picker.png") });
+    await cd.locator(".country-row", { hasText: "Botswana" }).click();
+    await cd.getByRole("heading", { name: "TicketRoom is coming to Botswana" }).waitFor();
+    await cd.getByPlaceholder("Your email address").fill("kagiso.bw@example.co.bw");
+    await cd.getByRole("button", { name: "Subscribe" }).click();
+    await cd.locator(".sub-done").waitFor();
+    assert.equal(sql("SELECT source FROM newsletter_subscribers WHERE email = 'kagiso.bw@example.co.bw'")[0].source, "country:BW");
+    await cd.getByRole("button", { name: "Browse South African events" }).click();
+    assert.equal(await p.locator("dialog[open]").count(), 0);
+    assert.equal(await p.getByText("Prices are in South African rand").count(), 0);
+    step("country picker: 16 SADC countries, South Africa available, others coming soon with updates for that country");
+
     // 2. Trending artists and search by artist.
     await p.goto(BASE);
     const artist = p.locator("[data-artist='Soweto String Quartet']");
