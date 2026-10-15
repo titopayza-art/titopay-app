@@ -15,6 +15,8 @@ const assert = require("assert/strict");
 const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
 const { verifyOrganiser } = require("./kyc-helper");
+// Optional screenshots of each screen: TR_SHOTS=/some/folder node tests-ui/php-cashless.js ...
+const shot = async (p, name) => { if (process.env.TR_SHOTS) { await p.waitForTimeout(300); await p.screenshot({ path: require("path").join(process.env.TR_SHOTS, `${name}.png`), fullPage: true }); } };
 
 const BASE = process.argv[2] || "http://127.0.0.1:8600";
 const ROOT = process.argv[3] || "/srv/trtest/public_html";
@@ -37,6 +39,7 @@ const num = (v) => Number(v);
 
 async function page(browser, creds, viewport = { width: 1280, height: 900 }) {
   const ctx = await browser.newContext({ viewport, acceptDownloads: true });
+  await ctx.addInitScript(() => { try { localStorage.setItem("tr_consent", JSON.stringify({ v: 1, functional: true, analytics: true })); } catch { /* no storage */ } });
   const p = await ctx.newPage();
   p.on("pageerror", (e) => problems.push(`[pageerror] ${p.url()} ${e.message}`));
   p.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource.*(400|401|403|404|409|422|429|503)/.test(m.text())) problems.push(`[console] ${p.url()} ${m.text()}`); });
@@ -97,7 +100,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     assert.equal(pub.cashless, true, "event payload says cashless");
     const visitor = await page(browser, null, { width: 390, height: 844 });
     await visitor.goto(`${BASE}/events/${ev.slug}`);
-    await visitor.getByText("This event is cashless!").waitFor();
+    await visitor.getByText("This event is cashless!").waitFor(); await shot(visitor, "1-event-page-cashless");
     step("organiser switches cashless on for the event; the public event page says it is cashless");
 
     // 3. Attendees with tickets: Sipho (free ticket) and Thabo (a sandbox card payment: a TEST ticket).
@@ -121,7 +124,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     const csv = fs.readFileSync(await dl.path(), "utf8").trim().split("\n").slice(1).map((l) => l.split(","));
     assert.equal(csv.length, 3);
     const codes = Object.fromEntries(csv.map(([uid, code, act]) => [uid, { code, act }]));
-    await org.getByText(/3 registered/).waitFor();
+    await org.getByText(/3 registered/).waitFor(); await shot(org, "2-organiser-wristbands");
     assert.equal(num(one("SELECT count(*) AS n FROM tags WHERE event_id = ? AND status = 'assigned' AND security_level = 'uid_only'", ev.id).n), 3);
     assert.ok(!fs.readFileSync(path.join(dataDir, "ticketroom.sqlite")).includes(BANDS[0]), "chip UIDs are never stored, only their HMAC");
     const dup = await o.post(`/api/organiser/${orgId}/events/${ev.id}/tags`, { uids: [BANDS[0]] });
@@ -138,7 +141,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     await fan.getByLabel("Activation code").fill(codes[BANDS[0]].act);
     await fan.getByRole("button", { name: "Link tag" }).click();
     await fan.getByText("Tag linked and active.").waitFor();
-    await fan.locator("td", { hasText: codes[BANDS[0]].code }).waitFor();
+    await fan.locator("td", { hasText: codes[BANDS[0]].code }).waitFor(); await shot(fan, "3-account-wristband-linked");
     assert.equal((await f2.post("/api/me/tags/link", { eventId: ev.id, displayCode: codes[BANDS[1]].code, activationCode: codes[BANDS[1]].act })).status, 201);
     assert.equal((await f2.post("/api/me/tags/link", { eventId: ev.id, displayCode: codes[BANDS[2]].code, activationCode: codes[BANDS[2]].act })).body.error.code, "tag_already_linked", "one band per person per event");
     assert.ok(!JSON.stringify((await f2.get("/api/me/tags")).body).includes(codes[BANDS[0]].code), "nobody sees another person's bands");
@@ -160,10 +163,10 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     await fan.goto(`${BASE}/account#/wallet/${ev.id}`);
     await fan.getByLabel("Amount (R)").fill("500");
     await fan.getByRole("button", { name: "Top up" }).click();
-    await fan.getByText("Practice payment. No real money moves").waitFor();
+    await fan.getByText("Practice payment. No real money moves").waitFor(); await shot(fan, "4-top-up-payment");
     await fan.getByRole("button", { name: "Approve payment" }).click();
     await fan.waitForURL(/\/account#\/wallet\//);
-    await fan.locator(".balance-card .amt", { hasText: "R500.00" }).waitFor();
+    await fan.locator(".balance-card .amt", { hasText: "R500.00" }).waitFor(); await shot(fan, "5-wallet-balance");
     const tu = one("SELECT t.*, p.environment, p.purpose, p.status AS pstatus FROM wallet_topups t JOIN payments p ON p.topup_id = t.id WHERE t.status = 'confirmed' ORDER BY t.created_at DESC LIMIT 1");
     assert.equal(num(tu.amount_cents), 50000);
     assert.deepEqual([num(tu.test), tu.environment, tu.purpose, tu.pstatus], [1, "test", "topup", "confirmed"], "a sandbox top-up is test money");
@@ -197,7 +200,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     assert.equal(num(vendor.commission_bps), 500);
     await org.getByLabel("Vendor staff email").fill(CASHIER.email);
     await org.getByRole("button", { name: "Add", exact: true }).click();
-    await org.getByText(`(cashier), ${CASHIER.email}`).waitFor();
+    await org.getByText(`(cashier), ${CASHIER.email}`).waitFor(); await shot(org, "6-organiser-vendor-pos");
     assert.ok(sql("SELECT 1 FROM message_outbox WHERE to_address = ? AND body LIKE '%/account#/reset/%'", CASHIER.email).length, "new vendor staff are emailed a set-password link");
     assert.equal(one("SELECT account_type FROM users WHERE email = ?", CASHIER.email).account_type, "customer", "vendor staff have customer accounts");
     php(`q('UPDATE users SET password_hash = ?, email_verified_at = ? WHERE email = ?', [hash_secret('${CASHIER.password}'), now_iso(), '${CASHIER.email}']);`);
@@ -222,7 +225,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     await till.getByPlaceholder(/paste tag value/).fill(`UID:${BANDS[0]}`);
     await till.getByRole("button", { name: "Use", exact: true }).click();
     await till.getByText("APPROVED").waitFor();
-    await till.getByText("Left on the band: R410.00").waitFor();
+    await till.getByText("Left on the band: R410.00").waitFor(); await shot(till, "7-vendor-till-approved");
     assert.equal(balanceOf(FAN.email, ev.id), 41000, "R90 spent");
     const sale1 = one("SELECT * FROM pos_sales WHERE vendor_id = ? AND status = 'confirmed'", vendor.id);
     assert.deepEqual([num(sale1.total_cents), num(sale1.commission_cents), num(sale1.test)], [9000, 450, 1], "R90 sale, R4.50 commission, paid with test money");
@@ -397,7 +400,7 @@ const idem = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)
     await fan.locator(`a.balance-card[href="#/wallet/${ev.id}"]`, { hasText: "R0.00" }).waitFor();
     await fan.goto(`${BASE}/account#/wallet/${ev.id}`);
     await fan.getByRole("heading", { name: "Activity" }).waitFor();
-    await fan.locator("td", { hasText: "Purchase · Kota King" }).first().waitFor();
+    await fan.locator(".activity li", { hasText: "Kota King" }).first().waitFor();
     await till.goto(`${BASE}/pos`);
     await till.getByRole("tab", { name: "Summary" }).click();
     await till.getByText("Owed to you").waitFor();
