@@ -677,7 +677,7 @@ CREATE TABLE IF NOT EXISTS recon_items (
 CREATE INDEX IF NOT EXISTS recon_items_run_idx ON recon_items (run_id);
 
 -- cashless:begin
--- Wristbands and tags, event wallets, vendors and POS. Upgrade 11 runs this
+-- Wristbands and tags, event wallets, vendors and POS. Upgrade 14 runs this
 -- same block on older sites, so every statement here must be safe to repeat.
 -- A tag stores only an HMAC of its chip UID or token, never the value itself.
 -- Balances live on the attendee's account per event (never on the tag);
@@ -839,3 +839,65 @@ CREATE INDEX IF NOT EXISTS refunds_user_idx ON refunds (user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS refunds_one_pos_sale ON refunds (pos_sale_id) WHERE kind = 'pos_sale' AND status IN ('requested','processing','completed');
 CREATE INDEX IF NOT EXISTS payouts_vendor_idx ON payouts (vendor_id, status);
 -- cashless:end
+
+-- Organiser verification (FICA / KYC). Kept in its own tables: documents
+-- live encrypted in the data folder's private/ folder, never in public_html.
+-- (bootstrap.php's upgrade 12 runs everything from this comment down.)
+CREATE TABLE IF NOT EXISTS organiser_verification (
+  organiser_id        TEXT PRIMARY KEY REFERENCES organisers(id),
+  entity_type         TEXT NOT NULL DEFAULT 'individual' CHECK (entity_type IN ('individual','company','npo')),
+  nationality         TEXT NOT NULL DEFAULT 'sa' CHECK (nationality IN ('sa','foreign')),
+  legal_name          TEXT,
+  id_number_enc       TEXT,
+  id_number_last4     TEXT,
+  id_dob              TEXT,
+  registration_number TEXT,
+  rep_is_director     INTEGER NOT NULL DEFAULT 1,
+  plans_paid          INTEGER NOT NULL DEFAULT 0,
+  terms_version       TEXT,
+  terms_signed_at     TEXT,
+  terms_signed_by     TEXT REFERENCES users(id),
+  terms_signed_name   TEXT,
+  terms_ip            TEXT,
+  risk_override       TEXT CHECK (risk_override IS NULL OR risk_override IN ('high','normal')),
+  risk_note           TEXT,
+  completed_at        TEXT,
+  completed_scope     TEXT,
+  closed_at           TEXT,
+  updated_at          TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS verification_documents (
+  id                  TEXT PRIMARY KEY,
+  organiser_id        TEXT NOT NULL REFERENCES organisers(id),
+  event_id            TEXT REFERENCES events(id),
+  requirement         TEXT NOT NULL,
+  status              TEXT NOT NULL CHECK (status IN ('submitted','approved','rejected','replaced')),
+  file_name           TEXT NOT NULL,
+  original_name       TEXT,
+  mime_type           TEXT NOT NULL CHECK (mime_type IN ('application/pdf','image/jpeg','image/png')),
+  size_bytes          INTEGER NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 10485760),
+  sha256              TEXT NOT NULL,
+  uploaded_by         TEXT NOT NULL REFERENCES users(id),
+  created_at          TEXT NOT NULL,
+  reviewed_by         TEXT REFERENCES users(id),
+  reviewed_at         TEXT,
+  reject_reason       TEXT,
+  replaced_at         TEXT,
+  deleted_at          TEXT,
+  provider            TEXT,
+  provider_status     TEXT,
+  provider_message    TEXT,
+  provider_ref        TEXT,
+  provider_checked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS verification_documents_org_idx ON verification_documents (organiser_id, event_id, requirement);
+CREATE INDEX IF NOT EXISTS verification_documents_status_idx ON verification_documents (status, created_at);
+CREATE TABLE IF NOT EXISTS event_risk (
+  event_id      TEXT PRIMARY KEY REFERENCES events(id),
+  sells_alcohol INTEGER NOT NULL DEFAULT 0,
+  public_space  INTEGER NOT NULL DEFAULT 0,
+  third_party   INTEGER NOT NULL DEFAULT 0,
+  risk_override TEXT CHECK (risk_override IS NULL OR risk_override IN ('high','normal')),
+  updated_by    TEXT REFERENCES users(id),
+  updated_at    TEXT NOT NULL
+);

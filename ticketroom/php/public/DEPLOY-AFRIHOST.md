@@ -255,6 +255,32 @@ Admin portal → **Integrations** → **SMS**. Choose **BulkSMS** or
 
 The address and header are stored encrypted, like every key.
 
+## 10b. Organiser verification (FICA)
+
+Organisers verify themselves under **Verification** in the organiser
+portal: one checklist, only what applies to them (an ID and signed terms
+for everyone; company or NPO papers where relevant; a bank confirmation
+letter and proof of address only before payouts; permits only for events
+that need them). Staff check the uploads in Admin portal → **Verification**.
+
+- **Documents are private.** They are stored encrypted in
+  `ticketroom-data/private` (never inside `public_html`) and can only be
+  opened by the organisation's owners and TicketRoom staff. Every view is
+  logged and shown to the organiser. Include `ticketroom-data` in backups.
+- **Upload size.** Documents can be up to 10 MB. If the host's PHP allows
+  less (`post_max_size`, often 8 MB), uploads are capped at that. To allow
+  the full 10 MB: cPanel → **MultiPHP INI Editor** → choose the domain →
+  set `post_max_size` to `12M` → **Apply**.
+- **Identity checks.** Admin portal → **Integrations** → **Identity
+  verification**: *TicketRoom staff* (the default, works now), the
+  *Sandbox* (simulated, for testing only: never leave it on when live), or
+  *My own provider* (an `https://` address on the public internet and an
+  Authorization header; both stored encrypted). **Try a check** tests it.
+- **Keeping documents.** Admin portal → **Verification** → *Keeping
+  documents*: records are kept 5 years after an organiser's account closes
+  (FICA's minimum; you can choose up to 10), then deleted automatically.
+  Replaced or rejected copies go after 90 days by default.
+
 ## 11. Maintenance mode
 
 Admin portal → **Site settings** → **Maintenance mode**. While it is on,
@@ -274,6 +300,7 @@ previews the page. Turn it off on the same card.
 - [ ] The temporary admin password has been changed
 - [ ] A test ticket email arrived
 - [ ] Card payments: a test purchase and a test refund worked, then switched to Live
+- [ ] Integrations → Identity verification is **not** on Sandbox
 - [ ] cPanel → **Backup** includes `ticketroom-data` (keep a copy off the server)
 
 ## Big matches (up to 100,000 fans)

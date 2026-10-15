@@ -393,6 +393,20 @@ function tpl(string $name, array $a): array
         case 'staffInvite':
             return ['subject' => "{$a['organiser']} added you as a ticket scanner on TicketRoom",
                 'body' => $hi . "{$a['organiser']} has added you as a ticket scanner for {$a['event']}. Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket." . FOOTER];
+        case 'verificationApproved':
+            $for = !empty($a['event']) ? " for {$a['event']}" : '';
+            return ['subject' => "Approved: {$a['document']}",
+                'body' => $hi . "We've checked your {$a['document']}$for and approved it. Thank you.\n\nSee what is still needed, if anything: $B/organisers#/verification" . FOOTER];
+        case 'verificationRejected':
+            $for = !empty($a['event']) ? " for {$a['event']}" : '';
+            return ['subject' => "Please upload your {$a['document']} again",
+                'body' => $hi . "We couldn't accept the {$a['document']}$for that {$a['organiser']} uploaded.\n\nThe reason: " . ($a['reason'] ?: 'it could not be read.')
+                    . "\n\nUpload a new copy here: $B/organisers#/verification\n\nA clear photo or a PDF of the whole page works best. Questions? Reply to this email." . FOOTER];
+        case 'verificationComplete':
+            return ['subject' => "{$a['organiser']} is verified on TicketRoom",
+                'body' => $hi . "Everything we need to verify {$a['organiser']} has been checked and approved.\n\n"
+                    . (!empty($a['paid']) ? 'Your events can go on sale once we approve them, and payouts can be made to your verified bank account.' : 'Your events can go live once we approve them. If you start selling paid tickets, we will ask for your bank details and a bank confirmation letter before the first payout.')
+                    . "\n\nWe keep your documents private and only as long as the law (FICA) requires. See what we hold: $B/organisers#/verification" . FOOTER];
         case 'gatePass':
             return ['subject' => "Your gate pass for {$a['event']}",
                 'body' => $hi . "{$a['organiser']} has given you a {$a['role']} pass for {$a['event']} ({$a['when']}, {$a['venue']}).\n\nOpen your pass: {$a['url']}\n\nShow the QR code at the gate. " . ($a['reentry'] ? 'It lets you in and out as often as you need.' : 'It works for one entry.') . " Keep the link to yourself: anyone with it can use your pass." . FOOTER];
@@ -444,6 +458,9 @@ function email_catalog(): array
         ['key' => 'topupConfirmed', 'name' => 'Cashless top-up confirmed', 'audience' => 'Attendee', 'trigger' => 'When a card top-up of an event balance is confirmed', 'sample' => fn() => tpl('topupConfirmed', ['name' => 'Lerato Mokoena', 'event' => $ev, 'amountCents' => 20000, 'balanceCents' => 35000])],
         ['key' => 'walletRefundDone', 'name' => 'Unused balance refunded', 'audience' => 'Attendee', 'trigger' => 'When finance pays back an unused cashless balance', 'sample' => fn() => tpl('walletRefundDone', ['name' => 'Lerato Mokoena', 'event' => $ev, 'reference' => 'RF-7KQ2M9PX', 'amountCents' => 8500])],
         ['key' => 'vendorInvite', 'name' => 'Vendor staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new person to a vendor team', 'sample' => fn() => tpl('vendorInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'vendor' => 'Kota King', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'verificationApproved', 'name' => 'Verification document approved', 'audience' => 'Organiser', 'trigger' => 'When staff (or the identity check) approve a verification document', 'sample' => fn() => tpl('verificationApproved', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'document' => 'SA ID or Smart ID card'])],
+        ['key' => 'verificationRejected', 'name' => 'Verification document not accepted', 'audience' => 'Organiser', 'trigger' => 'When staff reject a verification document, with the reason', 'sample' => fn() => tpl('verificationRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'document' => 'Bank confirmation letter', 'reason' => 'The letter is older than 3 months. Please ask your bank for a new one.'])],
+        ['key' => 'verificationComplete', 'name' => 'Verification complete', 'audience' => 'Organiser', 'trigger' => 'When every required verification item is approved', 'sample' => fn() => tpl('verificationComplete', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'paid' => true])],
         ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/scan#/reset/sample"])],
     ];
 }

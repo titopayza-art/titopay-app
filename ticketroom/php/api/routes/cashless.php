@@ -246,6 +246,8 @@ route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/payout', 
     limit('payoutreq', 10, 3600, $u['id']);
     ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_MONEY);
     $v = cl_event_vendor($event, $a['vendorId']);
+    // Settlements go to the organiser's bank account, so the same checks as their own payouts apply.
+    kyc_require_for_payout($org['id']);
     $po = vendor_payout_request($u, $org, $v);
     fin_payout_mail($po, 'payoutRequested');
     return json_out(['payout' => $po], 201);

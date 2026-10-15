@@ -35,6 +35,15 @@ $notify = function (array $s, array $evt) use ($local) {
     }
 };
 
+// ---- "Your own identity provider" (FICA checks): numbers ending in 9 are
+// declined, everything else verified. Needs the right key.
+if ($path === '/kyc/check') {
+    file_put_contents("$state/kyc.log", json_encode(['auth' => $auth, 'body' => $raw]) . "\n", FILE_APPEND);
+    if ($auth !== 'Bearer kyc-test-key') $json(['error' => 'bad key'], 401);
+    $in = json_decode($raw, true) ?: [];
+    $no = (string) ($in['idNumber'] ?? '');
+    $json(str_ends_with($no, '9') ? ['status' => 'declined', 'message' => 'Mock provider: no match', 'reference' => 'MOCK-1'] : ['status' => 'verified', 'message' => 'Mock provider: match', 'reference' => 'MOCK-2']);
+}
 // ---- Google sign-in (OpenID Connect). The test writes the account to use in
 // STATE/google.json ({"email":..,"name":..,"verified":true} or {"deny":true}).
 $b64u = fn(string $v) => rtrim(strtr(base64_encode($v), '+/', '-_'), '=');

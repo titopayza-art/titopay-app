@@ -15,6 +15,7 @@ require TR_APP . '/lib/wallet.php';
 require TR_APP . '/lib/integrations.php';
 require TR_APP . '/lib/payments.php';
 require TR_APP . '/lib/cashless.php';
+require TR_APP . '/lib/verification.php';
 
 // The data folder holds everything the site creates for itself: the
 // database, uploaded posters, the signing keys and your own settings. It goes
@@ -156,7 +157,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 14;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -255,14 +256,28 @@ const UPGRADES = [
     10 => [
         'ALTER TABLE events ADD COLUMN lineup TEXT',
     ],
+    // (11 belongs to another feature.)
+    // Organiser verification (FICA / KYC). Only its own new tables, created
+    // if missing, so it works whatever 11 did.
+    12 => ['@verification'],
     // Cashless: wristbands and tags, event wallets topped up by card, vendors
     // and their POS tills, spending PINs. Touches only its own tables and
     // columns (see tr_upgrade_cashless), so it works whether or not other
     // upgrades ran before it.
-    11 => [
+    // (13 belongs to another feature.) Safe in any order: it only adds its
+    // own columns when missing and creates its own tables IF NOT EXISTS.
+    14 => [
         '@cashless',
     ],
 ];
+// The verification tables, exactly as written at the end of schema.sql.
+function tr_verification_tables(): void
+{
+    $sql = (string) file_get_contents(TR_APP . '/schema.sql');
+    $at = strpos($sql, '-- Organiser verification (FICA / KYC).');
+    if ($at === false) throw new RuntimeException('schema.sql has no verification tables');
+    db()->exec(substr($sql, $at));
+}
 // The platform owner is the first administrator. Nobody else can change
 // their roles, suspend them or reset their password.
 function tr_mark_owner(): void
@@ -290,7 +305,7 @@ function tr_upgrade(): void
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         foreach (UPGRADES as $v => $steps) {
             if ($v <= $have) continue;
-            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@cashless' => tr_upgrade_cashless(), default => db()->exec($sql) };
+            foreach ($steps as $sql) match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), default => db()->exec($sql) };
             q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
         }
     });
@@ -339,6 +354,8 @@ function jobs(): array
             q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND body <> '[redacted]'", [iso_in(-180 * 86400)]);
         }],
         // Organiser campaigns booked for later go out when their time comes.
+        // Verification documents past their keeping time are deleted (POPIA).
+        ['verification-retention', 21600, fn() => kyc_retention()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];
@@ -407,7 +424,8 @@ function tr_handle(): void
     header('Cache-Control: no-store');
     try {
         $raw = '';
-        $isUpload = str_ends_with($path, '/uploads');
+        // Image and document uploads are read by their own routes, not here.
+        $isUpload = str_ends_with($path, '/uploads') || preg_match(KYC_UPLOAD_RE, $path);
         if (!$isUpload && in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
             $raw = (string) file_get_contents('php://input', false, null, 0, 102401);
             if (strlen($raw) > 102400) throw new AppError(413, 'too_large', 'That request is too large.');

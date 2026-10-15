@@ -618,3 +618,17 @@ body:has(> .shell) > .shell { flex: 1 0 auto; min-height: 0; }
 /* The Help button and the cookie bar never cover each other or the page content. */
 @media (max-width: 719px) { .cookie-banner { left: 10px; right: 10px; bottom: 10px; max-height: 70vh; overflow: auto; } body:has(.cookie-banner) .chat-launch { bottom: calc(var(--cookie-h, 0px) + 16px); } }
 .sidenav:empty { display: none; }
+
+/* Organiser verification (FICA): checklist rows, what each step unlocks */
+.kyc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.kyc-item { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--line-2); }
+.kyc-item:first-child { border-top: 0; padding-top: 0; }
+.kyc-body { display: grid; gap: 4px; min-width: 0; }
+.kyc-body .callout { margin: 4px 0 0; }
+.kyc-up { position: relative; cursor: pointer; }
+.kyc-up[aria-busy="true"] { opacity: .6; pointer-events: none; }
+.kyc-event { padding: 10px 0; border-top: 1px solid var(--line-2); }
+.kyc-event ul { margin: 6px 0 0; padding-left: 18px; }
+.steps-list.gates li { align-items: flex-start; flex-wrap: nowrap; }
+.steps-list.gates li.ok .tick { background: var(--good); border-color: var(--good); color: #fff; }
+.steps-list.gates li.no .tick { color: var(--muted); }

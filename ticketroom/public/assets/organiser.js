@@ -7,6 +7,7 @@ let ORG = null;
 let FEATURES = { cashless: true, sms: true };           // current organiser
 let ORGS = [];
 let QUERIES = 0;                                          // open customer queries passed on by TicketRoom
+let VERIF = null;                                         // verification summary (overall status, gates)
 
 const head = (title, sub = "", actions = "", crumbs = "") => html`${crumbs ? html`<div class="crumbs">${crumbs}</div>` : ""}<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
 const can = (...roles) => ORG && (roles.includes(ORG.role) || ORG.role === "admin");
@@ -16,7 +17,7 @@ function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
     ${ORG?.ref ? html`<div class="org-id">Organiser ID <span class="mono">${ORG.ref}</span></div>` : ""}
-    <a href="#/">Dashboard</a><a href="#/events">My events</a>${can("owner", "manager") ? html`<a href="#/queries">Customer queries${QUERIES ? html`<span class="count">${QUERIES}</span>` : ""}</a>` : ""}<a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
+    <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/verification">Verification${verifTodo() ? html`<span class="count">${verifTodo()}</span>` : ""}</a>${can("owner", "manager") ? html`<a href="#/queries">Customer queries${QUERIES ? html`<span class="count">${QUERIES}</span>` : ""}</a>` : ""}<a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
     <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
 }
@@ -57,6 +58,7 @@ function setupChecklist(events) {
   const steps = [
     ["Confirm your email", true, ""],
     ["TicketRoom approves your organisation", ORG.status === "approved", ORG.status === "approved" ? "" : "Usually within one working day. Build your event meanwhile."],
+    ["Verify your organisation (ID and signed terms)", !!VERIF && VERIF.overall !== "action_needed", "#/verification"],
     ["Create your first event", !!first, "#/events/new"],
     ["Add ticket types", events.some((e) => e.ticket_types > 0), first ? `#/events/${first.id}/tickets` : ""],
     ["Add bank details to get paid", !!ORG.bank?.last4 || (events.length > 0 && events.every((e) => e.is_free)), "#/settings"],
@@ -77,7 +79,7 @@ async function dashboard() {
   const t = d.totals;
   const upcoming = d.events.filter((e) => new Date(e.starts_at) > new Date()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
   render(main, html`${head(`Hi, ${ORG.name}`, html`Here's how your events are selling.${ORG.ref ? html` <span class="small">Organiser ID <span class="mono">${ORG.ref}</span></span>` : ""}`, can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}
-    ${pendingBanner()}${setupChecklist(d.events)}
+    ${pendingBanner()}${verifBanner()}${setupChecklist(d.events)}
     <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold.toLocaleString("en-ZA")}</div><div class="s">across ${t.events} event${t.events === 1 ? "" : "s"}</div></div>
       <div class="kpi"><div class="k">Last 7 days</div><div class="v">${money(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} order${t.last7Orders === 1 ? "" : "s"}</div></div>
@@ -183,7 +185,7 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);
@@ -217,7 +219,7 @@ async function eventWorkspace({ id, tab = "" }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
   render(el, spinner());
   await fns[tab](el, d, () => eventWorkspace({ id, tab }));
 }
@@ -636,12 +638,170 @@ async function finance() {
       <div class="kpi"><div class="k">Refunds pending</div><div class="v">${money(f.pendingRefundsCents)}</div><div class="s">held back from payouts</div></div></div>
     <div class="grid-2 mt"><section class="card"><h2>Request a payout</h2>
       ${!ORG.bank?.last4 ? html`<p class="callout warn">Add your bank details in Settings first.</p>` : html`<p class="small muted">Paid by EFT to ${ORG.bank.bankName} ••••${ORG.bank.last4} after TicketRoom finance approves it.</p>`}
+      ${VERIF && !VERIF.gates.payouts.ok ? html`<p class="callout warn small">Payouts are blocked until your bank account is verified. Still needed: ${VERIF.gates.payouts.missing.join(", ")}. <a href="#/verification">Go to Verification</a></p>` : ""}
       ${can("owner", "finance") ? html`<form class="stack" id="po"><div class="field"><label for="pa">Amount (R)</label><input id="pa" name="amount" inputmode="decimal" required value="${f.availableCents ? (f.availableCents / 100).toFixed(2) : ""}"><span class="hint">Minimum R100.</span></div><button class="btn btn-primary" ${raw(!f.availableCents || !ORG.bank?.last4 ? "disabled" : "")}>Request payout</button></form>` : html`<p class="muted">Only owners and finance members can request payouts.</p>`}</section>
       <section class="card"><h2>By event</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Ends</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>
         ${f.events.map((e) => html`<tr><td>${e.title}</td><td>${fmtDate(e.ends_at)}</td><td class="num">${moneyExact(e.balance_cents)}</td><td>${e.releasable ? badge("available") : e.status === "cancelled" ? badge("cancelled") : html`<span class="badge plain">on hold</span>`}</td></tr>`)}</tbody></table></div></section></div>
     <section class="card mt"><h2>Payout history</h2>${f.payouts.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>For</th><th class="num">Amount</th><th>Status</th><th>Requested</th><th>Bank ref</th></tr></thead><tbody>
       ${f.payouts.map((p) => html`<tr><td class="mono">${p.reference}</td><td>${p.vendor_name ? `Vendor: ${p.vendor_name}` : "You"}</td><td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td><td>${fmtDate(p.created_at)}</td><td class="mono">${p.bank_reference || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No payouts yet.</p>`}</section>`);
   if ($("#po")) onSubmit($("#po"), async (v) => { const c = parseRand(v.amount); const r = await post(`${base()}/payouts`, { amountCents: c }); toast(`Payout ${r.payout.reference} requested.`, "good"); finance(); });
+}
+
+// ---------------- verification (FICA) ----------------
+// What TicketRoom needs to know about this organiser, worked out from the
+// kind of organiser, whether they sell paid tickets and how risky each event
+// is. Each item says why. Documents are private: only owners and TicketRoom
+// staff can open them, and every view is logged here.
+const KYC_TYPES = { "application/pdf": "PDF", "image/jpeg": "JPG", "image/png": "PNG" };
+const verifTodo = () => (VERIF ? VERIF.requirements.filter((i) => i.required && ["missing", "rejected"].includes(i.status)).length : 0);
+const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+function verifBanner() {
+  if (!VERIF || VERIF.overall === "complete") return "";
+  const n = verifTodo();
+  return html`<p class="callout ${n ? "warn" : ""}"><strong>${n ? `Verification: ${n} item${n === 1 ? "" : "s"} to do.` : "Verification: waiting for TicketRoom to check your documents."}</strong> ${n ? "Your events can't go live until your ID and signed terms are approved." : "We'll email you when it's done."} <a href="#/verification">Open Verification</a></p>`;
+}
+const OVERALL_TEXT = { complete: "Everything we need has been checked and approved.", in_review: "Everything is uploaded. TicketRoom is checking it, usually within one working day.", action_needed: "Some items still need something from you." };
+function kycProvider(doc) {
+  const p = doc?.provider;
+  if (!p || p.name === "manual") return "";
+  return html`<div class="tiny ${p.simulated ? "callout warn" : "muted"}">${p.simulated ? html`<strong>Sandbox (simulated):</strong> ` : html`${p.label}: `}${badge(p.outcome)} ${p.message || ""}</div>`;
+}
+// One checklist row. eventId set for an event's permits.
+function kycItem(it, own, eventId = "") {
+  const d = it.document;
+  const act = own && it.kind === "document"
+    ? html`<label class="btn btn-ghost btn-sm kyc-up">${d && !d.deleted ? "Replace" : "Upload"}<input type="file" class="sr-only" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" data-up="${it.key}" data-ev="${eventId}" aria-label="${d ? "Replace" : "Upload"} ${it.label}"></label>`
+    : own && it.kind === "terms" && it.status !== "approved" ? html`<button class="btn btn-primary btn-sm" data-terms>Read and sign</button>` : "";
+  return html`<li class="kyc-item" data-req="${it.key}"><div class="grow kyc-body">
+      <div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${!it.required && !it.recommended && it.key !== "phone" ? html`<span class="badge plain">optional</span>` : ""}</div>
+      <div class="small muted">${it.reason}</div>
+      ${it.status === "rejected" ? html`<div class="callout bad small mb-0">Not accepted: ${it.rejectReason || "no reason given"}. Please upload a new copy.</div>` : ""}
+      ${it.signed ? html`<div class="tiny muted">Signed by ${it.signed.name} on ${fmtDateTime(it.signed.at)}.</div>` : ""}
+      ${d && !d.deleted ? html`<div class="tiny muted">${KYC_TYPES[d.mimeType] || "File"}, ${kb(d.sizeBytes)}, uploaded ${fmtDateTime(d.uploadedAt)}${d.reviewedAt && d.status !== "submitted" ? ` · checked ${fmtDate(d.reviewedAt)}` : ""}${own ? html` · <a href="/api/verification/documents/${d.id}/file" target="_blank" rel="noopener">View</a>` : ""}</div>` : ""}
+      ${kycProvider(d)}</div>${act ? html`<div>${act}</div>` : ""}</li>`;
+}
+async function kycUpload(input, done) {
+  const file = input.files[0];
+  if (!file) return;
+  const type = file.type || ({ pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png" })[file.name.split(".").pop().toLowerCase()] || "";
+  const max = VERIF?.limits?.maxBytes || 10485760;
+  if (!KYC_TYPES[type]) { toast("Upload a PDF, JPG or PNG file.", "bad"); input.value = ""; return; }
+  if (file.size > max) { toast(`That file is larger than ${kb(max)}.`, "bad"); input.value = ""; return; }
+  const ev = input.dataset.ev;
+  const lbl = input.closest("label");
+  lbl?.setAttribute("aria-busy", "true");
+  try {
+    const r = await api("POST", `${base()}/verification/documents?requirement=${encodeURIComponent(input.dataset.up)}${ev ? `&eventId=${encodeURIComponent(ev)}` : ""}`, undefined,
+      { raw: file, headers: { "content-type": type, "x-file-name": encodeURIComponent(file.name.slice(0, 120)) }, timeoutMs: 120000 });
+    const p = r.document.provider;
+    toast(r.document.status === "approved" ? "Uploaded and approved by the identity check." : r.document.status === "rejected" ? "Uploaded, but the identity check did not accept it." : p && p.simulated ? "Uploaded. The sandbox check sent it to staff review." : "Uploaded. TicketRoom will check it.", r.document.status === "rejected" ? "bad" : "good");
+    await done();
+  } catch (err) { toast(err.message, "bad"); input.value = ""; } finally { lbl?.removeAttribute("aria-busy"); }
+}
+function kycTermsDialog(done) {
+  const d = dialog("Organiser terms", html`<form class="stack" id="kt">
+    <p class="mb-0">By signing, you agree to the <a href="/legal/terms" target="_blank" rel="noopener">TicketRoom Terms and Conditions</a> (the organiser sections) for this organisation. In short, you will:</p>
+    <ul class="small"><li>describe every event honestly and run it as described, or refund buyers;</li><li>hold the permits, licences and insurance your events need;</li><li>honour every valid ticket and treat buyers' personal information lawfully (POPIA);</li><li>tell TicketRoom straight away if anything material changes.</li></ul>
+    <div class="field"><label for="kt-n">Your full name</label><input id="kt-n" name="fullName" required minlength="2" maxlength="120" autocomplete="name"><span class="hint">Typing your name is your signature. We record it with the date and time.</span></div>
+    <label class="check"><input type="checkbox" name="accept" required><span>I have read the terms and I am allowed to sign them for this organisation.</span></label>
+    <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Sign the terms</button></div></form>`);
+  onSubmit($("#kt", d), async (v) => { await post(`${base()}/verification/terms`, { fullName: v.fullName, accept: !!v.accept }); d.close(); toast("Terms signed.", "good"); await done(); });
+}
+function kycWire(root, done) {
+  $$("[data-up]", root).forEach((i) => i.addEventListener("change", () => kycUpload(i, done)));
+  $("[data-terms]", root)?.addEventListener("click", () => kycTermsDialog(done));
+}
+function gateRow(ok, title, text) {
+  return html`<li class="${ok ? "ok" : "no"}"><span class="tick" aria-hidden="true">${ok ? "✓" : "✕"}</span><span><strong>${title}</strong><br><span class="small muted">${text}</span></span><span class="sr-only">${ok ? " (allowed)" : " (blocked)"}</span></li>`;
+}
+async function verification() {
+  await loadVerif();
+  nav();
+  const v = VERIF;
+  if (!v) return render(main, html`${head("Verification")}<p class="muted">Verification could not be loaded right now.</p>`);
+  const own = v.canManage;
+  const p = v.profile;
+  const g = v.gates;
+  const need = (m) => (m.length ? `Still needed: ${m.join(", ")}.` : "");
+  const evItems = v.events.filter((e) => e.requirements.length);
+  render(main, html`${head("Verification", "FICA requires us to know who sells tickets on TicketRoom. We only ask for what applies to you, and we say why.")}
+    <p class="callout ${v.overall === "complete" ? "good" : v.overall === "in_review" ? "" : "warn"}"><strong>${badge(v.overall)}</strong> ${OVERALL_TEXT[v.overall]}</p>
+    ${v.provider.simulated ? html`<p class="callout warn small"><strong>Test mode:</strong> identity checks are simulated by the TicketRoom sandbox. ${v.provider.rule}</p>` : ""}
+    <section class="card"><h2>What this unlocks</h2><ol class="steps-list gates">
+      ${gateRow(g.freeSubmit.ok && g.paidSubmit.ok, "Submit events for review", g.freeSubmit.ok ? "Your ID and signed terms are in." : `Upload your ID and sign the terms first. ${need(g.freeSubmit.missing)}`)}
+      ${gateRow(g.freePublish.ok && g.paidPublish.ok, "Events go live and on sale", g.paidPublish.ok ? "Approved. Free and paid events can go live once we approve each event." : `Free events go live, and paid events go on sale, only after your ID and signed terms are approved. ${need(g.paidPublish.missing)}`)}
+      ${gateRow(g.payouts.ok, "Payouts", g.payouts.ok ? "Your bank account is verified." : v.sellsPaid ? `Blocked until your bank account is verified. ${need(g.payouts.missing)}` : "Only for paid events. Tick \"We will sell paid tickets\" below to see what payouts need.")}
+      ${gateRow(false, "Mobile number", "Phone checks are not available yet, so your number shows as not verified. It does not hold anything up.")}
+    </ol></section>
+    ${own ? html`<section class="card mt"><h2>About you</h2><form class="stack" id="kp">
+      <fieldset class="field"><legend class="label">Who is selling tickets?</legend><div class="row">${Object.entries(v.entityNames).map(([k, l]) => html`<label class="check"><input type="radio" name="entityType" value="${k}" ${raw(p.entityType === k ? "checked" : "")}><span>${l}</span></label>`)}</div></fieldset>
+      <div class="grid-2"><div class="field"><label for="kp-nat" data-who>Identity document</label><select id="kp-nat" name="nationality"><option value="sa" ${raw(p.nationality === "sa" ? "selected" : "")}>South African ID or Smart ID (citizen or permanent resident)</option><option value="foreign" ${raw(p.nationality === "foreign" ? "selected" : "")}>Passport (foreign national)</option></select></div>
+        <div class="field"><label for="kp-name">Full name as on the ID</label><input id="kp-name" name="legalName" required maxlength="120" value="${p.legalName || ""}" autocomplete="off"></div></div>
+      <div class="grid-2"><div class="field"><label for="kp-id">ID or passport number</label><input id="kp-id" name="idNumber" inputmode="text" maxlength="20" autocomplete="off" placeholder="${p.hasIdNumber ? `Saved (${p.idNumberMasked}). Leave blank to keep it.` : ""}"><span class="hint">Checked on this page (date of birth, citizenship and check digit) and stored encrypted.</span></div>
+        <div class="field" data-org><label for="kp-reg">Registration number</label><input id="kp-reg" name="registrationNumber" maxlength="20" value="${p.registrationNumber || ""}" placeholder="2019/123456/07 or 123-456 NPO"></div></div>
+      <label class="check" data-company><input type="checkbox" name="repIsDirector" ${raw(p.repIsDirector ? "checked" : "")}><span>I am a director of the company</span></label>
+      <label class="check"><input type="checkbox" name="plansPaid" ${raw(p.plansPaid || v.sellsPaid ? "checked" : "")} ${raw(v.sellsPaid && !p.plansPaid ? "disabled" : "")}><span>We will sell paid tickets<br><span class="small muted">Paid sellers also need a bank confirmation letter${p.entityType !== "npo" ? " and proof of address" : ""} before the first payout.</span></span></label>
+      <div><button class="btn btn-dark">Save</button></div></form></section>` : html`<p class="callout small mt">Only the organisation's owners can upload documents and sign the terms. You can see what is still needed.</p>`}
+    <section class="card mt"><div class="card-title"><h2>Your checklist</h2><span class="small muted">PDF, JPG or PNG, up to ${kb(v.limits.maxBytes)} each</span></div>
+      <ul class="kyc-list">${v.requirements.map((it) => kycItem(it, own))}</ul>
+      ${v.sellsPaid && !v.bank.last4 ? html`<p class="small mb-0">Bank details are entered under <a href="#/settings">Settings</a>; then upload the letter for that account here.</p>` : ""}</section>
+    <section class="card mt"><h2>Event documents</h2>
+      <p class="small muted">Asked for only when an event needs them: alcohol on sale, 2 000 or more people, a public space, someone else's show, or a high-risk event (very large, high value, festivals, or a new organiser selling a lot).</p>
+      ${evItems.length ? evItems.map((e) => html`<div class="kyc-event"><div class="row between"><span><a href="#/events/${e.id}/checks"><strong>${e.title}</strong></a> <span class="small muted">${fmtDate(e.startsAt)}</span></span>
+          <span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : ""} ${badge(e.status_overall)}</span></div>
+          <ul class="small mb-0">${e.requirements.map((r) => html`<li>${r.label}: ${r.recommended ? "recommended" : r.status.replace(/_/g, " ")}</li>`)}</ul></div>`)
+        : html`<p class="mb-0">None of your current events needs extra documents.</p>`}</section>
+    ${own ? html`<section class="card mt"><h2>What we hold about you</h2>
+      <p class="small">We keep verification records for ${v.retention.years} years after your organiser account closes, as FICA requires, then delete them. Replaced or rejected copies are deleted after ${v.retention.discardRejectedDays} days. Documents are stored encrypted, outside the website, and only your organisation's owners and TicketRoom staff can open them.</p>
+      ${p.hasIdNumber ? html`<p class="small">ID or passport number: ${p.idNumberMasked}${p.dateOfBirth ? `, born ${p.dateOfBirth}` : ""}.</p>` : ""}
+      ${v.held.length ? html`<div class="table-wrap"><table><thead><tr><th>Document</th><th>Status</th><th>Uploaded</th><th class="num">Size</th></tr></thead><tbody>
+        ${v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No documents yet.</p>`}
+      <h3 class="mt">Who opened your documents</h3>
+      ${v.accessLog.length ? html`<ul class="small">${v.accessLog.map((x) => html`<li>${fmtDateTime(x.at)}: ${x.who}, ${x.action.toLowerCase()}</li>`)}</ul>` : html`<p class="muted small mb-0">Nobody yet.</p>`}</section>` : ""}`);
+  const f = $("#kp");
+  if (f) {
+    const sync = () => {
+      const t = f.querySelector("input[name=entityType]:checked")?.value || "individual";
+      $("[data-org]", f).classList.toggle("hidden", t === "individual");
+      $("[data-company]", f).classList.toggle("hidden", t !== "company");
+      $("[data-who]", f).textContent = t === "individual" ? "Identity document" : "The representative's identity document";
+      $("#kp-name").previousElementSibling.textContent = t === "individual" ? "Full name as on the ID" : "Representative's full name as on the ID";
+    };
+    $$("input[name=entityType]", f).forEach((r) => r.addEventListener("change", sync)); sync();
+    onSubmit(f, async (x) => {
+      const t = x.entityType || "individual";
+      await put(`${base()}/verification/profile`, { entityType: t, nationality: x.nationality, legalName: x.legalName, idNumber: x.idNumber || undefined,
+        registrationNumber: t === "individual" ? undefined : x.registrationNumber, repIsDirector: t === "company" ? !!x.repIsDirector : true, plansPaid: !!x.plansPaid });
+      toast("Saved.", "good"); verification();
+    });
+  }
+  kycWire(main, verification);
+}
+
+// An event's permits and checks: what the organiser declares about it, its
+// risk level and the documents those call for.
+async function checksTab(el, d, reload) {
+  await loadVerif();
+  const e = VERIF?.events.find((x) => x.id === d.event.id);
+  if (!e) return render(el, html`<section class="card"><p class="mb-0 muted">${["cancelled", "completed"].includes(d.event.status) ? "This event is over, so no documents are needed." : "Checks could not be loaded."}</p></section>`);
+  const own = VERIF.canManage;
+  const edit = can("owner", "manager") && ["draft", "pending_approval", "published"].includes(d.event.status);
+  const dc = e.risk.declared;
+  render(el, html`<section class="card"><h3>About this event</h3>
+      <p class="small muted">Your answers decide which permits we ask for. Nothing else is needed for a small event without alcohol.</p>
+      <form class="stack" id="rk">
+        <label class="check"><input type="checkbox" name="sellsAlcohol" ${raw(dc.sellsAlcohol ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>Alcohol will be sold</span></label>
+        <label class="check"><input type="checkbox" name="publicSpace" ${raw(dc.publicSpace ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>It is in a public space (a park, street or beach)</span></label>
+        <label class="check"><input type="checkbox" name="thirdParty" ${raw(dc.thirdParty ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>It is someone else's show (I am promoting an artist or another owner's event)</span></label>
+        ${edit ? html`<div><button class="btn btn-dark btn-sm">Save answers</button></div>` : ""}</form></section>
+    <section class="card mt"><div class="card-title"><h3>Documents for this event</h3><span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : html`<span class="badge good">standard</span>`}</span></div>
+      ${e.risk.reasons.length ? html`<p class="small">Why: ${e.risk.reasons.join("; ")}.</p>` : ""}
+      ${e.requirements.length ? html`<ul class="kyc-list">${e.requirements.map((it) => kycItem(it, own, e.id))}</ul>
+        <p class="small muted mb-0">Required documents must be uploaded before you submit the event, and approved before it goes live. Recommended ones never hold anything up.</p>` : html`<p class="mb-0">No extra documents are needed for this event.</p>`}
+      ${!own && e.requirements.some((r) => r.kind === "document") ? html`<p class="small mb-0">Only the organisation's owners can upload documents.</p>` : ""}</section>`);
+  const f = $("#rk", el);
+  if (edit) onSubmit(f, async (v) => { await put(`${base()}/events/${d.event.id}/risk`, { sellsAlcohol: !!v.sellsAlcohol, publicSpace: !!v.publicSpace, thirdParty: !!v.thirdParty }); toast("Saved.", "good"); reload(); });
+  kycWire(el, reload);
 }
 
 // ---------------- customer queries ----------------
@@ -699,7 +859,7 @@ async function settings() {
       <form class="stack" id="bf"><div class="field"><label for="bn">Bank</label><select id="bn" name="bankName">${["ABSA", "African Bank", "Capitec", "Discovery Bank", "FNB", "Investec", "Nedbank", "Standard Bank", "TymeBank", "Other"].map((b) => html`<option ${raw(b === o.bank.bankName ? "selected" : "")}>${b}</option>`)}</select></div>
         <div class="field"><label for="bh">Account holder</label><input id="bh" name="accountHolder" required value="${o.bank.accountHolder || ""}"></div>
         <div class="grid-2"><div class="field"><label for="ba">Account number</label><input id="ba" name="accountNumber" inputmode="numeric" required autocomplete="off"></div><div class="field"><label for="bb">Branch code</label><input id="bb" name="branchCode" inputmode="numeric" required value="${o.bank.branchCode || ""}"></div></div>
-        <button class="btn btn-dark">Save bank details</button><p class="tiny muted mb-0">Stored encrypted. Changes are logged and may delay a pending payout while we verify them.</p></form>` : html`<p class="muted">Only owners and finance members can see bank details.</p>`}</section></div>`);
+        <button class="btn btn-dark">Save bank details</button><p class="tiny muted mb-0">Stored encrypted. Changes are logged. A new account needs a new bank confirmation letter under <a href="#/verification">Verification</a> before the next payout.</p></form>` : html`<p class="muted">Only owners and finance members can see bank details.</p>`}</section></div>`);
   onSubmit($("#of"), async (v) => { await patch(`${base()}`, v); toast("Saved.", "good"); });
   if ($("#bf")) onSubmit($("#bf"), async (v, f) => { await put(`${base()}/bank`, v); toast("Bank details saved.", "good"); f.elements.accountNumber.value = ""; await loadOrg(); settings(); });
 }
@@ -710,6 +870,11 @@ async function loadOrg() {
   const pick = ORGS.find((o) => o.id === want) || ORGS[0];
   ORG = pick ? (await get(`/api/organiser/${pick.id}`)).organiser : null;
   if (ORG && can("owner", "manager")) try { QUERIES = (await get(`/api/organiser/${ORG.id}/queries`)).open; } catch { QUERIES = 0; }
+  await loadVerif();
+}
+async function loadVerif() {
+  if (!ORG) { VERIF = null; return; }
+  try { VERIF = (await get(`/api/organiser/${ORG.id}/verification`)).verification; } catch { VERIF = null; }
 }
 
 (async () => {
@@ -737,6 +902,6 @@ async function loadOrg() {
   if (!ORG) { render($("#sidenav"), ""); return apply(); }
   router([
     ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)],
-    ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
+    ["/verification", verification], ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
   ], () => { location.hash = "#/"; });
 })();

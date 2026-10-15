@@ -159,6 +159,7 @@ route('POST', '/api/admin/payouts/:id/decide', function ($a) {
     $po = row("SELECT * FROM payouts WHERE id = ? AND status = 'requested'", [$a['id']]);
     if (!$po) throw conflict('This payout has already been decided.', 'bad_transition');
     if (!$b['approve'] && empty($b['note'])) throw bad('Tell the organiser why.', ['note' => 'Required when rejecting.']);
+    if ($b['approve']) kyc_require_for_payout($po['organiser_id']);
     q('UPDATE payouts SET status = ?, note = ?, approved_by = ?, updated_at = ? WHERE id = ?', [$b['approve'] ? 'approved' : 'rejected', $b['note'] ?? null, $u['id'], now_iso(), $po['id']]);
     if (!$b['approve']) fin_payout_mail($po, 'payoutRejected', ['note' => $b['note']]);
     audit($b['approve'] ? 'payout.approved' : 'payout.rejected', ['actor' => $u, 'entityType' => 'payout', 'entityId' => $po['id'], 'organiserId' => $po['organiser_id']]);
@@ -181,6 +182,7 @@ route('POST', '/api/admin/payouts/:id/mark-paid', function ($a) {
     return tx(function () use ($u, $a, $b) {
         $po = row("SELECT * FROM payouts WHERE id = ? AND status = 'approved'", [$a['id']]);
         if (!$po) throw conflict('Only approved payouts can be recorded as paid.', 'bad_transition');
+        kyc_require_for_payout($po['organiser_id']);
         $now = now_iso();
         q("UPDATE payouts SET status = 'paid', bank_reference = ?, paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ?", [$b['bankReference'], $u['id'], $now, $now, $po['id']]);
         // A vendor settlement pays out what was owed for that vendor's cashless sales.
@@ -274,6 +276,8 @@ route('POST', '/api/organiser/:orgId/payouts', function ($a) {
     $b = check(body(), ['amountCents' => R::int(['min' => 10000, 'max' => 100000000])]);
     if ($org['status'] !== 'approved') throw conflict('Your organiser account must be approved first.', 'organiser_not_approved');
     if (!$org['bank_account_last4']) throw conflict('Add your bank details in Settings first.', 'no_bank_details');
+    // FICA: no money leaves until the bank account (and the rest) is verified.
+    kyc_require_for_payout($org['id']);
     return tx(function () use ($u, $org, $b) {
         $m = organiser_money(row('SELECT * FROM organisers WHERE id = ?', [$org['id']]));
         if ($b['amountCents'] > $m['availableCents']) throw conflict('That is more than your available balance of ' . format_zar($m['availableCents']) . '.', 'insufficient_balance');
@@ -326,7 +330,7 @@ route('GET', '/api/me/refunds', function () {
 });
 
 // ============================================================== integrations
-const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'sms' => 'SMS', 'google' => 'Sign in with Google'];
+const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'google' => 'Sign in with Google'];
 function fin_integration(string $group): array
 {
     $form = integration_form($group);
@@ -346,6 +350,14 @@ function fin_integration(string $group): array
             'notifyUrl' => in_array($p, ['none', 'sandbox'], true) ? null : base_url() . "/api/webhooks/$p", 'credentials' => $creds ?: (object) [], 'fields' => $form,
             'testOrders' => (int) val("SELECT count(*) FROM orders WHERE test = 1 AND status <> 'cancelled'")];
     }
+    if ($group === 'kyc') {
+        $p = kyc_provider();
+        return ['key' => 'identity', 'group' => 'kyc', 'label' => 'Identity verification', 'provider' => $p, 'environment' => $p === 'sandbox' ? 'sandbox' : ($p === 'manual' ? 'staff review' : 'live'),
+            'status' => $p === 'http' && !kyc_http_url_ok((string) cfg('kyc.httpUrl', '')) ? 'not set up' : 'active',
+            'endpoint' => $p === 'sandbox' ? 'Simulated in TicketRoom (no provider)' : ($p === 'manual' ? 'TicketRoom staff review' : 'your provider'),
+            'sandboxRule' => $p === 'sandbox' ? KYC_SANDBOX_RULE : null, 'credentials' => $creds ?: (object) [], 'fields' => $form,
+            'pending' => (int) val("SELECT count(*) FROM verification_documents WHERE status = 'submitted'")];
+    }
     if ($group === 'google') {
         $on = google_ready();
         return ['key' => 'google', 'group' => 'google', 'label' => 'Sign in with Google', 'provider' => cfg('google.enabled') === 'on' ? 'google' : 'none', 'environment' => $on ? 'live' : 'not set up',
@@ -359,14 +371,14 @@ route('GET', '/api/admin/integrations', function () {
     adm_admin(); // provider settings are for admins only
     return [
         'defaults' => ['bookingFeeCents' => (int) cfg('fees.ticketFeeFixedCents', 1000), 'bookingFeeBps' => (int) cfg('fees.ticketFeeBps', 0), 'organiserCommissionBps' => (int) cfg('fees.organiserCommissionBps', 500)],
-        'integrations' => [fin_integration('payments'), fin_integration('mail'), fin_integration('sms'), fin_integration('google')],
+        'integrations' => [fin_integration('payments'), fin_integration('mail'), fin_integration('sms'), fin_integration('google'), fin_integration('kyc')],
     ];
 });
 // Saving needs the admin's own password: these settings move money and send mail as TicketRoom.
 route('PUT', '/api/admin/integrations/:key', function ($a) {
     $u = adm_admin();
     limit('integsave', 20, 3600, $u['id']);
-    $group = ['email' => 'mail', 'payments' => 'payments', 'sms' => 'sms', 'google' => 'google'][$a['key']] ?? null;
+    $group = ['email' => 'mail', 'payments' => 'payments', 'sms' => 'sms', 'identity' => 'kyc', 'google' => 'google'][$a['key']] ?? null;
     if (!$group) throw not_found('Unknown integration.');
     $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'values' => R::obj([], ['optional' => true]), 'clear' => R::arr(R::str(['max' => 60]), ['optional' => true, 'max' => 20])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
@@ -396,6 +408,7 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     if ($key === 'email') $result = smtp_health();
     elseif ($key === 'sms') $result = sms_health();
     elseif ($key === 'payments') $result = fin_payments_health();
+    elseif ($key === 'identity') $result = fin_identity_health();
     elseif ($key === 'google') $result = !google_ready() ? ['ok' => false, 'detail' => 'Switch it on and enter the client ID and secret.']
         : (preg_match('/^[\w-]+\.apps\.googleusercontent\.com$/', (string) cfg('google.clientId')) ? ['ok' => true, 'detail' => 'Ready. Make sure ' . google_redirect_uri() . ' is listed under Authorised redirect URIs in Google Cloud.']
         : ['ok' => false, 'detail' => 'That does not look like a Google OAuth client ID (it ends in .apps.googleusercontent.com).']);
@@ -404,6 +417,16 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     audit('integration.health_checked', ['actor' => $u, 'entityType' => 'integration', 'entityId' => $key, 'details' => ['ok' => $result['ok']]]);
     return $result;
 });
+function fin_identity_health(): array
+{
+    return match (kyc_provider()) {
+        'manual' => ['ok' => true, 'detail' => 'TicketRoom staff review every document under Verification. Nothing is sent to an outside provider.'],
+        'sandbox' => ['ok' => true, 'detail' => 'The identity sandbox is on. ' . KYC_SANDBOX_RULE . ' Switch to staff review or your provider before going live.'],
+        default => kyc_http_url_ok((string) cfg('kyc.httpUrl', ''))
+            ? ['ok' => true, 'detail' => 'The address looks right. Use "Try a check" with a test ID number to see what your provider answers.']
+            : ['ok' => false, 'detail' => 'The check-identity address must start with https:// and be on the public internet.'],
+    };
+}
 function fin_payments_health(): array
 {
     $p = pay_provider();
@@ -465,6 +488,18 @@ route('POST', '/api/admin/integrations/:key/test', function ($a) {
         $b = check(body(), ['phone' => R::phone()]);
         try { sms_send($b['phone'], 'TicketRoom test SMS. If you can read this, SMS works.'); return ['ok' => true, 'detail' => "Sent to {$b['phone']}."]; }
         catch (Throwable $e) { return ['ok' => false, 'detail' => integration_scrub($e->getMessage())]; }
+    }
+    if ($a['key'] === 'identity') {
+        // A trial check with a number the admin types. Nothing is stored.
+        $b = check(body(), ['number' => R::str(['min' => 6, 'max' => 20]), 'fullName' => R::str(['optional' => true, 'max' => 120])]);
+        $isId = (bool) preg_match('/^\d{13}$/', (string) preg_replace('/\s+/', '', $b['number']));
+        $c = $isId ? sa_id_check($b['number']) : passport_check($b['number']);
+        if (!$c['ok']) return ['ok' => false, 'detail' => $c['error']];
+        $r = kyc_identity_check(['reference' => 'TEST-' . random_code(6), 'type' => $isId ? 'sa_id' : 'passport', 'number' => $c['id'], 'name' => $b['fullName'] ?? 'Test Person', 'dob' => $c['dob'] ?? null]);
+        audit('integration.identity_test', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'kyc', 'details' => ['provider' => $r['provider'], 'outcome' => $r['status']]]);
+        $local = $isId ? "Valid SA ID number: born {$c['dob']}, {$c['citizenship']}." : 'Passport number format is fine.';
+        return ['ok' => $r['status'] !== 'error', 'outcome' => $r['status'], 'provider' => $r['provider'], 'simulated' => $r['provider'] === 'sandbox',
+            'detail' => "$local " . ($r['status'] === 'manual' ? 'Staff review is on, so nothing is sent anywhere.' : 'Outcome: ' . $r['status'] . ($r['message'] ? " ({$r['message']})" : '') . '.')];
     }
     throw not_found('Nothing to test here.');
 });

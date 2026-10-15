@@ -49,7 +49,7 @@ function rand_short(int $cents): string { return 'R' . number_format($cents / 10
 function wallet_account(string $userId, string $eventId): string { return "wallet:$userId:$eventId"; }
 function vendor_account(array $v): string { return "vendor:{$v['id']}:event:{$v['event_id']}"; }
 
-// ============================================================== upgrade 11
+// ============================================================== upgrade 14
 // Adds only cashless's own columns and tables. Two tables need a constraint
 // relaxed, which SQLite can only do by rebuilding the table: payments (a
 // top-up has no order) and refunds (a wallet or POS refund has no order).
