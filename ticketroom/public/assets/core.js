@@ -338,6 +338,24 @@ export async function header(el, { portal, active, box: signInBox } = {}) {
       ${u ? html`<button class="link" data-signout><span class="user-chip"><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span>Sign out</span></button>`
       : html`<button class="link" data-signin>Sign in</button>${["admin", "scanner"].includes(signInBox || portal) ? "" : html`<button class="btn btn-primary btn-sm" data-signup>${portal === "organiser" ? "Start selling" : "Create account"}</button>`}`}
     </nav></div>`);
+  // Portal pages: the menu sits in a navy side panel with who is signed in at the top.
+  const sn = $(".shell > #sidenav");
+  if (here && sn) {
+    const side = document.createElement("aside");
+    side.className = "side";
+    side.setAttribute("aria-label", `${here.name} menu`);
+    sn.before(side);
+    side.append(sn);
+  }
+  const prof = $(".side .side-profile");
+  if (here && u && $(".side")) {
+    const who = accountType(u) === "staff" ? (u.platform_roles || []).map((r) => r[0].toUpperCase() + r.slice(1)).join(", ") || "Staff"
+      : accountType(u) === "organiser" ? (u.organisers?.[0]?.name || "Organiser") : "Customer";
+    const box = prof || document.createElement("div");
+    box.className = "side-profile";
+    render(box, html`<span class="avatar" aria-hidden="true">${initials(u.full_name)}</span><span class="who"><strong>${u.full_name}</strong><span>${who}</span></span>`);
+    if (!prof) $(".side").prepend(box);
+  } else prof?.remove();
   // A coloured bar under the header names the portal, so admin, organiser and
   // customer screens can never be mistaken for each other, on a phone too.
   // Portal pages ship with their bar already in place, so nothing is pushed
@@ -943,6 +961,8 @@ export function router(routes, fallback) {
           a.toggleAttribute("aria-current", target === "/" ? path === "/" : path === target || path.startsWith(target + "/"));
           if (a.hasAttribute("aria-current")) a.setAttribute("aria-current", "page");
         });
+        // A portal's home page that has no link of its own ("/" in the customer portal) is its first section.
+        if (path === "/" && !document.querySelector('.sidenav a[aria-current="page"]')) document.querySelector('.sidenav a[href^="#/"]')?.setAttribute("aria-current", "page");
         // On a phone the menu is a sideways strip: keep the current page in view.
         const cur = document.querySelector('.sidenav a[aria-current="page"]');
         if (cur && cur.parentElement.scrollWidth > cur.parentElement.clientWidth) {

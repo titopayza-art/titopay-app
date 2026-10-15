@@ -9,7 +9,7 @@ const fromPrice = (e) => e.from_price_cents === null ? "" : e.from_price_cents =
 
 function card(e) {
   return html`<a class="event-card" href="/events/${e.slug}">
-    <div class="poster">${poster(e, "fill")}${datebadge(e.starts_at)}${e.remaining === 0 ? html`<span class="badge bad sold-flag">Sold out</span>` : e.remaining < 30 ? html`<span class="badge amber sold-flag">Selling fast</span>` : ""}</div>
+    <div class="poster">${poster(e, "fill")}${datebadge(e.starts_at)}${e.cashless_enabled ? html`<span class="cashless-flag" title="Cashless event"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 7.5a6.5 6.5 0 0 1 0 9M12.5 5a10 10 0 0 1 0 14M5.5 10a2.8 2.8 0 0 1 0 4"/></svg>Cashless</span>` : ""}${e.remaining === 0 ? html`<span class="badge bad sold-flag">Sold out</span>` : e.remaining < 30 ? html`<span class="badge amber sold-flag">Selling fast</span>` : ""}</div>
     <div class="body"><span class="cat-label">${e.category}</span><h3>${e.title}</h3>
       <span class="muted small">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })} · ${fmtTime(e.starts_at)}</span>
       <span class="muted small">${e.venue_name}, ${e.city}${e.distance_km != null ? html` · <strong class="dist">${e.distance_km < 1 ? "under 1" : e.distance_km} km away</strong>` : ""}</span>
@@ -27,7 +27,7 @@ const icon = (name) => raw(`<svg class="ico" width="16" height="16" viewBox="0 0
 
 // ---------------- home / discovery ----------------
 // Event filters: what the URL carries and how each one is described in a chip.
-const FILTER_KEYS = ["q", "categories", "city", "when", "from", "to", "free", "minPrice", "maxPrice", "near", "nearLabel", "km", "age"];
+const FILTER_KEYS = ["q", "categories", "city", "when", "from", "to", "free", "minPrice", "maxPrice", "near", "nearLabel", "km", "age", "cashless"];
 const WHEN = [["", "Any date"], ["today", "Today"], ["tomorrow", "Tomorrow"], ["weekend", "This weekend"], ["week", "Next 7 days"], ["month", "Next 30 days"]];
 const PRICES = [["", "", "Any price"], ["free", "", "Free"], ["0", "100", "Under R100"], ["100", "300", "R100 to R300"], ["300", "", "R300 and up"]];
 const DISTANCES = [10, 25, 50, 100, 200];
@@ -45,6 +45,7 @@ function filterChips(state) {
   if (state.free) out.push(["free", "Free"]);
   if (state.minPrice || state.maxPrice) out.push(["price", state.minPrice && state.maxPrice ? `${randText(state.minPrice)} to ${randText(state.maxPrice)}` : state.maxPrice ? `Under ${randText(state.maxPrice)}` : `${randText(state.minPrice)} and up`]);
   if (state.age) out.push(["age", AGE_GROUPS[state.age]]);
+  if (state.cashless) out.push(["cashless", "Cashless events"]);
   return out;
 }
 function dropFilter(state, key) {
@@ -155,6 +156,11 @@ async function home() {
       <div class="active-filters mt" data-active aria-live="polite"></div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
+    <section class="section pt-0 hidden" id="cashless"><div class="wrap"><div class="cashless-home">
+      <div class="cashless-intro"><span class="cat-label">Cashless events</span><h2>Tap to pay. No cash, no queues.</h2>
+        <p>At these events your wristband is your wallet. Top up on your phone, tap at the bar and food stalls, and get back what you don't spend.</p>
+        <a class="btn btn-dark btn-sm" href="/?cashless=1#grid" data-cl-all>See all cashless events</a></div>
+      <div class="cashless-rail" id="cashless-rail"></div></div></div></section>
     <section class="section pt-0 hidden" id="trending"><div class="wrap"><h2>Trending artists</h2><div class="artist-rail mt" id="artist-rail"></div></div></section>
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
@@ -212,6 +218,13 @@ async function home() {
       <div class="meta"><h3>${a.title}</h3>${a.subtitle ? html`<span>${a.subtitle}</span>` : ""}</div></a>`)}`);
     $$("[data-ad]").forEach((a) => a.addEventListener("click", () => { navigator.sendBeacon?.(`/api/site/posters/${a.dataset.ad}/click`) || post(`/api/site/posters/${a.dataset.ad}/click`).catch(() => {}); }));
   };
+  // Cashless events get their own band on the home page.
+  get("/api/public/events?cashless=1").then(({ events }) => {
+    if (!events.length) return;
+    $("#cashless").classList.remove("hidden");
+    render($("#cashless-rail"), html`${events.slice(0, 8).map(card)}`);
+    $("[data-cl-all]").addEventListener("click", (ev) => { ev.preventDefault(); for (const k of FILTER_KEYS) if (k !== "q") state[k] = ""; state.cashless = "1"; load(); $("#grid").scrollIntoView({ behavior: "smooth", block: "start" }); });
+  }).catch(() => {});
   // Trending artists: acts on upcoming events, ranked by recent sales and likes.
   get("/api/public/artists/trending").then(({ artists }) => {
     if (!artists.length) return;

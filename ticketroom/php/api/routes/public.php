@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const PUBLIC_EVENT = "e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
-  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name, o.ref AS organiser_ref,
+  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, e.cashless_enabled, o.name AS organiser_name, o.ref AS organiser_ref,
   (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
   (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS remaining,
   (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes";
@@ -53,6 +53,7 @@ route('GET', '/api/public/events', function () {
     if (is_numeric($minP) && $minP > 0) { $where[] = "$priceSql >= ?"; $p[] = (int) round($minP * 100); }
     if (is_numeric($maxP)) { $where[] = "$priceSql <= ?"; $p[] = (int) round($maxP * 100); }
     if (qs('province')) { $where[] = 'e.province = ?'; $p[] = qs('province'); }
+    if (qs('cashless') === '1') $where[] = 'e.cashless_enabled = 1';
     // Near a place: "near=lat,lng" (the browser's location) or "near=Durban" (a town), within "km".
     $near = null;
     $nq = trim((string) qs('near', ''));

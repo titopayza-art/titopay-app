@@ -172,7 +172,7 @@ async function overview() {
   const d = await get("/api/admin/dashboard");
   nav({ orgs: d.organisers.pending, verif: d.ops.verification_pending, events: d.events.pending + d.events.cancel_requests, refunds: d.ops.refunds_pending, payouts: d.ops.payouts_open, recon: d.ops.recon_exceptions, support: d.ops.support_open, promotions: d.ops.promotions_social });
   // text is [one, many]: "1 refund awaiting…", "3 refunds awaiting…".
-  const alert = (n, text, href, kind = "warn") => n ? html`<a class="callout ${kind} row between" href="${href}"><span><strong>${n}</strong> ${n === 1 ? text[0] : text[1]}</span><span>→</span></a>` : "";
+  const alert = (n, text, href, kind = "warn") => n ? html`<a class="attn ${kind}" href="${href}"><span class="n">${n}</span><span class="t">${n === 1 ? text[0] : text[1]}</span><span class="go" aria-hidden="true">›</span></a>` : "";
   // Which build is running, so an upload can be checked at a glance.
   const build = await fetch("/version.txt", { cache: "no-store" }).then((r) => (r.ok ? r.text() : "")).then((t) => (t.match(/build (\S+)/) || [])[1] || "").catch(() => "");
   render(main, html`${head("Overview", `Signed in as ${[...R].join(", ")}.${build ? ` Running build ${build}.` : ""}`)}
@@ -180,8 +180,8 @@ async function overview() {
       <div class="kpi"><div class="k">GMV (all time)</div><div class="v">${money(d.sales.gmv_all)}</div></div>
       <div class="kpi"><div class="k">Users</div><div class="v">${d.users.total}</div><div class="s">+${d.users.new7} this week</div></div>
       <div class="kpi"><div class="k">Live events</div><div class="v">${d.events.live}</div><div class="s">${d.organisers.approved} approved organisers</div></div></div>
-    <section class="card mt"><h2>Needs attention</h2><div class="stack">
-      ${d.ops.payments_test ? html`<a class="callout warn row between" href="#/integrations"><span><strong>Payments are in test mode.</strong> Buyers pay with practice payments and get TEST tickets the gate refuses${d.ops.test_orders ? ` (${d.ops.test_orders} so far)` : ""}. Switch to Live in Integrations before tickets go on sale.</span><span aria-hidden="true">→</span></a>` : ""}
+    <section class="card mt"><h2>Needs attention</h2><div class="attn-list">
+      ${d.ops.payments_test ? html`<a class="attn warn" href="#/integrations"><span class="n">TEST</span><span class="t">Payments are in test mode<small>Buyers pay with practice payments and get TEST tickets the gate refuses${d.ops.test_orders ? ` (${d.ops.test_orders} so far)` : ""}. Switch to Live in Integrations before tickets go on sale.</small></span><span class="go" aria-hidden="true">›</span></a>` : ""}
       ${alert(d.organisers.pending, ["organiser awaiting approval", "organisers awaiting approval"], "#/organisers")}
       ${alert(d.ops.verification_pending, ["verification document waiting for a check", "verification documents waiting for a check"], "#/verification")}
       ${alert(d.events.pending, ["event awaiting approval", "events awaiting approval"], "#/events")}
