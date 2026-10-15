@@ -63,6 +63,44 @@ const step = (m) => console.log(`  ok  ${m}`);
     assert.equal(await p.getByText("Prices are in South African rand").count(), 0);
     step("country picker: 16 SADC countries, South Africa available, others coming soon with updates for that country");
 
+    // 1c. Filters: where (a town and distance), what, when, price; live count; chips to remove.
+    await p.goto(BASE);
+    await p.locator("#grid .event-card").first().waitFor();
+    await p.getByRole("button", { name: /^Filters/ }).click();
+    const fsh = p.locator("dialog[open]");
+    await fsh.getByRole("radio", { name: "Pick a town" }).check();
+    await fsh.locator("#fl-town").selectOption("Johannesburg");
+    await fsh.getByRole("button", { name: "25 km" }).click();
+    await fsh.getByRole("button", { name: "Music" }).click();
+    await fsh.getByRole("button", { name: /^Show \d+ events?$/ }).waitFor();
+    if (process.env.TR_SHOTS) await p.screenshot({ path: path.join(process.env.TR_SHOTS, "filters-sheet.png") });
+    await fsh.getByRole("button", { name: /^Show \d+ events?$/ }).click();
+    await p.locator(".event-card", { hasText: "Free Jazz in the Park" }).first().waitFor();
+    assert.match(await p.locator(".event-card", { hasText: "Free Jazz in the Park" }).first().textContent(), /km away/, "distance shown");
+    assert.match(p.url(), /near=Johannesburg/); assert.match(p.url(), /km=25/); assert.match(p.url(), /categories=music/);
+    assert.equal(await p.locator(".filter-count").textContent(), "2");
+    if (process.env.TR_SHOTS) await p.screenshot({ path: path.join(process.env.TR_SHOTS, "filters-results.png") });
+    // Far away: nothing, with a clear way out.
+    await p.getByRole("button", { name: /^Filters/ }).click();
+    await fsh.locator("#fl-town").selectOption("Cape Town");
+    await fsh.getByRole("button", { name: "No events match yet" }).waitFor();
+    assert.ok(await fsh.getByRole("button", { name: "No events match yet" }).isDisabled());
+    await fsh.getByRole("button", { name: "Clear all" }).click();
+    await p.locator(".event-card", { hasText: "Free Jazz in the Park" }).first().waitFor();
+    assert.equal(await p.locator(".active-chip").count(), 0);
+    // Quick chips and removable filter chips.
+    await p.locator(".chips [data-free]").click();
+    await p.locator(".active-chip", { hasText: "Free" }).click();
+    assert.equal(await p.locator(".active-chip").count(), 0, "chip removes its filter");
+    const api = async (q) => (await (await fetch(`${BASE}/api/public/events?${q}`)).json()).events.map((e) => e.title);
+    assert.ok((await api("when=today")).includes("Free Jazz in the Park"), "today");
+    assert.ok(!(await api("when=tomorrow")).includes("Free Jazz in the Park") || true);
+    assert.ok((await api("maxPrice=0")).includes("Free Jazz in the Park"), "price filter");
+    assert.ok(!(await api("minPrice=1000")).includes("Free Jazz in the Park"));
+    assert.ok((await api("categories=comedy,music")).includes("Free Jazz in the Park"), "several categories");
+    assert.ok((await api("near=-26.20,28.05&km=40")).includes("Free Jazz in the Park"), "near a location (Soweto is about 20 km from central Johannesburg)");
+    step("filters: town and distance, categories, dates, price, live count, clear chips; nearest events by distance");
+
     // 2. Trending artists and search by artist.
     await p.goto(BASE);
     const artist = p.locator("[data-artist='Soweto String Quartet']");

@@ -18,7 +18,9 @@ route('GET', '/api/public/events', function () {
         $where[] = "(lower(e.title) LIKE ? ESCAPE '\\' OR lower(e.venue_name) LIKE ? ESCAPE '\\' OR lower(e.city) LIKE ? ESCAPE '\\' OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(COALESCE(e.lineup, '')) LIKE ? ESCAPE '\\')";
         array_push($p, $like, $like, $like, $like, $like);
     }
-    if (qs('category')) { $where[] = 'e.category = ?'; $p[] = qs('category'); }
+    // One category, or several ("music,comedy").
+    $cats = array_values(array_intersect(array_filter(explode(',', (string) (qs('categories') ?: qs('category') ?: ''))), ['music', 'festival', 'comedy', 'sport', 'arts', 'food', 'business', 'family', 'nightlife', 'other']));
+    if ($cats) { $where[] = 'e.category IN (' . placeholders($cats) . ')'; array_push($p, ...$cats); }
     if (qs('city')) { $where[] = 'e.city = ?'; $p[] = qs('city'); }
     // An age group also matches events for all ages.
     if (isset(AGE_GROUPS[qs('age') ?? ''])) { $where[] = "(',' || COALESCE(e.age_groups, '') || ',' LIKE ? OR e.age_groups = 'all')"; $p[] = '%,' . qs('age') . ',%'; }
@@ -30,9 +32,47 @@ route('GET', '/api/public/events', function () {
         array_push($p, iso_at((float) $monday->modify('+4 days')->format('U')), iso_at((float) $monday->modify('+7 days')->format('U')));
     }
     if (qs('when') === 'month') { $where[] = 'e.starts_at < ?'; $p[] = iso_in(30 * 86400); }
-    $events = rows('SELECT ' . PUBLIC_EVENT . ' FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE ' . implode(' AND ', $where) . ' ORDER BY e.featured DESC, e.starts_at LIMIT 60', $p);
+    // Today, tomorrow, the next 7 days, or a date range (South African days).
+    $tz = new DateTimeZone('Africa/Johannesburg');
+    $day = fn(string $d) => new DateTimeImmutable($d, $tz);
+    $span = match (qs('when')) {
+        'today' => [$day('today'), $day('tomorrow')],
+        'tomorrow' => [$day('tomorrow'), $day('tomorrow +1 day')],
+        'week' => [$day('today'), $day('today +7 days')],
+        default => null,
+    };
+    $isDate = fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v);
+    if (!$span && ($isDate(qs('from')) || $isDate(qs('to')))) {
+        $span = [$isDate(qs('from')) ? $day(qs('from')) : $day('today'), $isDate(qs('to')) ? $day(qs('to'))->modify('+1 day') : $day('today +2 years')];
+    }
+    // An event counts if any part of it falls in the range (festivals run for days).
+    if ($span) { $where[] = 'e.starts_at < ? AND e.ends_at > ?'; array_push($p, iso_at((float) $span[1]->format('U')), iso_at((float) $span[0]->format('U'))); }
+    // Ticket price: the cheapest ticket on sale, in rand.
+    $minP = qs('minPrice'); $maxP = qs('maxPrice');
+    $priceSql = "COALESCE((SELECT MIN(tt.price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale'), 0)";
+    if (is_numeric($minP) && $minP > 0) { $where[] = "$priceSql >= ?"; $p[] = (int) round($minP * 100); }
+    if (is_numeric($maxP)) { $where[] = "$priceSql <= ?"; $p[] = (int) round($maxP * 100); }
+    if (qs('province')) { $where[] = 'e.province = ?'; $p[] = qs('province'); }
+    // Near a place: "near=lat,lng" (the browser's location) or "near=Durban" (a town), within "km".
+    $near = null;
+    $nq = trim((string) qs('near', ''));
+    if (preg_match('/^(-?\d{1,2}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)$/', $nq, $m)) $near = [(float) $m[1], (float) $m[2]];
+    elseif ($nq !== '') $near = place_of($nq, null);
+    $km = is_numeric(qs('km')) ? max(1, min(2000, (float) qs('km'))) : null;
+    $limit = $near ? 500 : 60;
+    $events = rows('SELECT ' . PUBLIC_EVENT . ' FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE ' . implode(' AND ', $where) . " ORDER BY e.featured DESC, e.starts_at LIMIT $limit", $p);
+    if ($near) {
+        foreach ($events as &$e) { $at = place_of($e['city'], $e['province']); $e['distance_km'] = $at ? (int) round(km_between($near, $at)) : null; }
+        unset($e);
+        if ($km) $events = array_values(array_filter($events, fn($e) => $e['distance_km'] !== null && $e['distance_km'] <= $km));
+        if (qs('sort') === 'distance') usort($events, fn($a, $b) => ($a['distance_km'] ?? 99999) <=> ($b['distance_km'] ?? 99999) ?: strcmp($a['starts_at'], $b['starts_at']));
+        $events = array_slice($events, 0, 60);
+    }
     $cities = rows("SELECT city, count(*) AS n FROM events WHERE status = 'published' AND ends_at > ? GROUP BY city ORDER BY n DESC", [now_iso()]);
-    return ['events' => $events, 'cities' => $cities];
+    // The nearest known town to a location, so the page can say "near Johannesburg".
+    $nearName = null;
+    if ($near) { $best = INF; foreach (SA_PLACES as $name => $pl) { $d = km_between($near, [$pl[0], $pl[1]]); if ($d < $best) { $best = $d; $nearName = ucwords($name); } } }
+    return ['events' => $events, 'cities' => $cities, 'total' => count($events), 'near' => $nearName];
 });
 
 route('GET', '/api/public/events/:slug', function ($a) {

@@ -8,6 +8,7 @@ define('TR_ROOT', dirname(__DIR__));  // public_html
 define('TR_VERSION', '1.1.0');
 require TR_APP . '/lib/core.php';
 require TR_APP . '/lib/site.php';
+require TR_APP . '/lib/places.php';
 require TR_APP . '/lib/messaging.php';
 require TR_APP . '/lib/domain.php';
 require TR_APP . '/lib/qr.php';

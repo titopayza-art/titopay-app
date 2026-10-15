@@ -12,7 +12,7 @@ function card(e) {
     <div class="poster">${poster(e, "fill")}${datebadge(e.starts_at)}${e.remaining === 0 ? html`<span class="badge bad sold-flag">Sold out</span>` : e.remaining < 30 ? html`<span class="badge amber sold-flag">Selling fast</span>` : ""}</div>
     <div class="body"><span class="cat-label">${e.category}</span><h3>${e.title}</h3>
       <span class="muted small">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })} · ${fmtTime(e.starts_at)}</span>
-      <span class="muted small">${e.venue_name}, ${e.city}</span>
+      <span class="muted small">${e.venue_name}, ${e.city}${e.distance_km != null ? html` · <strong class="dist">${e.distance_km < 1 ? "under 1" : e.distance_km} km away</strong>` : ""}</span>
       <div class="foot">${fromPrice(e)}<span class="small muted">${e.likes ? html`<span class="likes-count" aria-label="${e.likes} likes">${svgIcon("heart", 14)} ${e.likes}</span> · ` : ""}${e.organiser_name}</span></div></div></a>`;
 }
 
@@ -26,25 +26,133 @@ const ICONS = {
 const icon = (name) => raw(`<svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
 
 // ---------------- home / discovery ----------------
+// Event filters: what the URL carries and how each one is described in a chip.
+const FILTER_KEYS = ["q", "categories", "city", "when", "from", "to", "free", "minPrice", "maxPrice", "near", "nearLabel", "km", "age"];
+const WHEN = [["", "Any date"], ["today", "Today"], ["tomorrow", "Tomorrow"], ["weekend", "This weekend"], ["week", "Next 7 days"], ["month", "Next 30 days"]];
+const PRICES = [["", "", "Any price"], ["free", "", "Free"], ["0", "100", "Under R100"], ["100", "300", "R100 to R300"], ["300", "", "R300 and up"]];
+const DISTANCES = [10, 25, 50, 100, 200];
+const TOWNS = ["Johannesburg", "Pretoria", "Soweto", "Sandton", "Midrand", "Centurion", "Cape Town", "Stellenbosch", "Paarl", "George", "Knysna", "Durban", "Umhlanga", "Pietermaritzburg", "Ballito", "Gqeberha", "East London", "Bloemfontein", "Polokwane", "Mbombela", "Rustenburg", "Potchefstroom", "Kimberley", "Mthatha", "Richards Bay", "Hermanus", "Mahikeng", "Emalahleni"];
+const catName = (k) => (CATS.find(([v]) => v === k) || [k, k])[1];
+const randText = (v) => `R${Number(v).toLocaleString("en-ZA")}`;
+
+function filterChips(state) {
+  const out = [];
+  for (const c of (state.categories || "").split(",").filter(Boolean)) out.push([`cat:${c}`, catName(c)]);
+  if (state.near) out.push(["near", `${state.km ? `Within ${state.km} km of ` : "Near "}${state.nearLabel || "you"}`]);
+  if (state.city) out.push(["city", state.city]);
+  if (state.when) out.push(["when", (WHEN.find(([v]) => v === state.when) || [, state.when])[1]]);
+  if (state.from || state.to) out.push(["dates", `${state.from ? fmtDate(`${state.from}T12:00:00+02:00`, { day: "numeric", month: "short" }) : "Now"} to ${state.to ? fmtDate(`${state.to}T12:00:00+02:00`, { day: "numeric", month: "short" }) : "later"}`]);
+  if (state.free) out.push(["free", "Free"]);
+  if (state.minPrice || state.maxPrice) out.push(["price", state.minPrice && state.maxPrice ? `${randText(state.minPrice)} to ${randText(state.maxPrice)}` : state.maxPrice ? `Under ${randText(state.maxPrice)}` : `${randText(state.minPrice)} and up`]);
+  if (state.age) out.push(["age", AGE_GROUPS[state.age]]);
+  return out;
+}
+function dropFilter(state, key) {
+  if (key.startsWith("cat:")) state.categories = state.categories.split(",").filter((c) => c && c !== key.slice(4)).join(",");
+  else if (key === "near") Object.assign(state, { near: "", nearLabel: "", km: "" });
+  else if (key === "dates") Object.assign(state, { from: "", to: "" });
+  else if (key === "price") Object.assign(state, { minPrice: "", maxPrice: "" });
+  else state[key] = "";
+}
+const filterQuery = (st) => new URLSearchParams(Object.entries(st).filter(([k, v]) => v && k !== "nearLabel")).toString();
+
+// The Filters sheet: everything in one place, with a live count on the button.
+function filtersSheet(state, apply) {
+  const f = { ...state };
+  const d = dialog("Filters", html`<form class="filters" novalidate>
+    <section><h3>Where</h3>
+      <div class="seg" role="radiogroup" aria-label="Where">
+        <label><input type="radio" name="where" value="any" ${raw(!f.near ? "checked" : "")}><span>Anywhere</span></label>
+        <label><input type="radio" name="where" value="me" ${raw(f.near && !TOWNS.includes(f.nearLabel) ? "checked" : "")}><span>Near me</span></label>
+        <label><input type="radio" name="where" value="town" ${raw(f.near && TOWNS.includes(f.nearLabel) ? "checked" : "")}><span>Pick a town</span></label></div>
+      <div class="field" data-town hidden><label for="fl-town">Town or city</label><select id="fl-town">${TOWNS.map((t) => html`<option ${raw(f.nearLabel === t ? "selected" : "")}>${t}</option>`)}</select></div>
+      <p class="small muted mb-0" data-where-note></p>
+      <div data-km hidden><span class="label">How far?</span><div class="fpills">${DISTANCES.map((k) => html`<button type="button" class="fpill" data-kmv="${k}" aria-pressed="${String(Number(f.km) === k)}">${k} km</button>`)}<button type="button" class="fpill" data-kmv="" aria-pressed="${String(!f.km)}">Any distance</button></div></div></section>
+    <section><h3>What</h3><div class="fpills">${CATS.filter(([v]) => v).map(([v, l]) => html`<button type="button" class="fpill" data-catv="${v}" aria-pressed="${String((f.categories || "").split(",").includes(v))}">${l}</button>`)}</div></section>
+    <section><h3>When</h3><div class="fpills">${WHEN.map(([v, l]) => html`<button type="button" class="fpill" data-whenv="${v}" aria-pressed="${String((f.when || "") === v && !f.from && !f.to)}">${l}</button>`)}</div>
+      <div class="grid-2 mt"><div class="field"><label for="fl-from">From</label><input id="fl-from" type="date" value="${f.from || ""}"></div><div class="field"><label for="fl-to">To</label><input id="fl-to" type="date" value="${f.to || ""}"></div></div></section>
+    <section><h3>Price</h3><div class="fpills">${PRICES.map(([lo, hi, l]) => html`<button type="button" class="fpill" data-price="${lo}|${hi}" aria-pressed="${String(lo === "free" ? !!f.free : !f.free && (f.minPrice || "") === (lo === "0" ? "" : lo) && (f.maxPrice || "") === hi && (lo !== "" || (!f.minPrice && !f.maxPrice)))}">${l}</button>`)}</div>
+      <div class="grid-2 mt"><div class="field"><label for="fl-min">Min (R)</label><input id="fl-min" type="number" min="0" inputmode="numeric" value="${f.minPrice || ""}" placeholder="0"></div><div class="field"><label for="fl-max">Max (R)</label><input id="fl-max" type="number" min="0" inputmode="numeric" value="${f.maxPrice || ""}" placeholder="No limit"></div></div></section>
+    <section><h3>Who it's for</h3><div class="fpills"><button type="button" class="fpill" data-agev="" aria-pressed="${String(!f.age)}">Everyone</button>${Object.entries(AGE_GROUPS).filter(([k]) => k !== "all").map(([k, l]) => html`<button type="button" class="fpill" data-agev="${k}" aria-pressed="${String(f.age === k)}">${l}</button>`)}</div></section>
+    <div class="filters-foot"><button type="button" class="btn btn-ghost" data-clear>Clear all</button><button type="submit" class="btn btn-primary grow" data-show>Show events</button></div></form>`, { wide: true });
+  const form = $("form", d);
+  const press = (sel, on) => $$(sel, d).forEach((b) => b.setAttribute("aria-pressed", String(on(b))));
+  let timer;
+  const count = () => {
+    clearTimeout(timer);
+    $("[data-show]", d).setAttribute("aria-busy", "true");
+    timer = setTimeout(async () => {
+      try {
+        const r = await get(`/api/public/events?${filterQuery(f)}`);
+        $("[data-show]", d).textContent = r.total ? `Show ${r.total} event${r.total === 1 ? "" : "s"}` : "No events match yet";
+        $("[data-show]", d).disabled = !r.total;
+      } catch { $("[data-show]", d).textContent = "Show events"; }
+      $("[data-show]", d).removeAttribute("aria-busy");
+    }, 250);
+  };
+  const where = () => {
+    const w = form.elements.where.value;
+    $("[data-town]", d).hidden = w !== "town";
+    $("[data-km]", d).hidden = w === "any";
+    $("[data-where-note]", d).textContent = w === "me" ? (f.near ? `Using your location${f.nearLabel ? `, near ${f.nearLabel}` : ""}.` : "") : "";
+  };
+  form.elements.where.forEach((r) => r.addEventListener("change", () => {
+    const w = form.elements.where.value;
+    if (w === "any") Object.assign(f, { near: "", nearLabel: "", km: "" });
+    if (w === "town") Object.assign(f, { near: $("#fl-town", d).value, nearLabel: $("#fl-town", d).value, km: f.km || "50" });
+    if (w === "me") {
+      $("[data-where-note]", d).textContent = "Finding you…";
+      if (!navigator.geolocation) { toast("Your browser can't share its location. Pick a town instead.", "bad"); form.elements.where.value = "town"; f.near = $("#fl-town", d).value; f.nearLabel = f.near; where(); count(); return; }
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        f.near = `${pos.coords.latitude.toFixed(3)},${pos.coords.longitude.toFixed(3)}`; f.km = f.km || "50";
+        try { f.nearLabel = (await get(`/api/public/events?near=${f.near}&km=1`)).near || ""; } catch { f.nearLabel = ""; }
+        press("[data-kmv]", (b) => b.dataset.kmv === f.km); where(); count();
+      }, () => { toast("We couldn't get your location. Pick a town instead.", "bad"); form.elements.where.value = "town"; f.near = $("#fl-town", d).value; f.nearLabel = f.near; f.km = f.km || "50"; where(); count(); }, { timeout: 8000, maximumAge: 600000 });
+    }
+    press("[data-kmv]", (b) => b.dataset.kmv === (f.km || "")); where(); count();
+  }));
+  $("#fl-town", d).addEventListener("change", (e) => { f.near = e.target.value; f.nearLabel = e.target.value; count(); });
+  $$("[data-kmv]", d).forEach((b) => b.addEventListener("click", () => { f.km = b.dataset.kmv; press("[data-kmv]", (x) => x === b); count(); }));
+  $$("[data-catv]", d).forEach((b) => b.addEventListener("click", () => {
+    const set = new Set((f.categories || "").split(",").filter(Boolean));
+    set.has(b.dataset.catv) ? set.delete(b.dataset.catv) : set.add(b.dataset.catv);
+    f.categories = [...set].join(","); b.setAttribute("aria-pressed", String(set.has(b.dataset.catv))); count();
+  }));
+  $$("[data-whenv]", d).forEach((b) => b.addEventListener("click", () => { f.when = b.dataset.whenv; f.from = ""; f.to = ""; $("#fl-from", d).value = ""; $("#fl-to", d).value = ""; press("[data-whenv]", (x) => x === b); count(); }));
+  for (const id of ["fl-from", "fl-to"]) $(`#${id}`, d).addEventListener("change", () => { f.from = $("#fl-from", d).value; f.to = $("#fl-to", d).value; if (f.from || f.to) { f.when = ""; press("[data-whenv]", () => false); } count(); });
+  $$("[data-price]", d).forEach((b) => b.addEventListener("click", () => {
+    const [lo, hi] = b.dataset.price.split("|");
+    Object.assign(f, lo === "free" ? { free: "1", minPrice: "", maxPrice: "" } : { free: "", minPrice: lo === "0" ? "" : lo, maxPrice: hi });
+    $("#fl-min", d).value = f.minPrice; $("#fl-max", d).value = f.maxPrice; press("[data-price]", (x) => x === b); count();
+  }));
+  for (const id of ["fl-min", "fl-max"]) $(`#${id}`, d).addEventListener("input", () => { f.minPrice = $("#fl-min", d).value; f.maxPrice = $("#fl-max", d).value; f.free = ""; press("[data-price]", () => false); count(); });
+  $$("[data-agev]", d).forEach((b) => b.addEventListener("click", () => { f.age = b.dataset.agev; press("[data-agev]", (x) => x === b); count(); }));
+  $("[data-clear]", d).addEventListener("click", () => { d.close(); for (const k of FILTER_KEYS) if (k !== "q") state[k] = ""; apply(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); Object.assign(state, f); d.close(); apply(); });
+  where(); count();
+}
+
 async function home() {
   document.title = "TicketRoom | Event tickets in South Africa";
   const params = new URLSearchParams(location.search);
-  const state = { q: params.get("q") || "", category: params.get("category") || "", city: params.get("city") || "", when: params.get("when") || "", free: params.get("free") || "", age: params.get("age") || "" };
+  const state = Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) || ""]));
+  if (!state.categories && params.get("category")) state.categories = params.get("category");
+  if (state.near && !state.nearLabel && !/^-?\d/.test(state.near)) state.nearLabel = state.near;
   render(main, html`
     <section class="hero"><div class="wrap">
       <h1>Your event. <b>Your ticket.</b></h1>
       <p class="lead">Concerts, comedy, sport and festivals across South Africa. Book in a minute, keep your tickets on your phone, and pass them to a friend if plans change.</p>
       <form class="search" role="search" id="search"><label class="sr-only" for="q">Search events</label>
-        <input id="q" name="q" placeholder="Search events, venues or cities" value="${state.q}" autocomplete="off">
+        <input id="q" name="q" placeholder="Search events, artists, venues or cities" value="${state.q}" autocomplete="off">
         <label class="sr-only" for="city">City</label><select id="city" name="city"><option value="">All cities</option></select>
         <button class="btn btn-primary">Search</button></form>
       <div class="feature-rail" id="featured" aria-label="Featured events"></div>
     </div></section>
     <section class="section"><div class="wrap">
-      <div class="row between"><h2 class="mb-0">Upcoming events</h2>
-        <div class="chips" role="group" aria-label="When">${[["", "Any date"], ["weekend", "This weekend"], ["month", "Next 30 days"]].map(([v, l]) => html`<button class="chip" data-when="${v}" aria-pressed="${state.when === v}">${l}</button>`)}<button class="chip" data-free aria-pressed="${state.free === "1"}">Free events</button></div></div>
-      <div class="chips mt" role="group" aria-label="Category">${CATS.map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.category === v}">${l}</button>`)}
-        <label class="sr-only" for="age">Age group</label><select id="age" class="chip-select"><option value="">Any age group</option>${Object.entries(AGE_GROUPS).filter(([k]) => k !== "all").map(([k, l]) => html`<option value="${k}" ${raw(state.age === k ? "selected" : "")}>${l}</option>`)}</select></div>
+      <div class="row between events-head"><h2 class="mb-0">Upcoming events</h2>
+        <button type="button" class="btn btn-ghost filter-btn" data-filters><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Filters<span class="filter-count" data-fcount hidden></span></button></div>
+      <div class="chips mt" role="group" aria-label="Quick filters">${[["today", "Today"], ["weekend", "This weekend"], ["week", "Next 7 days"]].map(([v, l]) => html`<button class="chip" data-when="${v}" aria-pressed="${state.when === v}">${l}</button>`)}<button class="chip" data-free aria-pressed="${state.free === "1"}">Free</button>${CATS.filter(([v]) => v).slice(0, 5).map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.categories.split(",").includes(v)}">${l}</button>`)}</div>
+      <div class="active-filters mt" data-active aria-live="polite"></div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
     <section class="section pt-0 hidden" id="trending"><div class="wrap"><h2>Trending artists</h2><div class="artist-rail mt" id="artist-rail"></div></div></section>
@@ -60,24 +168,41 @@ async function home() {
       <a class="btn btn-primary" href="/advertise">Get a spot</a>
     </div></div></section>`);
 
+  const syncQuick = () => {
+    $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(state.when === x.dataset.when && !state.from && !state.to)));
+    $("[data-free]").setAttribute("aria-pressed", String(!!state.free));
+    $$("[data-cat]").forEach((x) => x.setAttribute("aria-pressed", String(state.categories.split(",").includes(x.dataset.cat))));
+    const chips = filterChips(state).filter(([k]) => k !== "city");
+    const n = chips.length;
+    $("[data-fcount]").hidden = !n; $("[data-fcount]").textContent = String(n);
+    render($("[data-active]"), chips.length ? html`${chips.map(([k, l]) => html`<button type="button" class="active-chip" data-drop="${k}" aria-label="Remove filter: ${l}">${l}<span aria-hidden="true">×</span></button>`)}<button type="button" class="btn-link small" data-drop-all>Clear all</button>` : "");
+    $$("[data-drop]").forEach((b) => b.addEventListener("click", () => { dropFilter(state, b.dataset.drop); load(); }));
+    $("[data-drop-all]")?.addEventListener("click", () => { for (const k of FILTER_KEYS) if (k !== "q") state[k] = ""; $("#city").value = ""; load(); });
+  };
   const load = async () => {
     const qs = new URLSearchParams(Object.entries(state).filter(([, v]) => v)).toString();
     history.replaceState(null, "", qs ? `/?${qs}` : "/");
-    const { events, cities } = await get(`/api/public/events?${qs}`);
+    syncQuick();
+    const { events, cities } = await get(`/api/public/events?${filterQuery(state)}`);
     const sel = $("#city");
     if (sel.options.length === 1) cities.forEach((c) => { const o = new Option(`${c.city} (${c.n})`, c.city); sel.add(o); });
     sel.value = state.city;
-    render($("#grid"), events.length ? html`${events.map(card)}` : empty("No events match. Try another search or category."));
-    if (!state.q && !state.category && !state.city && !state.when && !state.free && !state.age) {
+    render($("#grid"), events.length ? html`${events.map(card)}` : html`<div class="empty-filters card flat center"><h3>No events match those filters</h3><p class="muted">Try a wider distance, other dates, or fewer filters.</p><button type="button" class="btn btn-primary" data-filters-again>Change filters</button></div>`);
+    $("[data-filters-again]")?.addEventListener("click", () => filtersSheet(state, load));
+    if (!filterChips(state).length && !state.q) {
       const feat = events.filter((e) => e.featured).slice(0, 6);
       render($("#featured"), html`${(feat.length ? feat : events.slice(0, 4)).map((e) => html`<a class="feature" href="/events/${e.slug}">${poster(e)}<span class="shade"></span><div class="meta"><span class="badge amber plain">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })}</span><h3>${e.title}</h3><span class="small">${e.venue_name}, ${e.city} · ${e.from_price_cents === 0 ? "Free" : `from ${money(e.from_price_cents)}`}</span></div></a>`)}`);
     } else render($("#featured"), "");
   };
   $("#search").addEventListener("submit", (e) => { e.preventDefault(); state.q = $("#q").value.trim(); state.city = $("#city").value; load(); });
-  $$("[data-cat]").forEach((b) => b.addEventListener("click", () => { state.category = b.dataset.cat; $$("[data-cat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
-  $("#age").addEventListener("change", (e) => { state.age = e.target.value; load(); });
-  $("[data-free]").addEventListener("click", (e) => { state.free = state.free ? "" : "1"; e.currentTarget.setAttribute("aria-pressed", String(!!state.free)); load(); });
-  $$("[data-when]").forEach((b) => b.addEventListener("click", () => { state.when = b.dataset.when; $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
+  $("[data-filters]").addEventListener("click", () => filtersSheet(state, load));
+  $$("[data-cat]").forEach((b) => b.addEventListener("click", () => {
+    const set = new Set(state.categories.split(",").filter(Boolean));
+    set.has(b.dataset.cat) ? set.delete(b.dataset.cat) : set.add(b.dataset.cat);
+    state.categories = [...set].join(","); load();
+  }));
+  $("[data-free]").addEventListener("click", () => { state.free = state.free ? "" : "1"; if (state.free) { state.minPrice = ""; state.maxPrice = ""; } load(); });
+  $$("[data-when]").forEach((b) => b.addEventListener("click", () => { state.when = state.when === b.dataset.when ? "" : b.dataset.when; state.from = ""; state.to = ""; load(); }));
   const showAds = (site) => {
     const ads = (site?.posters || []).filter((a) => a.placement !== "event");
     if (!ads.length) return;
