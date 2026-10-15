@@ -16,7 +16,7 @@ route('GET', '/api/config', fn() => [
         'walletApple' => wallet_apple_ready(), 'walletGoogle' => wallet_google_ready()],
     'messaging' => ['email' => mail_mode(), 'sms' => sms_provider()],
     'cashless' => cashless_limits(),
-    'fees' => cfg('fees'), 'holdMinutes' => HOLD_MINUTES,
+    'fees' => cfg('fees'), 'holdMinutes' => HOLD_MINUTES, 'promote' => ['priceCents' => promo_price()],
 ]);
 
 // Someone signs up with an email that has only bought as a guest. The

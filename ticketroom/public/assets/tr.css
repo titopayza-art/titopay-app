@@ -405,7 +405,7 @@ body.maint { display: grid; place-items: center; min-height: 100vh; padding: 16p
 .email-frame[hidden], .email-text[hidden] { display: none; }
 .email-text { white-space: pre-wrap; background: var(--surface); border-radius: 10px; padding: 14px; font-size: .88rem; max-height: 70vh; overflow: auto; }
 /* Edition features (see features() in core.js) */
-.no-payments [data-feature~="payments"], .no-cashless [data-feature~="cashless"], .no-pos [data-feature~="pos"], .no-finance [data-feature~="finance"], .no-sms [data-feature~="sms"], .no-tags [data-feature~="tags"] { display: none !important; }
+.no-payments [data-feature~="payments"], .no-cashless [data-feature~="cashless"], .no-pos [data-feature~="pos"], .no-finance [data-feature~="finance"], .no-sms [data-feature~="sms"], .no-tags [data-feature~="tags"], .no-promote [data-feature~="promote"] { display: none !important; }
 [data-feature-off] { display: none; }
 .no-cashless [data-feature-off~="cashless"] { display: revert; }
 .event-facts span, .trust { display: inline-flex; align-items: center; gap: 6px; }

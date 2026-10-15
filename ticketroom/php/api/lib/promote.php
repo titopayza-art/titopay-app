@@ -35,7 +35,8 @@ function promo_sms_segments(string $text): int
 
 function promo_active(string $eventId): ?array
 {
-    return row("SELECT * FROM event_promotions WHERE event_id = ? AND status = 'active' AND ends_at > ? LIMIT 1", [$eventId, now_iso()]);
+    // The event's own end counts (it may have been moved since the purchase).
+    return row("SELECT p.* FROM event_promotions p JOIN events e ON e.id = p.event_id WHERE p.event_id = ? AND p.status = 'active' AND e.ends_at > ? LIMIT 1", [$eventId, now_iso()]);
 }
 // The single-event campaign this promotion covers, if any.
 function promo_for_campaign(array $camp): ?array
@@ -60,6 +61,9 @@ function promo_view(?array $p): ?array
 function promo_expire(): int
 {
     $now = now_iso();
+    // A promotion follows its event: moved dates move its end too.
+    q("UPDATE event_promotions SET ends_at = (SELECT ends_at FROM events WHERE id = event_promotions.event_id) WHERE status = 'active'
+        AND ends_at <> (SELECT ends_at FROM events WHERE id = event_promotions.event_id)");
     $n = affected("UPDATE event_promotions SET status = 'ended', updated_at = ? WHERE status = 'active' AND ends_at <= ?", [$now, $now]);
     foreach (rows("SELECT id FROM event_promotions WHERE status = 'pending_payment' AND (created_at < ? OR ends_at <= ?)", [iso_in(-86400), $now]) as $r) {
         tx(function () use ($r, $now) {

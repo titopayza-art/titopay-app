@@ -2,7 +2,7 @@
 
 The PHP edition re-implements the Node API (`src/routes/*.js`) for shared hosting (Afrihost). The browser code in `public/assets/*.js` is shared and must keep working unchanged, so **JSON shapes, field names, status codes and error codes must match the Node routes exactly**.
 
-Scope: accounts, organisers, events, free and paid tickets, transfers, scanning, marketing email and SMS, card payments (Yoco, PayFast, the practice sandbox), webhooks, refunds, payouts, the ledger and reconciliation, cashless (wristbands and tags, event wallets topped up by card, vendors, POS tills, spending PINs, wallet and sale refunds, vendor settlement), organiser verification (FICA), gate passes, admin, site settings, assistant. **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): linked TitoPay wallets (`/api/me/payment-methods`).
+Scope: accounts, organisers, events, free and paid tickets, transfers, scanning, marketing email and SMS, the Promote package, card payments (Yoco, PayFast, the practice sandbox), webhooks, refunds, payouts, the ledger and reconciliation, cashless (wristbands and tags, event wallets topped up by card, vendors, POS tills, spending PINs, wallet and sale refunds, vendor settlement), organiser verification (FICA), gate passes, admin, site settings, assistant. **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): linked TitoPay wallets (`/api/me/payment-methods`).
 
 ## Layout
 The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
@@ -45,6 +45,15 @@ The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
 - **Retention**: setting `verification` (`retentionYears` ≥ 5, `discardRejectedDays`), job `verification-retention`.
 - Tests: `tests-ui/php-verification.js`; other suites use `tests-ui/kyc-helper.js` (`verifyOrganiser`) to get past the rules through the API.
 - **How others do it** (from their public organiser help pages, worth rechecking): Quicket and Howler let anyone list free events and ask for ID, proof of address and a bank confirmation before paying out; Computicket and Ticketmaster onboard promoters through a sales contract with company papers. Ours: one checklist, only what the rules need for what you sell, a reason on every item, status as soon as you upload, free events never asked for bank details.
+
+## Promote (R1500 event promotion package)
+`lib/promote.php` (money, campaign rules, analytics), `routes/promote.php` (API). Tables `event_promotions`, `promotion_payments`; columns `campaigns.promotion_id`, `tracking_links.campaign_id` (upgrade 15, `tr_promote_tables()`, each only if missing; 13 is never used).
+- **Purchase**: `POST /api/organiser/:orgId/events/:eventId/promotion/checkout {method: card|balance}` (owner/manager/marketing; balance: owner only, plus `kyc_require_for_payout`). Event must be published (verification approved) or pending (submitted), not over, not already promoted. Card payments are `promotion_payments` rows (not `payments`, so no clash with cashless `purpose = 'topup'`): `payment_apply`, `payment_sync`, `sandbox_payment` and the PayFast form fall back to them; `promo_payment_apply` activates the promotion. A payment that arrives for an event already promoted or over is returned at once (sandbox, Yoco) or flagged for a PayFast dashboard refund.
+- **Ledger**: card `provider:<p>` DR / `revenue:promotions` CR (`test:` prefix in test mode); balance `organiser:<org>:deductions` DR / `revenue:promotions` CR, in one transaction with the balance check (`organiser_money()` counts deductions like payouts). Refunds reverse these (`promotion_refund`). `ledger_check()` includes live promotion payments in provider clearing; reconciliation matches them too.
+- **Campaigns**: `promo_for_campaign()` = audience is exactly one event with an active promotion. Then: no daily cap (`ORG_DAILY_CAMPAIGN_LIMIT` counts only `promotion_id IS NULL`), `PROMO_HOURLY_LIMIT` (6) sends per organiser per hour, SMS allowed when `sms_ready()`, a tracking link `C…` per send (`{{event_link}}` in the body, or appended). Without Promote: unchanged (email, 10 a day, SMS refused with `sms_not_available`).
+- **Analytics** (`promo_analytics`): sends from the outbox, clicks and orders/tickets/revenue via the campaign links (live orders only; test orders counted apart), no opens (not tracked), 30-day daily series.
+- **Admin**: `GET /api/admin/promotions` (+ revenue live/test from the ledger), `POST /api/admin/promotions/:id/social`, `/refund` (finance; event cancelled or cancellation requested), `/refund/complete` (PayFast manual). Emails: `promotionConfirmed`, `promotionRefunded`, `socialRequested`, `socialPostLive`. Job `end-promotions`.
+- Tests: `tests-ui/php-promote.js` (`TR_MOCK_PORT5` for its SMS stand-in).
 
 ## Running locally
 ```
