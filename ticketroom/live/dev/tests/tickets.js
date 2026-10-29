@@ -208,7 +208,7 @@ const scan = (ev, payload, extra = {}) => org.call("POST", "/api/staff/scan", { 
     const a = await scan(ev, t.code);
     assert(a.outcome === "admitted", `day 1: ${a.outcome}`);
     const b = await scan(ev, t.code);
-    assert(b.outcome === "already_used", `day 1 again: ${b.outcome}`);
+    assert(b.outcome === "already_used" && /today/.test(b.message), `day 1 again: ${b.outcome} ${b.message}`);
     // Make the first entry yesterday's.
     sql(DATA, "UPDATE ticket_entry_days SET day = '2000-01-01' WHERE ticket_id = ?", [t.id]);
     const c = await scan(ev, t.code);
@@ -281,17 +281,14 @@ const scan = (ev, payload, extra = {}) => org.call("POST", "/api/staff/scan", { 
   });
 
   await test("T10 a waitlist place survives a payment that is not completed", async () => {
-    // A paid event with one place, held by an unpaid reservation that has run out.
+    // A paid event with one place, held for the customer at the front of the waitlist (an open offer).
     const ev = freeEvent({ total: 1, paid: true });
-    const holder = (await book(await guest(), ev, { guest: { fullName: "Holder", email: `holder${stamp}@example.test` } })).order;
-    sql(DATA, "UPDATE orders SET expires_at = ? WHERE reference = ?", [iso(-20 * 60e3), holder.reference]);
-    await friend.call("POST", `/api/public/events/${ev.slug}/waitlist`, { ticketTypeId: ev.ttId }, 201);
-    const since = new Date(Date.now() - 2000).toISOString();
-    // The next booking lets the lapsed reservation go: the place is offered to the waitlist.
-    try { await book(await guest(), ev, { guest: { fullName: "Late", email: `late${stamp}@example.test` } }); } catch { /* sold out: the place went to the waitlist */ }
-    const token = outbox(DATA, friendEmail, /\?offer=([A-Za-z0-9_-]+)/, { after: since })[1];
+    sql(DATA, "UPDATE ticket_types SET quantity_held = 1 WHERE id = ?", [ev.ttId]);
+    const token = crypto.randomBytes(24).toString("base64url");
+    const w = { id: uuid() };
+    insertRow("waitlist_entries", { id: w.id, event_id: ev.id, ticket_type_id: ev.ttId, user_id: one("SELECT id FROM users WHERE lower(email) = lower(?)", [friendEmail]).id, status: "offered", offer_kind: "primary",
+      offer_token_hash: crypto.createHash("sha256").update(token).digest("hex"), offered_at: iso(0), offer_expires_at: iso(30 * 60e3), created_at: iso(0), updated_at: iso(0) });
     // The offer goes to checkout, and that checkout is then abandoned (its reservation runs out).
-    const w = one("SELECT id FROM waitlist_entries WHERE ticket_type_id = ?", [ev.ttId]);
     let started = true;
     try { await book(friend, ev, { waitlistOffer: token }); } catch (e) { started = e.message; }
     const ord = one("SELECT id, status FROM orders WHERE id = (SELECT order_id FROM waitlist_entries WHERE id = ?)", [w.id]);
@@ -303,7 +300,7 @@ const scan = (ev, payload, extra = {}) => org.call("POST", "/api/staff/scan", { 
     assert(entry.status === "offered" && tt.quantity_held === 1, `after the abandoned payment: entry ${entry.status}, places held ${tt.quantity_held}`);
   });
 
-  await test("T11 a sale landing during a quantity edit cannot leave sales above the total", async () => {
+  await test("T11 a sale landing during a quantity edit cannot leave sales above the total, and the organiser is told why", async () => {
     // A draft event (ticket types of published events go through review).
     const evId = uuid(), ttId = uuid();
     cloneRow("events", SEED.events.free.id, { id: evId, slug: uniq("tt-draft"), ref: `EV-${crypto.randomBytes(3).toString("hex").toUpperCase()}`, status: "draft", title: "Draft for T11" });
@@ -321,6 +318,8 @@ $db->prepare('UPDATE ticket_types SET quantity_sold = 6 WHERE id = ?')->execute(
     if (locker.exitCode === null) await new Promise((res) => locker.once("exit", res));
     const row = one("SELECT quantity_total, quantity_sold FROM ticket_types WHERE id = ?", [ttId]);
     assert(row.quantity_total >= row.quantity_sold, `total ${row.quantity_total} below sold ${row.quantity_sold} (${msg.slice(0, 120)})`);
+    // The organiser is told what happened, not a generic "not allowed in the current state".
+    assert(/quantity_below_sold/.test(msg) && /booked while you were editing/.test(msg), `edit answer: ${msg.slice(0, 200)}`);
   });
 
   await test("T12 the gate is told the event's age rule", async () => {

@@ -13,6 +13,8 @@ changes `live/public_html`.
 | `smoke.js <dir> [port]` | The Playwright smoke test. |
 | `lib.js` | API client (cookie jar + CSRF token) and outbox/SQLite readers shared by the two scripts. |
 | `TRIAGE.md` | The audit findings checked against the live code. |
+| `run-all.sh <port> <dir>` | Serves a fresh instance, runs `smoke.js` (TR_STRICT=0 by default) and every suite in `tests/`, then stops the server it started. |
+| `tests/tickets.js <dir> [port]` | Regression tests for the ticket, checkout and gate fixes (T1-T14, P1 (a) and (b)). `TR_ONLY=T6` runs the tests whose name starts with that. |
 
 ## Run it
 
