@@ -170,7 +170,7 @@ function tr_install_db(string $hash, ?string $adminEmail = null, ?string $adminN
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 46;
+const SCHEMA_VERSION = 48;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -470,6 +470,18 @@ const UPGRADES = [
     // Ticket phases: a ticket type can go on sale when an earlier one sells out.
     46 => [
         'ALTER TABLE ticket_types ADD COLUMN release_after TEXT',
+    ],
+    // Tickets and the gate: old codes of transferred or reissued tickets and
+    // passes (they scan as replaced and are never handed out again), the days
+    // a multi-day pass was used, whether an order's private link shows its
+    // tickets (not when it was booked into someone else's account), and a
+    // seller's request to take off a resale listing that is being paid for.
+    48 => [
+        "CREATE TABLE IF NOT EXISTS replaced_codes (code TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('ticket','pass')), ref_id TEXT NOT NULL, event_id TEXT NOT NULL REFERENCES events(id), reason TEXT NOT NULL, replaced_at TEXT NOT NULL)",
+        'CREATE INDEX IF NOT EXISTS replaced_codes_event_idx ON replaced_codes (event_id, replaced_at)',
+        'CREATE TABLE IF NOT EXISTS ticket_entry_days (ticket_id TEXT NOT NULL REFERENCES tickets(id), day TEXT NOT NULL, admitted_at TEXT NOT NULL, admitted_by TEXT REFERENCES users(id), PRIMARY KEY (ticket_id, day))',
+        'ALTER TABLE orders ADD COLUMN link_shows_tickets INTEGER NOT NULL DEFAULT 1',
+        'ALTER TABLE resale_listings ADD COLUMN withdraw_requested_at TEXT',
     ],
 ];
 // Promote's tables and columns (version 13), each only if missing.

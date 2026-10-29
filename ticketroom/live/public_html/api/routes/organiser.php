@@ -994,7 +994,15 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId/ticket-types/:ttId', funct
     $p = [];
     foreach ($b as $k => $v) { $sets[] = ORG_TT_COLS[$k] . ' = ?'; $p[] = $v; }
     $p[] = $cur['id'];
-    q('UPDATE ticket_types SET ' . implode(', ', $sets) . ' WHERE id = ?', $p);
+    // Checked again in the update itself: a sale can land between the read
+    // above and this write, and must never be left above the new total.
+    $guard = '';
+    if (isset($b['quantityTotal'])) { $guard .= ' AND quantity_sold + quantity_held <= ?'; $p[] = $b['quantityTotal']; }
+    if (($price !== null && $price !== (int) $cur['price_cents']) || (isset($b['admits']) && $b['admits'] !== (int) $cur['admits'])) $guard .= ' AND quantity_sold + quantity_held = 0';
+    if (affected('UPDATE ticket_types SET ' . implode(', ', $sets) . ' WHERE id = ?' . $guard, $p) === 0) {
+        $taken = (int) val('SELECT quantity_sold + quantity_held FROM ticket_types WHERE id = ?', [$cur['id']]);
+        throw conflict("Tickets were booked while you were editing. Quantity cannot go below $taken (sold + reserved), and the price and people per ticket are fixed once tickets are sold. Check the numbers and save again.", 'quantity_below_sold');
+    }
     audit('ticket_type.updated', ['actor' => $u, 'entityType' => 'ticket_type', 'entityId' => $cur['id'], 'organiserId' => $event['organiser_id'], 'details' => ['fields' => array_keys($b)]]);
     if (function_exists('kyc_recheck_live_event')) kyc_recheck_live_event($cur['event_id']);
     return ['ticketType' => row('SELECT * FROM ticket_types WHERE id = ?', [$cur['id']])];
@@ -1361,7 +1369,11 @@ route('POST', '/api/organiser/:orgId/events/:eventId/passes/:passId/reissue', fu
     if ($g['status'] !== 'active') throw conflict('This pass was cancelled. Issue a new one instead.', 'pass_revoked');
     if ($g['email']) org_require_approved($org);
     $token = random_token(24);
-    q('UPDATE gate_passes SET link_token_hash = ?, qr_version = qr_version + 1, updated_at = ? WHERE id = ?', [sha256($token), now_iso(), $g['id']]);
+    tx(function () use ($g, $token) {
+        q('UPDATE gate_passes SET link_token_hash = ?, updated_at = ? WHERE id = ?', [sha256($token), now_iso(), $g['id']]);
+        // A new code as well as a new QR: the old one, typed in, no longer works.
+        replace_pass_code($g, 'reissue');
+    });
     $g = org_get_pass($event, $g['id']);
     $url = base_url() . "/pass?t=$token";
     org_pass_send($g, $event, $url);

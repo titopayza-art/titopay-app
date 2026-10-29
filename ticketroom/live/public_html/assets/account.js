@@ -17,7 +17,7 @@ function head(title, sub = "", actions = "") {
 // ---------------- tickets ----------------
 async function cacheWallet(list) {
   try {
-    const withQr = await Promise.all(list.filter((t) => t.status === "valid" && new Date(t.ends_at) > new Date()).map(async (t) => {
+    const withQr = await Promise.all(list.filter((t) => t.status === "valid" && !t.refund_open && new Date(t.ends_at) > new Date()).map(async (t) => {
       const svg = await fetch(`/api/me/tickets/${t.id}/qr.svg`, { credentials: "same-origin" }).then((r) => (r.ok ? r.text() : null));
       return { ...t, qrData: svg ? `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}` : null };
     }));
@@ -44,11 +44,12 @@ function ticketCard(t, offline = false) {
       <p class="tk-note">Present this ticket at the entrance. Do not share the code publicly.</p></div>
   </article>
   ${t.resale?.listing ? html`<div class="callout small no-print resale-note"><span>Up for resale on TicketRoom Exchange at <strong>${moneyExact(t.resale.listing.priceCents)}</strong>.
-    ${t.resale.listing.status === "held" ? "Someone is paying for it right now." : t.resale.listing.status === "offered" ? "Offered to the next person on the waitlist." : "Still yours until it sells."}</span>
-    ${t.resale.listing.status !== "held" ? html`<button class="btn btn-ghost btn-sm" data-unlist="${t.resale.listing.id}">Take it off</button>` : ""}</div>` : ""}
+    ${t.resale.listing.status === "held" ? (t.resale.listing.withdrawRequested ? "Someone is paying for it right now. If their payment doesn't go through, it comes off the exchange." : "Someone is paying for it right now.") : t.resale.listing.status === "offered" ? "Offered to the next person on the waitlist." : "Still yours until it sells."}</span>
+    ${!t.resale.listing.withdrawRequested ? html`<button class="btn btn-ghost btn-sm" data-unlist="${t.resale.listing.id}">Take it off</button>` : ""}</div>` : ""}
+  ${t.refund_open ? html`<p class="callout warn small no-print">Refund in progress. This ticket can't be used, passed on or sold while the refund is open.</p>` : ""}
   ${t.pending_transfer ? html`<p class="callout warn small no-print">Transfer to <strong>${t.pending_transfer.toEmail}</strong> is waiting to be accepted. <a href="#/transfers">Manage</a></p>` : ""}
-  ${!offline && live ? html`<div class="tk-actions no-print"><div class="row">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
-      ${t.resale?.open && t.resale.faceValueCents > 0 && !t.resale.listing && !t.pending_transfer ? html`<button class="btn btn-ghost btn-sm" data-sell="${t.id}">Sell</button>` : ""}
+  ${!offline && live ? html`<div class="tk-actions no-print"><div class="row">${t.transfers_enabled && !t.pending_transfer && !t.refund_open && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
+      ${t.resale?.open && t.resale.faceValueCents > 0 && !t.resale.listing && !t.pending_transfer && !t.refund_open ? html`<button class="btn btn-ghost btn-sm" data-sell="${t.id}">Sell</button>` : ""}
       <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
     <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
       data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}"></div></div>` : ""}
@@ -160,7 +161,11 @@ function sellDialog(t) {
 }
 async function unlist(id, then) {
   if (!(await confirmDialog("Take it off resale?", "Your ticket stays yours and keeps working.", { confirm: "Take it off" }))) return;
-  try { await post(`/api/me/resale/${id}/cancel`); toast("Your ticket is off resale.", "good"); then(); } catch (err) { toast(err.message, "bad"); }
+  try {
+    const r = await post(`/api/me/resale/${id}/cancel`);
+    toast(r.listing?.withdrawRequested && r.listing.status === "held" ? "Someone is paying for it right now. If their payment doesn't go through, it comes off the exchange." : "Your ticket is off resale.", "good");
+    then();
+  } catch (err) { toast(err.message, "bad"); }
 }
 async function resale() {
   const { listings } = await get("/api/me/resale");
@@ -169,7 +174,7 @@ async function resale() {
     ${listings.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Ticket</th><th class="num">Price</th><th>Status</th><th>Paid to you</th><th></th></tr></thead><tbody>
       ${listings.map((l) => html`<tr><td>${l.event.title}<div class="tiny muted mono">${l.reference}</div></td><td>${l.ticketType}${l.test ? html` <span class="badge warn">test</span>` : ""}</td><td class="num">${moneyExact(l.priceCents)}</td><td>${badge(st(l))}</td>
         <td class="small">${l.payout ? html`${l.payout.method === "card" ? "To your card" : "By EFT"}<div class="tiny muted">${l.payout.status === "paid" ? `Paid ${fmtDate(l.payout.paidAt)}` : "On its way"}</div>` : ""}</td>
-        <td>${["active", "offered"].includes(l.status) ? html`<button class="btn btn-ghost btn-sm" data-unlist="${l.id}">Take it off</button>` : ""}</td></tr>`)}</tbody></table></div>`
+        <td>${["active", "offered"].includes(l.status) || (l.status === "held" && !l.withdrawRequested) ? html`<button class="btn btn-ghost btn-sm" data-unlist="${l.id}">Take it off</button>` : ""}</td></tr>`)}</tbody></table></div>`
       : empty("Nothing up for resale. Can't make an event? Open My tickets and tap Sell on the ticket.", html`<a class="btn btn-primary" href="#/tickets">My tickets</a>`)}`);
   $$("[data-unlist]").forEach((b) => b.addEventListener("click", () => unlist(b.dataset.unlist, resale)));
 }

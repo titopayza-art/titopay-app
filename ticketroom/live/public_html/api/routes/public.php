@@ -277,7 +277,7 @@ route('POST', '/api/public/orders', function () {
         // Many phones share one address (mobile networks, venue Wi-Fi): a roomy
         // limit per address, a tight one per email.
         limit('guestorder', 120, 3600);
-        limit('guestordermail', 15, 3600, email_key((string) ($b['guest']['email'] ?? '')));
+        limit('guestordermail', 10, 3600, email_key((string) ($b['guest']['email'] ?? '')));
         $u = tx(fn() => guest_buyer($b['guest']));
     }
     if (!empty($b['retailPartnerRef']) && !empty(settings_all()['retail']['enabled'])) {
@@ -318,6 +318,11 @@ route('GET', '/api/public/orders/:ref', function ($a) {
     $owner = row('SELECT email, guest FROM users WHERE id = ?', [$o['user_id']]);
     $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.test, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
                       WHERE t.order_id = ? AND t.owner_user_id = ? ORDER BY t.created_at", [$o['id'], $o['user_id']]);
+    // Booked into an account this visitor has not shown to be theirs: the
+    // order's status only. The tickets went to that account's email.
+    $hidden = !order_tickets_visible($o, $key);
+    $ticketCount = count($tickets);
+    if ($hidden) $tickets = [];
     $k = $key && verify_link($key) ? $key : order_key($o['id']);
     foreach ($tickets as &$t) $t['qrUrl'] = $t['status'] === 'valid' ? "/api/public/orders/{$o['reference']}/tickets/{$t['id']}/qr.svg?k=" . rawurlencode($k) : null;
     unset($t);
@@ -328,7 +333,8 @@ route('GET', '/api/public/orders/:ref', function ($a) {
             'buyerName' => $o['buyer_name'], 'test' => (int) $o['test'] === 1,
             'event' => ['title' => $o['title'], 'slug' => $o['slug'], 'startsAt' => $o['starts_at'], 'endsAt' => $o['ends_at'], 'venue' => $o['venue_name'], 'city' => $o['city']],
         ],
-        'guest' => (int) $owner['guest'] === 1, 'email' => (int) $owner['guest'] === 1 ? $owner['email'] : null,
+        'guest' => !$hidden && (int) $owner['guest'] === 1, 'email' => !$hidden && (int) $owner['guest'] === 1 ? $owner['email'] : null,
+        'ticketsHidden' => $hidden, 'ticketCount' => $ticketCount,
         'items' => $items, 'tickets' => $tickets, 'payment' => order_payment_view($o),
     ];
 });
@@ -336,6 +342,7 @@ route('GET', '/api/public/orders/:ref', function ($a) {
 route('GET', '/api/public/orders/:ref/tickets/:id/qr.svg', function ($a) {
     limit('orderqr', 240, 60);
     $o = order_access($a['ref'], qs('k'));
+    if (!order_tickets_visible($o, qs('k'))) throw not_found('Ticket not found.');
     $t = row("SELECT * FROM tickets WHERE id = ? AND order_id = ? AND owner_user_id = ? AND status = 'valid'", [$a['id'], $o['id'], $o['user_id']]);
     if (!$t) throw not_found('Ticket not found.');
     return raw_out(tr_qr_svg(qr_payload($t), ['ecc' => 'M', 'margin' => 1, 'dark' => '#0B1A33', 'light' => '#FFFFFF']), 'image/svg+xml', 200, ['Cache-Control' => 'no-store']);

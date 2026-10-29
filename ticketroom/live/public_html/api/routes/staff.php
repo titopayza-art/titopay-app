@@ -6,7 +6,7 @@ declare(strict_types=1);
 route('GET', '/api/staff/events', function () {
     $u = require_auth();
     $all = 0; // only the events this person was added to, or their organisation's
-    $list = rows("SELECT DISTINCT e.id, e.title, e.venue_name, e.city, e.starts_at, e.ends_at, e.status, e.cashless_enabled,
+    $list = rows("SELECT DISTINCT e.id, e.title, e.venue_name, e.city, e.starts_at, e.ends_at, e.status, e.cashless_enabled, e.age_restriction,
                          COALESCE(s.can_scan, CASE WHEN m.role IN ('owner','manager') THEN 1 END, ?) AS can_scan,
                          COALESCE(s.can_manage_tags, CASE WHEN m.role IN ('owner','manager') THEN 1 END, 0) AS can_manage_tags,
                          CASE WHEN m.role IN ('owner','manager') THEN 1 ELSE COALESCE(s.can_sell_tickets, 0) END AS can_sell_tickets
@@ -104,7 +104,8 @@ function staff_event_counts(string $eventId): array
     $c = row('SELECT value FROM meta WHERE key = ?', [$key]);
     if ($c) { $v = json_decode($c['value'], true); if (($v['at'] ?? 0) > microtime(true) - 3) return $v; }
     // People, not tickets: a couple ticket lets two in.
-    $r = row("SELECT COALESCE(SUM(CASE WHEN t.status = 'used' THEN tt.admits ELSE 0 END),0) AS admitted, COALESCE(SUM(CASE WHEN t.status IN ('valid','used') THEN tt.admits ELSE 0 END),0) AS issued
+    // A multi-day pass counts as in once it has been scanned on any day.
+    $r = row("SELECT COALESCE(SUM(CASE WHEN t.status = 'used' OR (t.status = 'valid' AND t.admitted_at IS NOT NULL) THEN tt.admits ELSE 0 END),0) AS admitted, COALESCE(SUM(CASE WHEN t.status IN ('valid','used') THEN tt.admits ELSE 0 END),0) AS issued
                 FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id WHERE t.event_id = ?", [$eventId]);
     $v = ['admitted' => (int) $r['admitted'], 'issued' => (int) $r['issued'], 'at' => microtime(true)];
     q('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [$key, json_encode($v)]);
@@ -131,33 +132,58 @@ function staff_short_name(?string $name): string
 }
 
 // Offline scanning. Before the gates open, each scanner phone downloads the
-// event's ticket list (code, QR version, status, holder first name, stand) so
-// it can keep checking tickets if the stadium's mobile data fails. With
-// ?since= it only returns tickets that changed, for quick refreshes.
+// event's ticket list so it can keep checking tickets if the stadium's mobile
+// data fails. With ?since= it only returns tickets that changed, for quick
+// refreshes.
+//
+// The list never carries a ticket code: each entry is keyed by a keyed hash
+// of the code, with a short keyed hash of the QR signature next to it. A
+// phone can check a scanned or typed code against the list, but a copy of
+// the list (a lost phone, a nosy helper) gives no codes to type in or QR
+// codes to print. The key is the event's own, so lists of different events
+// can't be matched up either.
+// Entry: [codeHash, sigHash, version, status (0 not valid, 1 valid, 2 used),
+//         short name, type, multi (0 once, 1 re-entry pass, 2 once a day), last day in]
+function offline_pack_key(string $eventId): string { return b64url(hmac_raw(key_hex('qr'), "O|$eventId")); }
+function offline_hash(string $key, string $s, int $len = 20): string { return substr(hash_hmac('sha256', $s, $key), 0, $len); }
 route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
     $u = require_auth();
     limit('offlinepack', 60, 3600, $u['id']);
     $ev = event_staff_access($u, $a['eventId'], 'can_scan');
     $since = parse_iso(qs('since'));
+    $key = offline_pack_key($ev['id']);
     $types = [];
-    foreach (rows('SELECT id, name, kind, admits FROM ticket_types WHERE event_id = ?', [$ev['id']]) as $t) $types[$t['id']] = gate_label($t);
+    $perDay = [];
+    foreach (rows('SELECT id, name, kind, admits FROM ticket_types WHERE event_id = ?', [$ev['id']]) as $t) { $types[$t['id']] = gate_label($t); $perDay[$t['id']] = in_array($t['kind'], PER_DAY_KINDS, true); }
     $generatedAt = now_iso();
-    $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id, test, revoked_reason FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
+    // Tickets that changed, and tickets whose refund changed (an open refund stops entry).
+    $st = q("SELECT t.id, t.code, t.qr_version, t.status, t.holder_name, t.ticket_type_id, t.test, t.revoked_reason,
+                    (SELECT max(d.day) FROM ticket_entry_days d WHERE d.ticket_id = t.id) AS last_day
+               FROM tickets t WHERE t.event_id = ?" . ($since ? ' AND (t.updated_at >= ? OR t.order_id IN (SELECT order_id FROM refunds WHERE updated_at >= ?))' : ''), $since ? [$ev['id'], $since, $since] : [$ev['id']]);
     $list = [];
-    while ($t = $st->fetch(PDO::FETCH_NUM)) {
-        $first = staff_short_name($t[3]);
-        // Test tickets ride along as "not valid", so offline phones refuse them too.
-        $list[] = [$t[0], (int) $t[1], (int) $t[5] === 1 ? 0 : ($t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0)), $first, $t[6] === 'resold' ? 'Resold' : ((int) $t[5] === 1 ? 'Test ticket' : ($types[$t[4]] ?? ''))];
+    while ($t = $st->fetch(PDO::FETCH_ASSOC)) {
+        $test = (int) $t['test'] === 1;
+        $refund = $t['status'] === 'valid' && !$test && ticket_has_open_refund($t['id']);
+        // Test tickets and tickets with a refund under way ride along as "not valid", so offline phones refuse them too.
+        $status = $test || $refund ? 0 : ($t['status'] === 'valid' ? 1 : ($t['status'] === 'used' ? 2 : 0));
+        $type = $t['revoked_reason'] === 'resold' ? 'Resold' : ($test ? 'Test ticket' : ($refund ? 'Refund in progress' : ($types[$t['ticket_type_id']] ?? '')));
+        $list[] = [offline_hash($key, "c|{$t['code']}"), offline_hash($key, 's|' . qr_sig($t['code'], (int) $t['qr_version']), 12), (int) $t['qr_version'], $status,
+            staff_short_name($t['holder_name']), $type, !empty($perDay[$t['ticket_type_id']]) ? 2 : 0, $t['last_day']];
     }
     $st->closeCursor();
-    // Gate passes ride along; the sixth field marks a re-entry pass.
+    // Gate passes ride along; multi 1 marks a re-entry pass.
     foreach (rows('SELECT code, qr_version, status, holder_name, role, access_note, reentry, scans FROM gate_passes WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]) as $g) {
-        $list[] = [$g['code'], (int) $g['qr_version'], $g['status'] !== 'active' ? 0 : ((int) $g['reentry'] === 0 && (int) $g['scans'] > 0 ? 2 : 1), staff_short_name($g['holder_name']),
-            'Gate pass · ' . (PASS_ROLES[$g['role']] ?? $g['role']) . ($g['access_note'] ? " · {$g['access_note']}" : ''), (int) $g['reentry']];
+        $list[] = [offline_hash($key, "c|{$g['code']}"), offline_hash($key, 's|' . pass_sig($g['code'], (int) $g['qr_version']), 12), (int) $g['qr_version'],
+            $g['status'] !== 'active' ? 0 : ((int) $g['reentry'] === 0 && (int) $g['scans'] > 0 ? 2 : 1), staff_short_name($g['holder_name']),
+            'Gate pass · ' . (PASS_ROLES[$g['role']] ?? $g['role']) . ($g['access_note'] ? " · {$g['access_note']}" : ''), (int) $g['reentry'] === 1 ? 1 : 0, null];
+    }
+    // Old codes of transferred or reissued tickets and passes scan as replaced.
+    foreach (rows('SELECT code FROM replaced_codes WHERE event_id = ?' . ($since ? ' AND replaced_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]) as $r) {
+        $list[] = [offline_hash($key, "c|{$r['code']}"), '', 0, 0, '', 'Replaced', 0, null];
     }
     audit('scan.offline_pack', ['entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['tickets' => count($list), 'incremental' => (bool) $since]]);
-    return ['event' => ['id' => $ev['id'], 'title' => $ev['title'], 'starts_at' => $ev['starts_at'], 'ends_at' => $ev['ends_at']],
-        'generatedAt' => $generatedAt, 'full' => !$since, 'tickets' => $list];
+    return ['event' => ['id' => $ev['id'], 'title' => $ev['title'], 'starts_at' => $ev['starts_at'], 'ends_at' => $ev['ends_at'], 'age_restriction' => $ev['age_restriction']],
+        'format' => 2, 'key' => $key, 'generatedAt' => $generatedAt, 'full' => !$since, 'tickets' => $list];
 });
 
 // Scans made while offline are sent here once the phone is back online. Each is

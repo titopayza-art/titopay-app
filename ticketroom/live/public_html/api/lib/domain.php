@@ -309,6 +309,11 @@ function retail_ledger_lines(array $order, ?int $commissionShare = null, ?int $s
 }
 function create_order(array $user, array $in): array
 {
+    // Reservations that ran out are let go first (in their own transaction,
+    // so a "sold out" answer below does not undo it), instead of blocking
+    // sales until the background job gets to them.
+    $lapsed = row('SELECT id FROM events WHERE slug = ?', [$in['eventSlug']]);
+    if ($lapsed) release_lapsed_holds($lapsed['id']);
     return tx(function () use ($user, $in) {
         $prior = row('SELECT * FROM orders WHERE user_id = ? AND idempotency_key = ?', [$user['id'], $in['idempotencyKey']]);
         if ($prior) return ['order' => $prior, 'replay' => true];
@@ -334,13 +339,19 @@ function create_order(array $user, array $in): array
         if ($used + $wanted > $event['capacity']) throw conflict('Not enough tickets left for this event.', 'sold_out');
         if ($qt['total'] > 0 && !pay_ready()) throw new AppError(503, 'payments_not_configured', 'Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.');
         // Free tickets: the per-person limit counts every order this person
-        // already has for the event, so one account cannot take them all.
+        // already has for the event, so one account cannot take them all. An
+        // email typed at checkout is not proven, so the count also takes in
+        // every account whose address folds to the same mailbox (dots and
+        // "+" tags in Gmail addresses and the like).
+        $mailKey = email_key((string) ($user['email'] ?? ''));
         foreach ($qt['total'] > 0 ? [] : $qt['lines'] as $l) {
             $have = (int) val("SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi JOIN orders o ON o.id = oi.order_id
-                                WHERE o.user_id = ? AND o.event_id = ? AND oi.ticket_type_id = ? AND o.status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded')",
-                [$user['id'], $event['id'], $l['ticketType']['id']]);
+                                WHERE (o.user_id = ? OR o.user_id IN (SELECT id FROM users WHERE email_key = ?)) AND o.event_id = ? AND oi.ticket_type_id = ? AND o.status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded')",
+                [$user['id'], $mailKey, $event['id'], $l['ticketType']['id']]);
             $max = (int) $l['ticketType']['per_order_limit'];
-            if ($have + $l['quantity'] > $max) throw conflict($have ? "Free tickets are limited to $max × {$l['ticketType']['name']} per person, and you already have $have." : "Free tickets are limited to $max × {$l['ticketType']['name']} per person.", 'limit_exceeded');
+            // Someone booking for an email they typed in is not told what that
+            // address already holds.
+            if ($have + $l['quantity'] > $max) throw conflict($have && empty($user['viaGuest']) ? "Free tickets are limited to $max × {$l['ticketType']['name']} per person, and you already have $have." : "Free tickets are limited to $max × {$l['ticketType']['name']} per person.", 'limit_exceeded');
         }
         foreach ($qt['lines'] as $l) {
             if (affected('UPDATE ticket_types SET quantity_held = quantity_held + ? WHERE id = ? AND quantity_sold + quantity_held + ? <= quantity_total', [$l['quantity'], $l['ticketType']['id'], $l['quantity']]) === 0) {
@@ -372,6 +383,7 @@ function create_order(array $user, array $in): array
             'retail_partner_id' => $retailPartnerId, 'retail_commission_share_cents' => $retailCommissionShare, 'retail_service_share_cents' => $retailServiceShare,
             'promo_code_id' => $qt['promo']['id'] ?? null, 'tracking_link_id' => $trackingId ?: null, 'idempotency_key' => $in['idempotencyKey'],
             'expires_at' => iso_in(HOLD_MINUTES * 60), 'created_at' => $now, 'updated_at' => $now,
+            'link_shows_tickets' => order_link_shows_tickets($user),
         ]);
         if ($waitEntry) q('UPDATE waitlist_entries SET order_id = ? WHERE id = ?', [$order['id'], $waitEntry]);
         if ($queueEntry) q("UPDATE presale_queue_entries SET status = 'used', order_id = ? WHERE id = ? AND status = 'admitted'", [$order['id'], $queueEntry['id']]);
@@ -398,20 +410,23 @@ function fulfil_order(string $orderId): array
     $n = 0;
     foreach ($items as $it) {
         for ($i = 0; $i < $it['quantity']; $i++) {
-            insert('tickets', ['id' => uuid(), 'code' => random_code(10), 'qr_version' => 1, 'order_id' => $orderId, 'order_item_id' => $it['id'], 'event_id' => $order['event_id'],
+            insert('tickets', ['id' => uuid(), 'code' => new_pass_code(), 'qr_version' => 1, 'order_id' => $orderId, 'order_item_id' => $it['id'], 'event_id' => $order['event_id'],
                 'ticket_type_id' => $it['ticket_type_id'], 'owner_user_id' => $order['user_id'], 'holder_name' => $order['buyer_name'], 'price_cents' => $it['unit_price_cents'],
                 'fee_cents' => $it['unit_fee_cents'], 'status' => 'valid', 'test' => (int) ($order['test'] ?? 0), 'created_at' => $now, 'updated_at' => $now]);
             $n++;
         }
     }
+    // A waitlist place that was held for this order is now used.
+    q("UPDATE waitlist_entries SET status = 'claimed', offer_token_hash = NULL, updated_at = ? WHERE order_id = ? AND status = 'offered'", [$now, $orderId]);
     $event = row('SELECT * FROM events WHERE id = ?', [$order['event_id']]);
     $guest = (int) val('SELECT guest FROM users WHERE id = ?', [$order['user_id']]) === 1;
+    $link = order_email_link($order);
     $doorReceipt = row('SELECT method, receipt_reference, amount_cents FROM door_tenders WHERE order_id = ?', [$orderId]);
-    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $guest ? order_link($order) : null, 'doorTender' => $doorReceipt]));
+    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $link, 'doorTender' => $doorReceipt]));
     // A short SMS too, when the buyer gave a mobile number and SMS is set up.
     if ($order['buyer_phone'] && sms_ready()) {
         outbox_enqueue(['channel' => 'sms', 'to' => $order['buyer_phone'], 'userId' => $order['user_id'],
-            'body' => "TicketRoom: you're booked for {$event['title']} (" . plural($n, 'ticket') . "). Order {$order['reference']}. Tickets: " . ($guest ? order_link($order) : base_url() . '/account#/tickets')]);
+            'body' => "TicketRoom: you're booked for {$event['title']} (" . plural($n, 'ticket') . "). Order {$order['reference']}. " . ($guest ? 'Tickets: ' . order_link($order) : ($link ? 'Your tickets are in your email.' : 'Tickets: ' . base_url() . '/account#/tickets'))]);
     }
     return ['order' => $order];
 }
@@ -419,27 +434,60 @@ function release_holds(array $order): void
 {
     // A resale order holds a listing, not places on sale.
     if (!empty($order['resale_listing_id'])) { resale_release_order($order); return; }
-    foreach (rows('SELECT * FROM order_items WHERE order_id = ?', [$order['id']]) as $it) q('UPDATE ticket_types SET quantity_held = MAX(quantity_held - ?, 0) WHERE id = ?', [$it['quantity'], $it['ticket_type_id']]);
+    // A waitlist offer this order was paying for: while the offer still has
+    // time left, its place stays held for that person (a failed or abandoned
+    // payment does not lose them their place). After that it goes as usual.
+    $offer = row("SELECT * FROM waitlist_entries WHERE order_id = ? AND status = 'offered' AND offer_kind = 'primary'", [$order['id']]);
+    $keep = $offer && to_unix($offer['offer_expires_at']) > microtime(true) ? $offer['ticket_type_id'] : null;
+    if ($offer) {
+        $keep ? q('UPDATE waitlist_entries SET order_id = NULL, updated_at = ? WHERE id = ?', [now_iso(), $offer['id']])
+              : q("UPDATE waitlist_entries SET status = 'expired', offer_token_hash = NULL, updated_at = ? WHERE id = ?", [now_iso(), $offer['id']]);
+    }
+    foreach (rows('SELECT * FROM order_items WHERE order_id = ?', [$order['id']]) as $it) {
+        $free = (int) $it['quantity'] - ($keep === $it['ticket_type_id'] ? WAITLIST_TICKETS_PER_PERSON : 0);
+        if ($keep === $it['ticket_type_id']) $keep = null;
+        if ($free > 0) q('UPDATE ticket_types SET quantity_held = MAX(quantity_held - ?, 0) WHERE id = ?', [$free, $it['ticket_type_id']]);
+    }
     if ($order['promo_code_id']) q('UPDATE promo_codes SET used_count = used_count - 1 WHERE id = ? AND used_count > 0', [$order['promo_code_id']]);
     // Places that come free go to the waitlist first.
     if (val("SELECT 1 FROM waitlist_entries WHERE event_id = ? AND status = 'waiting' LIMIT 1", [$order['event_id']])) waitlist_sweep($order['event_id']);
 }
-function expire_due_orders(): int
+// Lets one lapsed reservation go (inside its own transaction).
+function expire_order(string $orderId): bool
+{
+    return tx(function () use ($orderId) {
+        $order = row('SELECT * FROM orders WHERE id = ?', [$orderId]);
+        if (!$order || $order['status'] !== 'pending_payment') return false;
+        release_holds($order);
+        q("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?", [now_iso(), $order['id']]);
+        q("UPDATE door_order_intents SET status = 'cancelled' WHERE order_id = ? AND status = 'awaiting_tender'", [$order['id']]);
+        return true;
+    });
+}
+// Reservations with no card payment under way can go at once, without asking
+// the payment provider anything. A payment still under way gets a quarter of
+// an hour's grace before its reservation is let go here; if it does go
+// through later, the payment code takes the tickets again or refunds.
+const LAPSED_ORDERS_SQL = "SELECT o.id FROM orders o WHERE o.status = 'pending_payment' AND o.expires_at < ?%s
+    AND (o.expires_at < ? OR NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status IN ('initiated','pending'))) LIMIT %d";
+function release_lapsed_holds(string $eventId): int
 {
     $n = 0;
-    foreach (rows("SELECT id FROM orders WHERE status = 'pending_payment' AND expires_at < ? LIMIT 100", [now_iso()]) as $o) {
-        // Before letting a reservation go, check the provider hasn't taken the money already.
+    foreach (rows(sprintf(LAPSED_ORDERS_SQL, ' AND o.event_id = ?', 50), [now_iso(), $eventId, iso_in(-15 * 60)]) as $o) if (expire_order($o['id'])) $n++;
+    return $n;
+}
+function expire_due_orders(): int
+{
+    // Most lapsed reservations need no provider check: let them all go first.
+    $n = 0;
+    foreach (rows(sprintf(LAPSED_ORDERS_SQL, '', 500), [now_iso(), iso_in(-15 * 60)]) as $o) if (expire_order($o['id'])) $n++;
+    // A handful each run with a card payment under way: before letting the
+    // reservation go, check the provider hasn't taken the money already.
+    foreach (rows("SELECT id FROM orders WHERE status = 'pending_payment' AND expires_at < ? ORDER BY expires_at LIMIT 20", [now_iso()]) as $o) {
         foreach (rows("SELECT id FROM payments WHERE order_id = ? AND status = 'pending' AND provider = 'yoco'", [$o['id']]) as $p) {
             try { payment_sync($p['id']); } catch (Throwable $e) { error_log('[payments] expiry check: ' . $e->getMessage()); }
         }
-        tx(function () use ($o, &$n) {
-            $order = row('SELECT * FROM orders WHERE id = ?', [$o['id']]);
-            if ($order['status'] !== 'pending_payment') return;
-            release_holds($order);
-            q("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?", [now_iso(), $order['id']]);
-            q("UPDATE door_order_intents SET status = 'cancelled' WHERE order_id = ? AND status = 'awaiting_tender'", [$order['id']]);
-            $n++;
-        });
+        if (expire_order($o['id'])) $n++;
     }
     return $n;
 }
@@ -451,19 +499,53 @@ function expire_due_orders(): int
 function guest_buyer(array $g): array
 {
     $u = user_by_email($g['email']);
-    if ($u && $u['status'] === 'suspended') throw new AppError(403, 'suspended', 'The account for this email is suspended. Use the contact form at /contact and include your account email.');
+    // Nothing about someone else's account is said to whoever typed the email.
+    if ($u && $u['status'] !== 'active') throw new AppError(403, 'email_unavailable', "We can't book tickets for this email address. Use another email, or use the contact form at /contact if it's yours.");
     if (!$u) {
         $now = now_iso();
         $u = insert('users', ['id' => uuid(), 'email' => $g['email'], 'email_key' => email_key($g['email']), 'phone' => $g['phone'] ?? null, 'full_name' => $g['fullName'],
             'password_hash' => '!', 'status' => 'active', 'guest' => 1, 'created_at' => $now, 'updated_at' => $now]);
         audit('user.guest_created', ['actor' => ['id' => $u['id']], 'entityType' => 'user', 'entityId' => $u['id'], 'ip' => client_ip()]);
     }
-    return ['id' => $u['id'], 'fullName' => $g['fullName'], 'email' => $u['email'], 'phone' => $g['phone'] ?? $u['phone'], 'guest' => (int) $u['guest'] === 1];
+    // 'own' is false when the email belongs to a full account: the tickets go
+    // into that account, and only its owner (signed in, or through the link in
+    // the email) gets to see them. The person at the checkout does not.
+    return ['id' => $u['id'], 'fullName' => $g['fullName'], 'email' => $u['email'], 'phone' => $g['phone'] ?? $u['phone'], 'guest' => (int) $u['guest'] === 1,
+        'viaGuest' => true, 'own' => (int) $u['guest'] === 1];
 }
 // A private link to one order, for buyers without an account (and the order
 // email). Signed, so it cannot be guessed or edited; valid for 13 months.
 function order_key(string $orderId): string { return sign_link(['o' => $orderId], 400 * 86400); }
 function order_link(array $order): string { return base_url() . '/orders/' . $order['reference'] . '?k=' . rawurlencode(order_key($order['id'])); }
+// The link sent only to the account's own mailbox. Unlike order_key() (which
+// also reaches whoever stood at the checkout), it shows the tickets of an
+// order booked into a full account.
+function order_mail_key(string $orderId): string { return sign_link(['o' => $orderId, 'm' => 1], 400 * 86400); }
+function order_mail_link(array $order): string { return base_url() . '/orders/' . $order['reference'] . '?k=' . rawurlencode(order_mail_key($order['id'])); }
+// Whether the order's private link (the one the checkout page and payment
+// page return to) may show its tickets: only when whoever was at the checkout
+// owns the account. Someone typing an email that already has an account
+// (a full one, or an earlier guest's) books into it, but the tickets show
+// only to that account: signed in, or through the link in its own email.
+// The link in the order email, or null when the tickets are in the buyer's
+// customer portal. Organiser and staff accounts have no ticket wallet, so
+// their email carries the private order link as well.
+function order_email_link(array $order): ?string
+{
+    $owner = row('SELECT guest, account_type FROM users WHERE id = ?', [$order['user_id']]);
+    $guest = (int) ($owner['guest'] ?? 0) === 1;
+    if (!$guest && account_type($owner) === 'customer') return null;
+    return (int) ($order['link_shows_tickets'] ?? 1) === 1 && $guest ? order_link($order) : order_mail_link($order);
+}
+function order_link_shows_tickets(array $buyer): int { return empty($buyer['viaGuest']) || !empty($buyer['own']) ? 1 : 0; }
+function order_tickets_visible(array $o, ?string $key): bool
+{
+    $u = user();
+    if ($u && $u['id'] === $o['user_id']) return true;
+    $d = $key ? verify_link($key) : null;
+    if (!$d || ($d['o'] ?? '') !== $o['id']) return false;
+    return (int) ($o['link_shows_tickets'] ?? 1) === 1 || !empty($d['m']);
+}
 // The order behind a reference, for its owner or for the holder of its private link.
 function order_access(string $ref, ?string $key): array
 {
@@ -521,9 +603,31 @@ function pass_parse(?string $input): ?array
 // A code no ticket or pass uses yet.
 function new_pass_code(): string
 {
-    do { $c = random_code(10); } while (val('SELECT 1 FROM tickets WHERE code = ? UNION ALL SELECT 1 FROM gate_passes WHERE code = ?', [$c, $c]));
+    do { $c = random_code(10); } while (val('SELECT 1 FROM tickets WHERE code = ? UNION ALL SELECT 1 FROM gate_passes WHERE code = ? UNION ALL SELECT 1 FROM replaced_codes WHERE code = ?', [$c, $c, $c]));
     return $c;
 }
+// A transfer or reissue gives the ticket (or pass) a brand-new code, not just
+// a new QR version: the old code is also printed on the ticket and can be
+// typed in at the gate. The old code is kept so that it scans as "replaced"
+// and is never handed out again.
+function replace_ticket_code(array $t, string $reason): string
+{
+    $code = new_pass_code();
+    q('INSERT INTO replaced_codes (code, kind, ref_id, event_id, reason, replaced_at) VALUES (?,?,?,?,?,?)', [$t['code'], 'ticket', $t['id'], $t['event_id'], $reason, now_iso()]);
+    q('UPDATE tickets SET code = ?, qr_version = qr_version + 1, updated_at = ? WHERE id = ?', [$code, now_iso(), $t['id']]);
+    return $code;
+}
+function replace_pass_code(array $g, string $reason): string
+{
+    $code = new_pass_code();
+    q('INSERT INTO replaced_codes (code, kind, ref_id, event_id, reason, replaced_at) VALUES (?,?,?,?,?,?)', [$g['code'], 'pass', $g['id'], $g['event_id'], $reason, now_iso()]);
+    q('UPDATE gate_passes SET code = ?, qr_version = qr_version + 1, updated_at = ? WHERE id = ?', [$code, now_iso(), $g['id']]);
+    return $code;
+}
+// Ticket kinds that let their holder in once on each day of the event.
+const PER_DAY_KINDS = ['multi_day', 'season'];
+// The calendar day (South African time) of a moment, for per-day passes.
+function sa_day(string $iso): string { return (new DateTimeImmutable($iso))->setTimezone(new DateTimeZone('Africa/Johannesburg'))->format('Y-m-d'); }
 const PASS_ROLES = ['crew' => 'Crew', 'artist' => 'Artist / performer', 'media' => 'Media', 'vendor' => 'Vendor', 'security' => 'Security', 'medical' => 'Medical',
     'sponsor' => 'Sponsor', 'guest' => 'Guest list', 'staff' => 'Event staff', 'all_access' => 'All access'];
 // Passes work from two days before the event (build) to a day after (strike).
@@ -542,6 +646,8 @@ function tickets_for_user(string $userId): array
         $t['pending_transfer'] = $tr ? ['id' => $tr['id'], 'toEmail' => $tr['to_email'], 'expiresAt' => $tr['expires_at']] : null;
         $t['qrPayload'] = $t['status'] === 'valid' ? qr_payload($t) : null;
         $t['resale'] = resale_ticket_info($t, $userId);
+        // A refund asked for or under way: the ticket can't be passed on, sold or used meanwhile.
+        $t['refund_open'] = $t['status'] === 'valid' && ticket_has_open_refund($t['id']);
         unset($t['qr_version'], $t['order_id']);
     }
     return $list;
@@ -562,6 +668,7 @@ function start_transfer(array $user, string $ticketId, string $toEmail): array
         if ($t['event_status'] !== 'published' || to_unix($t['starts_at']) <= microtime(true)) throw conflict('Transfers close when the event starts.', 'transfer_closed');
         if (val("SELECT 1 FROM ticket_transfers WHERE ticket_id = ? AND status = 'pending'", [$t['id']])) throw conflict('This ticket already has a transfer waiting. Cancel it first.', 'duplicate');
         if (val("SELECT 1 FROM resale_listings WHERE ticket_id = ? AND status IN ('active','offered','held')", [$t['id']])) throw conflict('This ticket is up for resale. Take it off TicketRoom Exchange first.', 'ticket_listed');
+        if (ticket_has_open_refund($t['id'])) throw conflict('Refund in progress. This ticket cannot be transferred while its refund is open.', 'refund_in_progress');
         $token = random_token(24);
         $recipient = val("SELECT id FROM users WHERE lower(email) = ? AND status = 'active'", [$toEmail]);
         $tr = insert('ticket_transfers', ['id' => uuid(), 'ticket_id' => $t['id'], 'from_user_id' => $user['id'], 'to_email' => $toEmail, 'to_user_id' => $recipient ?: null,
@@ -584,11 +691,13 @@ function claim_transfer(array $user, ?string $token, ?string $transferId): array
         }
         if ($tr['from_user_id'] === $user['id']) throw bad('You cannot accept your own transfer.');
         $t = row('SELECT t.*, e.title, e.starts_at FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.id = ?', [$tr['ticket_id']]);
-        if ($t['owner_user_id'] !== $tr['from_user_id'] || $t['status'] !== 'valid') {
+        if ($t['owner_user_id'] !== $tr['from_user_id'] || $t['status'] !== 'valid' || ticket_has_open_refund($t['id'])) {
             q("UPDATE ticket_transfers SET status = 'cancelled', completed_at = ? WHERE id = ?", [now_iso(), $tr['id']]);
             throw conflict('This ticket can no longer be transferred.', 'ticket_not_valid');
         }
-        q('UPDATE tickets SET owner_user_id = ?, holder_name = ?, qr_version = qr_version + 1, updated_at = ? WHERE id = ?', [$user['id'], $user['fullName'], now_iso(), $t['id']]);
+        q('UPDATE tickets SET owner_user_id = ?, holder_name = ?, updated_at = ? WHERE id = ?', [$user['id'], $user['fullName'], now_iso(), $t['id']]);
+        // New owner, new code: the sender's copy (QR or typed code) stops working.
+        replace_ticket_code($t, 'transfer');
         q("UPDATE ticket_transfers SET status = 'accepted', to_user_id = ?, completed_at = ? WHERE id = ?", [$user['id'], now_iso(), $tr['id']]);
         $sender = val('SELECT email FROM users WHERE id = ?', [$tr['from_user_id']]);
         outbox_enqueue(['to' => $sender, 'userId' => $tr['from_user_id']] + tpl('transferDone', ['event' => $t, 'toEmail' => $user['email']]));
@@ -598,29 +707,43 @@ function claim_transfer(array $user, ?string $token, ?string $transferId): array
 }
 const ADMIT_BEFORE_H = 12;
 const ADMIT_AFTER_H = 6;
+// The moment a scan counts for: the phone's own time for scans synced after
+// an offline spell (checked by the sync route), otherwise now. The entry
+// windows are judged at that moment, so a scan made at the gate is not
+// refused because the phone only got its signal back hours later.
+function admit_moment(array $b): float { return !empty($b['at']) ? to_unix($b['at']) : microtime(true); }
 // One IMMEDIATE transaction per scan: two gates scanning one ticket at the
 // same moment are serialised, so exactly one is admitted.
 function admit(array $staff, array $b): array
 {
     return tx(function () use ($staff, $b) {
         $eventId = $b['eventId'];
-        $ev = row('SELECT id, title, status, starts_at, ends_at FROM events WHERE id = ?', [$eventId]);
+        $ev = row('SELECT id, title, status, starts_at, ends_at, age_restriction FROM events WHERE id = ?', [$eventId]);
         $log = function (string $outcome, ?string $ticketId = null) use ($eventId, $staff, $b) {
             q('INSERT INTO admission_log (event_id, ticket_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$eventId, $ticketId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
         };
         $notLive = function () use ($log) { $log('event_not_live'); return ['outcome' => 'event_not_live', 'message' => 'This event is not open for entry right now.']; };
+        $replaced = function (?string $ticketId) use ($log) {
+            $log('invalid', $ticketId);
+            return ['outcome' => 'replaced', 'message' => 'This code was replaced (ticket transferred or reissued). Ask for the current ticket.'];
+        };
         if ($ev['status'] !== 'published') return $notLive();
+        // The event's age rule rides along with every answer, for the gate to check.
+        $age = trim((string) ($ev['age_restriction'] ?? '')) ?: null;
         // Gate passes have their own, longer window (setup and strike days).
         $isPass = str_starts_with(trim((string) ($b['payload'] ?? '')), 'TP1.');
-        $now = microtime(true);
+        $now = admit_moment($b);
         if (!$isPass && ($now < to_unix($ev['starts_at']) - ADMIT_BEFORE_H * 3600 || $now > to_unix($ev['ends_at']) + ADMIT_AFTER_H * 3600)) {
             $typed = qr_parse($b['payload'] ?? '');
-            if (!$typed || $typed['signed'] || !val('SELECT 1 FROM gate_passes WHERE code = ?', [$typed['code']])) return $notLive();
+            if (!$typed || $typed['signed'] || !val("SELECT 1 FROM gate_passes WHERE code = ? UNION ALL SELECT 1 FROM replaced_codes WHERE code = ? AND kind = 'pass'", [$typed['code'], $typed['code']])) return $notLive();
         }
         if (empty($b['payload'])) {
             // A wristband or tag: it opens the gate through the ticket it is
             // linked to. The answer never says whose band an unknown one is.
-            $tag = tag_resolve($b['tagInput'] ?? '');
+            // The code printed on a band is not enough here: anyone who saw the
+            // band could type it in. Tap the band or scan its QR instead.
+            if ((tag_normalise($b['tagInput'] ?? '')['kind'] ?? '') === 'code') { $log('invalid'); return ['outcome' => 'invalid', 'message' => "The code printed on a band can't open the gate. Tap the band or scan its QR code."]; }
+            $tag = tag_resolve($b['tagInput'] ?? '', false);
             if (!$tag || $tag['event_id'] !== $eventId || in_array($tag['status'], TAG_STATUS_OPEN, true)) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'This tag is not linked to a ticket for this event.']; }
             if ($tag['status'] !== 'active') { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'This tag was blocked (lost, stolen or replaced). Send the guest to the registration desk.']; }
             $t = $tag['ticket_id'] ? row('SELECT * FROM tickets WHERE id = ?', [$tag['ticket_id']]) : null;
@@ -632,10 +755,17 @@ function admit(array $staff, array $b): array
             $p = qr_parse($b['payload']);
             if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom ticket, or the code has been altered.']; }
             $t = row('SELECT * FROM tickets WHERE code = ?', [$p['code']]);
-            // A typed code may belong to a gate pass.
-            if (!$t && !$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev);
-            if (!$t) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Ticket not found.']; }
-            if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) { $log('invalid', $t['id']); return ['outcome' => 'invalid', 'message' => 'This QR code was replaced (ticket transferred or reissued). Ask for the current ticket.']; }
+            if (!$t) {
+                // A typed code may belong to a gate pass.
+                if (!$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev);
+                // The old code of a ticket or pass that was transferred or reissued.
+                $old = row('SELECT kind, ref_id FROM replaced_codes WHERE code = ?', [$p['code']]);
+                if ($old && $old['kind'] === 'pass') return admit_pass($staff, $b + ['replacedPass' => $old['ref_id']], $ev);
+                if ($old) return $replaced($old['ref_id']);
+                $log('invalid');
+                return ['outcome' => 'invalid', 'message' => 'Ticket not found.'];
+            }
+            if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) return $replaced($t['id']);
         }
         if ($t['event_id'] !== $eventId) { $log('wrong_event', $t['id']); return ['outcome' => 'wrong_event', 'message' => 'This ticket is for a different event.']; }
         // Sold on TicketRoom Exchange: the buyer has a new code, this one is void.
@@ -643,6 +773,8 @@ function admit(array $staff, array $b): array
         if (in_array($t['status'], ['revoked', 'refunded'], true)) { $log($t['status'], $t['id']); return ['outcome' => $t['status'], 'message' => "This ticket was {$t['status']}."]; }
         // Bought in test mode (sandbox): never valid for entry.
         if ((int) $t['test'] === 1) { $log('invalid', $t['id']); return ['outcome' => 'test_ticket', 'message' => 'Test ticket, bought while payments were in test mode. Not valid for entry.', 'holderName' => $t['holder_name']]; }
+        // Money is on its way back for this ticket: it can't be used as well.
+        if (ticket_has_open_refund($t['id'])) { $log('invalid', $t['id']); return ['outcome' => 'refund_pending', 'message' => 'Refund in progress. This ticket is not valid for entry while its refund is open.', 'holderName' => $t['holder_name']]; }
         // Up for resale: it can't be used and sold too.
         if ($t['status'] === 'valid' && val("SELECT 1 FROM resale_listings WHERE ticket_id = ? AND status IN ('active','offered','held')", [$t['id']])) {
             $log('invalid', $t['id']);
@@ -652,12 +784,26 @@ function admit(array $staff, array $b): array
         $type = gate_label($tt);
         // Offline scans synced later keep the time the fan actually walked in.
         $at = $b['at'] ?? now_iso();
+        // Weekend, multi-day and season passes: once on each day of the event.
+        // The ticket stays valid (its QR keeps working); each day is recorded.
+        if (in_array($tt['kind'], PER_DAY_KINDS, true) && $t['status'] === 'valid') {
+            $day = sa_day($at);
+            $first = val('SELECT admitted_at FROM ticket_entry_days WHERE ticket_id = ? AND day = ?', [$t['id'], $day]);
+            if ($first) {
+                $log('already_used', $t['id']);
+                return ['outcome' => 'already_used', 'message' => 'Already scanned today.', 'admittedAt' => $first, 'holderName' => $t['holder_name'], 'ticketType' => $type, 'ageRestriction' => $age];
+            }
+            q('INSERT INTO ticket_entry_days (ticket_id, day, admitted_at, admitted_by) VALUES (?,?,?,?)', [$t['id'], $day, $at, $staff['id']]);
+            q('UPDATE tickets SET admitted_at = COALESCE(admitted_at, ?), admitted_by = COALESCE(admitted_by, ?), updated_at = ? WHERE id = ?', [$at, $staff['id'], now_iso(), $t['id']]);
+            $log('admitted', $t['id']);
+            return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $t['holder_name'], 'ticketType' => "$type · Today only", 'code' => $t['code'], 'admits' => (int) $tt['admits'], 'perDay' => true, 'ageRestriction' => $age];
+        }
         if (affected("UPDATE tickets SET status = 'used', admitted_at = ?, admitted_by = ?, updated_at = ? WHERE id = ? AND status = 'valid'", [$at, $staff['id'], now_iso(), $t['id']]) === 0) {
             $log('already_used', $t['id']);
-            return ['outcome' => 'already_used', 'message' => 'Already scanned.', 'admittedAt' => $t['admitted_at'], 'holderName' => $t['holder_name'], 'ticketType' => $type];
+            return ['outcome' => 'already_used', 'message' => 'Already scanned.', 'admittedAt' => $t['admitted_at'], 'holderName' => $t['holder_name'], 'ticketType' => $type, 'ageRestriction' => $age];
         }
         $log('admitted', $t['id']);
-        return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $t['holder_name'], 'ticketType' => $type, 'code' => $t['code'], 'admits' => (int) $tt['admits']];
+        return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $t['holder_name'], 'ticketType' => $type, 'code' => $t['code'], 'admits' => (int) $tt['admits'], 'ageRestriction' => $age];
     });
 }
 // Runs inside admit()'s transaction. Re-entry passes are let in every time
@@ -667,18 +813,25 @@ function admit_pass(array $staff, array $b, array $ev): array
     $log = function (string $outcome, ?string $passId = null) use ($ev, $staff, $b) {
         q('INSERT INTO admission_log (event_id, pass_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$ev['id'], $passId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
     };
+    $replaced = function (?string $passId) use ($log) { $log('invalid', $passId); return ['outcome' => 'replaced', 'message' => 'This pass was replaced. Ask for the current pass.']; };
+    if (isset($b['replacedPass'])) return $replaced($b['replacedPass']);
     if (isset($b['typed'])) $g = $b['typed'];
     else {
         $p = pass_parse($b['payload']);
         if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom pass, or the code has been altered.']; }
         $g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]);
-        if (!$g) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Pass not found.']; }
-        if ($p['version'] !== (int) $g['qr_version']) { $log('invalid', $g['id']); return ['outcome' => 'invalid', 'message' => 'This pass was replaced. Ask for the current pass.']; }
+        if (!$g) {
+            $old = val("SELECT ref_id FROM replaced_codes WHERE code = ? AND kind = 'pass'", [$p['code']]);
+            if ($old) return $replaced($old);
+            $log('invalid');
+            return ['outcome' => 'invalid', 'message' => 'Pass not found.'];
+        }
+        if ($p['version'] !== (int) $g['qr_version']) return $replaced($g['id']);
     }
     $label = 'Gate pass · ' . (PASS_ROLES[$g['role']] ?? $g['role']) . ($g['access_note'] ? " · {$g['access_note']}" : '');
     if ($g['event_id'] !== $ev['id']) { $log('wrong_event', $g['id']); return ['outcome' => 'wrong_event', 'message' => 'This pass is for a different event.', 'holderName' => $g['holder_name']]; }
     if ($g['status'] !== 'active') { $log('revoked', $g['id']); return ['outcome' => 'revoked', 'message' => 'This pass was cancelled by the organiser.', 'holderName' => $g['holder_name']]; }
-    $now = microtime(true);
+    $now = admit_moment($b);
     if ($now < to_unix($ev['starts_at']) - PASS_BEFORE_H * 3600 || $now > to_unix($ev['ends_at']) + PASS_AFTER_H * 3600) {
         $log('event_not_live', $g['id']);
         return ['outcome' => 'event_not_live', 'message' => 'Passes for this event are not valid right now.'];
