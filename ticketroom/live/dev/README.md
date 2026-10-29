@@ -16,6 +16,8 @@ changes `live/public_html`.
 | `run-all.sh [port] [dir]` | Serves a fresh instance, runs `smoke.js` and every suite in `tests/`, stops the server it started. Also `npm run test:live` in `ticketroom/`. |
 | `tests/money.js` | Money regression tests (refunds, resale, payouts, test money, reconciliation); scenarios are built in the PHP CLI with `tests/money-lib.php`. Uses a Yoco mock on port 8790 (`TR_MONEY_MOCK_PORT`); `TR_ONLY=M10` runs one item. |
 | `tests/ops.js <dir> [port]` | Operations and security regressions (O* and S* in TRIAGE.md): email lease and retries, backups, keys and data folder, cron, health, rate limits, uploads, emails. Uses SMTP stand-ins on 127.0.0.1:8800-8802. |
+| `run-all.sh <port> <dir>` | Serves a fresh instance, runs `smoke.js` (TR_STRICT=0 by default) and every suite in `tests/`, then stops the server it started. |
+| `tests/tickets.js <dir> [port]` | Regression tests for the ticket, checkout and gate fixes (T1-T14, P1 (a) and (b)). `TR_ONLY=T6` runs the tests whose name starts with that. |
 
 ## Run it
 

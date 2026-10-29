@@ -352,6 +352,9 @@ CREATE TABLE orders (
   updated_at          TEXT NOT NULL,
   test                INTEGER NOT NULL DEFAULT 0,
   resale_listing_id   TEXT,
+  -- 0 when booked at a checkout into an account that already existed: the
+  -- order's private link then shows its status only, not the tickets.
+  link_shows_tickets  INTEGER NOT NULL DEFAULT 1,
   UNIQUE (user_id, idempotency_key)
 );
 CREATE INDEX orders_event_idx ON orders (event_id, status);
@@ -396,6 +399,25 @@ CREATE INDEX tickets_owner_idx ON tickets (owner_user_id);
 CREATE INDEX tickets_event_idx ON tickets (event_id, status);
 CREATE INDEX tickets_event_updated_idx ON tickets (event_id, updated_at);
 CREATE INDEX tickets_order_idx ON tickets (order_id);
+-- Old codes of tickets and gate passes that were transferred or reissued.
+-- They scan as "replaced" and are never handed out again (upgrade 48).
+CREATE TABLE IF NOT EXISTS replaced_codes (
+  code        TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL CHECK (kind IN ('ticket','pass')),
+  ref_id      TEXT NOT NULL,
+  event_id    TEXT NOT NULL REFERENCES events(id),
+  reason      TEXT NOT NULL,
+  replaced_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS replaced_codes_event_idx ON replaced_codes (event_id, replaced_at);
+-- The days a multi-day or season pass was used: once a day (upgrade 48).
+CREATE TABLE IF NOT EXISTS ticket_entry_days (
+  ticket_id   TEXT NOT NULL REFERENCES tickets(id),
+  day         TEXT NOT NULL,
+  admitted_at TEXT NOT NULL,
+  admitted_by TEXT REFERENCES users(id),
+  PRIMARY KEY (ticket_id, day)
+);
 
 -- Gate passes: crew, artists, media, vendors and guests that an organiser
 -- lets in without a ticket. Each has its own signed QR code (TP1.…) and a
@@ -1269,6 +1291,7 @@ CREATE TABLE IF NOT EXISTS resale_listings (
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL,
   sold_at             TEXT,
+  withdraw_requested_at TEXT,
   CHECK (price_cents <= face_value_cents)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS resale_listings_one_open ON resale_listings (ticket_id) WHERE status IN ('active','offered','held');

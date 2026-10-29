@@ -128,10 +128,12 @@ function cl_register_bands(array $u, array $ev, array $body): array
 
 // ============================================================== organiser: wristbands
 route('GET', '/api/organiser/:orgId/events/:eventId/tags', function ($a) {
-    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+    ['event' => $event, 'role' => $role] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
     $list = rows('SELECT g.id, g.display_code, g.tag_type, g.status, g.security_level, g.linked_at, g.last_used_at, g.status_reason, t.holder_name
                     FROM tags g LEFT JOIN tickets t ON t.id = g.ticket_id WHERE g.event_id = ? ORDER BY g.created_at DESC LIMIT 500', [$event['id']]);
-    foreach ($list as &$t) $t['display_code'] = tag_display($t['display_code']);
+    // Full band codes for owners and managers only; the rest of the team sees enough to tell bands apart.
+    $full = in_array($role, ['owner', 'manager'], true);
+    foreach ($list as &$t) $t['display_code'] = $full ? tag_display($t['display_code']) : '••••-••' . substr($t['display_code'], 6);
     $counts = [];
     foreach (rows('SELECT status, count(*) AS n FROM tags WHERE event_id = ? GROUP BY status', [$event['id']]) as $r) $counts[$r['status']] = (int) $r['n'];
     return ['tags' => $list, 'counts' => (object) $counts];

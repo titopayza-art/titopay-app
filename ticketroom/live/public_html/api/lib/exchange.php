@@ -48,6 +48,7 @@ function tr_upgrade_exchange(): void
 }
 
 // ============================================================== shared
+// ticket_has_open_refund() lives in the payments library.
 function resale_cutoff(array $ev): string
 {
     $at = to_unix($ev['doors_open_at'] ?: $ev['starts_at']) - RESALE_CLOSE_MINUTES_BEFORE_DOORS * 60;
@@ -82,7 +83,8 @@ function resale_card_payment(array $t, string $sellerId): ?array
 }
 function exchange_buyer(array $u): array
 {
-    return ['id' => $u['id'], 'fullName' => $u['fullName'] ?? $u['full_name'], 'email' => $u['email'], 'phone' => $u['phone'] ?? null];
+    return ['id' => $u['id'], 'fullName' => $u['fullName'] ?? $u['full_name'], 'email' => $u['email'], 'phone' => $u['phone'] ?? null,
+        'viaGuest' => !empty($u['viaGuest']), 'own' => !empty($u['own'])];
 }
 
 // ============================================================== waitlist
@@ -126,7 +128,9 @@ function waitlist_leave(array $w, ?array $actor): array
     return tx(function () use ($w, $actor) {
         $w = row('SELECT * FROM waitlist_entries WHERE id = ?', [$w['id']]);
         if (!in_array($w['status'], ['waiting', 'offered'], true)) return waitlist_view($w);
-        if ($w['status'] === 'offered') waitlist_release_offer($w);
+        // While a checkout is open on the offer, that order holds the place and lets it go.
+        $paying = $w['order_id'] && val("SELECT 1 FROM orders WHERE id = ? AND status = 'pending_payment'", [$w['order_id']]);
+        if ($w['status'] === 'offered' && !$paying) waitlist_release_offer($w);
         q("UPDATE waitlist_entries SET status = 'left', offer_token_hash = NULL, updated_at = ? WHERE id = ?", [now_iso(), $w['id']]);
         audit('waitlist.left', ['actor' => $actor ?? ['id' => $w['user_id']], 'entityType' => 'waitlist_entry', 'entityId' => $w['id']]);
         waitlist_sweep($w['event_id']);
@@ -200,12 +204,14 @@ function waitlist_sweep(string $eventId): int
 // Offers that ran out pass to the next person in line.
 function waitlist_expire_offers(?string $eventId = null): int
 {
-    $due = rows("SELECT * FROM waitlist_entries WHERE status = 'offered' AND offer_expires_at < ?" . ($eventId ? ' AND event_id = ?' : '') . ' LIMIT 200', $eventId ? [now_iso(), $eventId] : [now_iso()]);
+    // An offer with a checkout still open is settled when that order is paid or lapses.
+    $due = rows("SELECT * FROM waitlist_entries w WHERE status = 'offered' AND offer_expires_at < ?" . ($eventId ? ' AND event_id = ?' : '')
+        . " AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = w.order_id AND o.status = 'pending_payment') LIMIT 200", $eventId ? [now_iso(), $eventId] : [now_iso()]);
     $events = [];
     foreach ($due as $w) {
         tx(function () use ($w) {
             $cur = row('SELECT * FROM waitlist_entries WHERE id = ?', [$w['id']]);
-            if ($cur['status'] !== 'offered') return;
+            if ($cur['status'] !== 'offered' || ($cur['order_id'] && val("SELECT 1 FROM orders WHERE id = ? AND status = 'pending_payment'", [$cur['order_id']]))) return;
             waitlist_release_offer($cur);
             q("UPDATE waitlist_entries SET status = 'expired', offer_token_hash = NULL, updated_at = ? WHERE id = ?", [now_iso(), $cur['id']]);
             audit('waitlist.offer_expired', ['actor' => ['id' => null, 'primaryRole' => 'system'], 'entityType' => 'waitlist_entry', 'entityId' => $cur['id'], 'details' => ['kind' => $cur['offer_kind']]]);
@@ -244,9 +250,15 @@ function waitlist_take_primary(string $token, array $ev, array $items): string
     if (count($items) !== 1 || $items[0]['ticketTypeId'] !== $w['ticket_type_id'] || (int) $items[0]['quantity'] !== WAITLIST_TICKETS_PER_PERSON) {
         throw conflict('This offer is for ' . WAITLIST_TICKETS_PER_PERSON . ' ticket of the type you waited for.', 'offer_mismatch');
     }
+    // A checkout already open on this offer: one payment at a time.
+    if ($w['order_id'] && val("SELECT 1 FROM orders WHERE id = ? AND status = 'pending_payment'", [$w['order_id']])) {
+        throw conflict('A payment for this ticket is already open. Finish it, or wait a few minutes and try again from the same link.', 'offer_in_checkout');
+    }
+    // The place held for the offer moves to the order. The offer itself stays
+    // open until the tickets are issued: if the payment fails or is abandoned,
+    // the place comes back to this person for the rest of the offer time.
     q('UPDATE ticket_types SET quantity_held = MAX(quantity_held - 1, 0) WHERE id = ?', [$w['ticket_type_id']]);
-    q("UPDATE waitlist_entries SET status = 'claimed', offer_token_hash = NULL, updated_at = ? WHERE id = ?", [now_iso(), $w['id']]);
-    audit('waitlist.claimed', ['actor' => ['id' => $w['user_id']], 'entityType' => 'waitlist_entry', 'entityId' => $w['id'], 'details' => ['kind' => 'primary']]);
+    audit('waitlist.checkout', ['actor' => ['id' => $w['user_id']], 'entityType' => 'waitlist_entry', 'entityId' => $w['id'], 'details' => ['kind' => 'primary']]);
     return $w['id'];
 }
 // A refunded ticket goes to the waitlist first: if people are waiting for its
@@ -270,7 +282,7 @@ function resale_listing_view(array $l): array
 {
     return ['id' => $l['id'], 'reference' => $l['reference'], 'ticketId' => $l['ticket_id'], 'status' => $l['status'], 'priceCents' => (int) $l['price_cents'], 'faceValueCents' => (int) $l['face_value_cents'],
         'feeCents' => ticket_fee((int) $l['price_cents']), 'payoutMethod' => $l['payout_method'], 'bank' => $l['bank_account_last4'] ? "{$l['bank_name']} ••••{$l['bank_account_last4']}" : null,
-        'test' => (int) $l['test'] === 1, 'createdAt' => $l['created_at'], 'soldAt' => $l['sold_at'], 'closeReason' => $l['close_reason']];
+        'test' => (int) $l['test'] === 1, 'createdAt' => $l['created_at'], 'soldAt' => $l['sold_at'], 'closeReason' => $l['close_reason'], 'withdrawRequested' => !empty($l['withdraw_requested_at'])];
 }
 // What the ticket page needs to offer "Sell on TicketRoom Exchange".
 function resale_ticket_info(array $t, string $userId): array
@@ -289,7 +301,7 @@ function resale_list(array $u, string $ticketId, int $price, ?array $bank): arra
         $t = owned_ticket($u['id'], $ticketId);
         $ev = row('SELECT * FROM events WHERE id = ?', [$t['event_id']]);
         if ($t['status'] !== 'valid') throw conflict('Only unused, valid tickets can be sold.', 'ticket_not_valid');
-        if (ticket_has_open_refund($t['id'])) throw conflict('This ticket has a refund on its way, so it cannot be sold.', 'refund_pending');
+        if (ticket_has_open_refund($t['id'])) throw conflict('Refund in progress. This ticket cannot be sold while its refund is open.', 'refund_in_progress');
         if (empty($ev['resale_enabled'])) throw conflict('The organiser has switched off resale for this event. You can still pass your ticket to a friend.', 'resale_disabled');
         if (!resale_open($ev)) throw conflict('Resale for this event has closed. Listings close when the doors open.', 'resale_closed');
         if (val("SELECT 1 FROM ticket_transfers WHERE ticket_id = ? AND status = 'pending'", [$t['id']])) throw conflict('This ticket has a transfer waiting. Cancel the transfer first.', 'transfer_pending');
@@ -329,7 +341,13 @@ function resale_cancel(array $u, string $id): array
     return tx(function () use ($u, $id) {
         $l = row('SELECT * FROM resale_listings WHERE id = ? AND seller_id = ?', [$id, $u['id']]);
         if (!$l) throw not_found('Listing not found.');
-        if ($l['status'] === 'held') throw conflict('Someone is paying for this ticket right now. If their payment does not go through, you can take it off then.', 'listing_held');
+        if ($l['status'] === 'held') {
+            // Someone is paying for it right now. If their payment does not go
+            // through, it comes off instead of going back on the exchange.
+            q('UPDATE resale_listings SET withdraw_requested_at = COALESCE(withdraw_requested_at, ?), updated_at = ? WHERE id = ?', [now_iso(), now_iso(), $l['id']]);
+            audit('resale.withdraw_requested', ['actor' => $u, 'entityType' => 'resale_listing', 'entityId' => $l['id'], 'details' => ['reference' => $l['reference']]]);
+            return resale_listing_view(row('SELECT * FROM resale_listings WHERE id = ?', [$l['id']]));
+        }
         if (!in_array($l['status'], ['active', 'offered'], true)) throw conflict('This listing is already closed.', 'bad_transition');
         resale_close_listing($l, 'cancelled', 'seller');
         audit('resale.cancelled', ['actor' => $u, 'entityType' => 'resale_listing', 'entityId' => $l['id'], 'details' => ['reference' => $l['reference']]]);
@@ -385,6 +403,13 @@ function resale_checkout(array $buyer, string $listingId, ?string $offerToken, a
         if (!resale_open($ev)) throw conflict('Resale for this event has closed.', 'resale_closed');
         if ((int) $l['test'] !== (pay_test() ? 1 : 0)) throw conflict('This resale ticket is not available right now.', 'listing_unavailable');
         if ($l['seller_id'] === $buyer['id']) throw conflict('This is your own ticket.', 'own_listing');
+        // Holding a listing again and again without paying keeps it from everyone else.
+        if ((int) val("SELECT count(*) FROM orders WHERE resale_listing_id = ? AND user_id = ? AND status IN ('expired','cancelled') AND created_at > ?", [$l['id'], $buyer['id'], iso_in(-3600)]) >= 2) {
+            throw conflict('This resale ticket was held for you twice without payment. Try again in an hour, or join the waitlist.', 'listing_hold_limit');
+        }
+        if ((int) val("SELECT count(*) FROM orders WHERE resale_listing_id IS NOT NULL AND user_id = ? AND event_id = ? AND status = 'pending_payment'", [$buyer['id'], $ev['id']]) >= 2) {
+            throw conflict('You already have resale tickets for this event waiting for payment. Finish paying for those first.', 'listing_hold_limit');
+        }
         if (!pay_ready()) throw new AppError(503, 'payments_not_configured', 'Card payments are not switched on yet.');
         $fee = ticket_fee((int) $l['price_cents']);
         $now = now_iso();
@@ -393,6 +418,7 @@ function resale_checkout(array $buyer, string $listingId, ?string $offerToken, a
             'buyer_name' => $buyer['fullName'], 'buyer_email' => $buyer['email'], 'buyer_phone' => $in['buyerPhone'] ?? $buyer['phone'],
             'subtotal_cents' => (int) $l['price_cents'], 'discount_cents' => 0, 'fee_cents' => $fee, 'total_cents' => (int) $l['price_cents'] + $fee, 'refunded_cents' => 0, 'organiser_fee_cents' => 0,
             'idempotency_key' => $in['idempotencyKey'], 'expires_at' => iso_in(HOLD_MINUTES * 60), 'created_at' => $now, 'updated_at' => $now, 'resale_listing_id' => $l['id'],
+            'link_shows_tickets' => order_link_shows_tickets($buyer),
         ]);
         insert('order_items', ['id' => uuid(), 'order_id' => $order['id'], 'ticket_type_id' => $l['ticket_type_id'], 'quantity' => 1, 'unit_price_cents' => (int) $l['price_cents'], 'unit_fee_cents' => $fee]);
         q("UPDATE resale_listings SET status = 'held', held_order_id = ?, updated_at = ? WHERE id = ?", [$order['id'], $now, $l['id']]);
@@ -410,6 +436,8 @@ function resale_checkout(array $buyer, string $listingId, ?string $offerToken, a
 // which goes to the waitlist first, then back on the exchange.
 function resale_release_order(array $order): void
 {
+    // The seller asked to take it off while it was held: it comes off now.
+    if (affected("UPDATE resale_listings SET status = 'cancelled', close_reason = 'seller', held_order_id = NULL, updated_at = ? WHERE id = ? AND status = 'held' AND held_order_id = ? AND withdraw_requested_at IS NOT NULL", [now_iso(), $order['resale_listing_id'], $order['id']])) return;
     // A listing whose event was cancelled, or whose ticket is being refunded, closes instead.
     $l = row('SELECT * FROM resale_listings WHERE id = ? AND status = ? AND held_order_id = ?', [$order['resale_listing_id'], 'held', $order['id']]);
     if ($l && ($why = resale_listing_blocked($l))) { resale_close_listing($l, 'closed', $why); return; }
@@ -455,8 +483,7 @@ function resale_payment_confirmed(array $order, array $p): void
     $payout = resale_payout_create(row('SELECT * FROM resale_listings WHERE id = ?', [$l['id']]), $t, $test);
     $order = row('SELECT * FROM orders WHERE id = ?', [$order['id']]);
     $ev = row('SELECT * FROM events WHERE id = ?', [$order['event_id']]);
-    $guest = (int) val('SELECT guest FROM users WHERE id = ?', [$order['user_id']]) === 1;
-    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $ev, 'ticketCount' => 1, 'guestLink' => $guest ? order_link($order) : null]));
+    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $ev, 'ticketCount' => 1, 'guestLink' => order_email_link($order)]));
     $seller = row('SELECT email, full_name FROM users WHERE id = ?', [$l['seller_id']]);
     outbox_enqueue(['to' => $seller['email'], 'userId' => $l['seller_id']] + tpl('resaleSold', ['name' => $seller['full_name'], 'event' => $ev, 'amountCents' => (int) $payout['amount_cents'],
         'method' => $payout['method'], 'reference' => $payout['reference'], 'test' => $test]));

@@ -553,7 +553,7 @@ route('GET', '/api/admin/tickets/:code', function ($a) {
     $code = strtoupper(preg_replace('/[\s-]/', '', $a['code']));
     $t = row('SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.revoked_reason, e.title, o.reference, u.email AS owner_email
                 FROM tickets t JOIN events e ON e.id = t.event_id JOIN orders o ON o.id = t.order_id JOIN users u ON u.id = t.owner_user_id
-               WHERE t.code = ?', [$code]);
+               WHERE t.code = ? OR t.id = (SELECT ref_id FROM replaced_codes WHERE code = ? AND kind = \'ticket\')', [$code, $code]);
     if (!$t) throw not_found('Ticket not found.');
     $log = rows('SELECT outcome, occurred_at, gate FROM admission_log WHERE ticket_id = ? ORDER BY id DESC LIMIT 20', [$t['id']]);
     return ['ticket' => $t, 'admissions' => $log];
@@ -564,11 +564,12 @@ route('POST', '/api/admin/tickets/:id/reissue', function ($a) {
     $u = adm_admin_or_support();
     $b = check(body(), ['reason' => R::str(['min' => 3, 'max' => 300])]);
     return tx(function () use ($u, $a, $b) {
-        if (!affected("UPDATE tickets SET qr_version = qr_version + 1, updated_at = ? WHERE id = ? AND status = 'valid'", [now_iso(), $a['id']])) {
-            throw conflict('Only valid tickets can be reissued.', 'ticket_not_valid');
-        }
+        $t = row("SELECT * FROM tickets WHERE id = ? AND status = 'valid'", [$a['id']]);
+        if (!$t) throw conflict('Only valid tickets can be reissued.', 'ticket_not_valid');
+        // A new code as well as a new QR: the old one, typed in, no longer works.
+        replace_ticket_code($t, 'reissue');
         audit('ticket.reissued', ['actor' => $u, 'entityType' => 'ticket', 'entityId' => $a['id'], 'details' => ['reason' => $b['reason']]]);
-        return row('SELECT id, qr_version FROM tickets WHERE id = ?', [$a['id']]);
+        return row('SELECT id, code, qr_version FROM tickets WHERE id = ?', [$a['id']]);
     });
 });
 

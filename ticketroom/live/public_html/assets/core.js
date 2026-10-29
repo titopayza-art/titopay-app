@@ -30,7 +30,20 @@ export const fmtTime = (d) => d ? new Intl.DateTimeFormat("en-ZA", { timeZone: T
 export const fmtDateTime = (d) => d ? `${fmtDate(d)} · ${fmtTime(d)}` : "";
 export const dayNum = (d) => new Intl.DateTimeFormat("en-ZA", { timeZone: TZ, day: "numeric" }).format(new Date(d));
 export const monShort = (d) => new Intl.DateTimeFormat("en-ZA", { timeZone: TZ, month: "short" }).format(new Date(d));
-export const toLocalInput = (d) => { if (!d) return ""; const x = new Date(d); const p = (n) => String(n).padStart(2, "0"); return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}T${p(x.getHours())}:${p(x.getMinutes())}`; };
+// Date and time boxes (datetime-local) always mean South African time, the
+// same zone every date is shown in, whatever zone the browser is set to.
+// South Africa keeps +02:00 all year (no daylight saving).
+export const toLocalInput = (d) => {
+  if (!d) return "";
+  const x = new Date(d);
+  if (Number.isNaN(x.getTime())) return "";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(x).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+};
+export const fromLocalInput = (v) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(v || ""));
+  return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] || "00"}+02:00`).toISOString() : undefined;
+};
 export const parseRand = (s) => { const t = String(s || "").replace(/^R\s*/i, "").replace(/\s/g, "").replace(",", "."); if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null; const [w, f = ""] = t.split("."); return Number(w) * 100 + Number((f + "00").slice(0, 2)); };
 export const idem = () => (crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`);
 export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
@@ -110,6 +123,10 @@ const activityHeaders = () => recentActivityAt && Date.now() - recentActivityAt 
 export class ApiError extends Error { constructor(status, body) { super(body?.error?.message || `Request failed (${status})`); this.status = status; this.code = body?.error?.code; this.details = body?.error?.details; } }
 
 export async function api(method, path, body, { headers = {}, timeoutMs = 20000, raw: rawBody } = {}) {
+  // This tab's session ended or changed in another tab: nothing more is
+  // asked for in the old one's name (the page already says what happened).
+  if (sessionCheck) await sessionCheck;
+  if (sessionGone) await new Promise(() => {});
   const opts = { method, headers: { ...activityHeaders(), ...headers }, credentials: "same-origin" };
   if (body !== undefined && !rawBody) { opts.headers["content-type"] = "application/json"; opts.body = JSON.stringify(body); }
   if (rawBody) { opts.body = rawBody; }
@@ -136,6 +153,8 @@ export async function api(method, path, body, { headers = {}, timeoutMs = 20000,
   }
   if (!res.ok) {
     if (res.status === 403 && data?.error?.code === "csrf_failed") { meCache = undefined; csrfToken = null; }
+    // Refused: perhaps someone signed out, or in as someone else, in another tab.
+    if ((res.status === 401 || res.status === 403) && watched && await checkSession(true)) await new Promise(() => {});
     throw new ApiError(res.status, data);
   }
   return data;
@@ -156,8 +175,114 @@ export async function me(force = false) {
     meCache = r.user || null;
     csrfToken = r.csrfToken || null;
     if (meCache) startIdleSession(meCache); else stopIdleSession();
+    noteSession(meCache);
   } catch { return null; } // no signal: ask again next time
   return meCache;
+}
+
+// ---------- one session per browser, many tabs ----------
+// Every portal shares one sign-in per browser. Each tab notes who is signed in
+// (localStorage "tr-session"), so the others hear about a sign-out or a new
+// sign-in at once, and a portal tab left open checks again when it comes back
+// into view or a call is refused. It then says what happened instead of
+// carrying on with the last person's page.
+const SESSION_KEY = "tr-session";
+const WALLET_KEY = "tr_wallet_v1"; // the customer's saved tickets (account.js)
+let watched = null; // { portal, user, now } for the portal page in this tab
+let sessionCheck = null;
+let sessionGone = false;
+let lastSessionCheck = 0;
+function noteSession(user) {
+  const id = user?.id || "";
+  let prev = null, leftovers = false;
+  try {
+    prev = localStorage.getItem(SESSION_KEY);
+    leftovers = !!(localStorage.getItem(WALLET_KEY) || localStorage.getItem("tr_scan_event"));
+    if (prev !== id) localStorage.setItem(SESSION_KEY, id);
+  } catch { /* storage blocked */ }
+  // Signed out, or someone else signed in: what the last person kept on this
+  // device for offline use goes.
+  if ((prev && prev !== id) || (!id && leftovers)) forgetDeviceData();
+}
+// Saved tickets with their QR codes, and the gate scanner's offline ticket
+// lists. Scans made offline that have not reached the server yet are kept,
+// so no admission is lost; they are sent when the scanner is next used.
+export function forgetDeviceData() {
+  try { localStorage.removeItem(WALLET_KEY); localStorage.removeItem("tr_scan_event"); } catch { /* storage blocked */ }
+  try {
+    const r = indexedDB.open("ticketroom-scan", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => {
+      const db = r.result;
+      const tx = db.transaction("kv", "readwrite");
+      const store = tx.objectStore("kv");
+      const keys = store.getAllKeys();
+      keys.onsuccess = () => {
+        for (const k of keys.result) {
+          if (String(k).startsWith("pack:")) store.delete(k);
+          else if (String(k).startsWith("queue:")) { const q = store.get(k); q.onsuccess = () => { if (!(q.result || []).length) store.delete(k); }; }
+        }
+      };
+      tx.oncomplete = tx.onabort = () => db.close();
+    };
+  } catch { /* no IndexedDB here */ }
+}
+// Signs out here and in every other tab, and clears this device.
+export async function signOut() {
+  try { await post("/api/auth/logout"); } finally {
+    meCache = null; csrfToken = null;
+    forgetDeviceData();
+    try { localStorage.setItem(SESSION_KEY, ""); } catch { /* storage blocked */ }
+  }
+}
+const PORTAL_ACCOUNTS = { customer: ["customer"], organiser: ["organiser"], admin: ["staff"], scanner: ["customer", "organiser"], pos: ["customer", "organiser"] };
+function watchSession(portal, user) {
+  if (!PORTAL_ACCOUNTS[portal]) return;
+  if (!user) { watched = null; return; }
+  const first = !watched;
+  watched = { portal, user, now: user.id };
+  if (!first) return;
+  addEventListener("storage", (e) => { if (e.key === SESSION_KEY && watched && (e.newValue || "") !== watched.now) checkSession(true); });
+  addEventListener("focus", () => checkSession());
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkSession(); });
+}
+// True when the session is no longer the one this tab was opened with.
+async function checkSession(force = false) {
+  if (!watched) return false;
+  if (sessionCheck) return sessionCheck;
+  if (!force && Date.now() - lastSessionCheck < 3000) return sessionGone;
+  lastSessionCheck = Date.now();
+  sessionCheck = (async () => {
+    let data;
+    try { data = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" }).then((r) => (r.ok ? r.json() : null)); } catch { return sessionGone; } // no signal: carry on as before
+    if (!data) return sessionGone;
+    const now = data.user || null;
+    if ((now?.id || "") === watched.now) return sessionGone;
+    watched.now = now?.id || "";
+    // The person this page was opened for is back: start the page again.
+    if (now && now.id === watched.user.id) { location.reload(); return true; }
+    meCache = now; csrfToken = data.csrfToken || null;
+    sessionGone = true;
+    stopIdleSession();
+    sessionChanged(now);
+    return true;
+  })().finally(() => { sessionCheck = null; });
+  return sessionCheck;
+}
+function sessionChanged(now) {
+  const { portal } = watched;
+  document.querySelectorAll("dialog[open]").forEach((d) => { d.dataset.left = "1"; d.close(); });
+  dispatchEvent(new CustomEvent("tr:session-changed", { detail: { user: now } }));
+  if (now && !PORTAL_ACCOUNTS[portal].includes(accountType(now))) return wrongAccountPage(now, portal, { elsewhere: true });
+  const side = $("#sidenav");
+  if (side) render(side, "");
+  render($("#main"), html`<section class="welcome card" data-session-changed><span class="tk-label">${PORTALS[portal].name}</span>
+    <h1>${now ? "You're signed in as someone else" : "You've been signed out"}</h1>
+    <p class="lead">${now ? `This browser is now signed in as ${now.email}, from another tab or window. What this page showed has been put away, so nobody's details get mixed up.`
+      : "You signed out in another tab or window, or your session ended. What this page showed has been put away to keep your details safe."}</p>
+    <div class="row"><button class="btn btn-primary" data-again>${now ? "Continue" : "Sign in again"}</button></div></section>`);
+  $("[data-again]").addEventListener("click", () => location.reload());
+  pageReady();
 }
 export const roles = (u) => new Set(u?.platform_roles || []);
 
@@ -263,7 +388,8 @@ function idleLogout() {
   if (!idleManaged) return;
   stopIdleSession();
   meCache = null;
-  try { localStorage.setItem(IDLE_LOGOUT_KEY, String(Date.now())); } catch { /* storage may be disabled */ }
+  forgetDeviceData();
+  try { localStorage.setItem(IDLE_LOGOUT_KEY, String(Date.now())); localStorage.setItem(SESSION_KEY, ""); } catch { /* storage may be disabled */ }
   const headers = { "content-type": "application/json" };
   if (csrfToken) headers["x-csrf-token"] = csrfToken;
   fetch("/api/auth/logout", { method: "POST", headers, body: "{}", credentials: "same-origin", keepalive: true })
@@ -441,15 +567,19 @@ export function portalsFor(u) {
 export const homePortal = (u) => ({ staff: "/admin", organiser: "/organisers" })[accountType(u)] || "/account";
 const PORTAL_OF_TYPE = { customer: "customer", organiser: "organiser", staff: "admin" };
 // Signed in, but with an account that belongs to another portal.
-export function wrongAccountPage(u, portal) {
+export function wrongAccountPage(u, portal, { elsewhere = false } = {}) {
   const theirs = PORTALS[PORTAL_OF_TYPE[accountType(u)]];
   const kind = { customer: "a customer account", organiser: "an organiser account", staff: "a TicketRoom staff account" }[accountType(u)];
-  render($("#sidenav"), "");
+  const why = { organiser: "The organiser portal is for organiser accounts: to sell tickets, sign out and create an organiser account with a different email.", customer: "The customer portal is for customer accounts.",
+    scanner: "The gate scanner is for the event team an organiser adds, signed in with their own customer or organiser account.", pos: "The vendor till is for vendor staff and the organiser's own team." }[portal] || "";
+  // Not every portal page has a side menu (the scanner and the till don't).
+  const side = $("#sidenav");
+  if (side) render(side, "");
   render($("#main"), html`<section class="welcome card"><span class="tk-label">${PORTALS[portal].name}</span>
     <h1>This portal isn't for this account</h1>
-    <p class="lead">You're signed in as ${u.email}, ${kind}. ${portal === "organiser" ? "The organiser portal is for organiser accounts: to sell tickets, sign out and create an organiser account with a different email." : portal === "customer" ? "The customer portal is for customer accounts." : ""}</p>
+    <p class="lead">You're signed in as ${u.email}, ${kind}${elsewhere ? ", from another tab or window" : ""}. ${why}</p>
     <div class="row"><a class="btn btn-primary" href="${theirs.href}">Open the ${theirs.name.toLowerCase()}</a><button class="btn btn-ghost" data-out>Sign out</button></div></section>`);
-  $("[data-out]").addEventListener("click", async () => { await post("/api/auth/logout"); location.reload(); });
+  $("[data-out]").addEventListener("click", async () => { await signOut(); location.reload(); });
   pageReady();
 }
 
@@ -527,7 +657,7 @@ export async function header(el, { portal, active, box: signInBox, authContext, 
       const meBtn = $("[data-me]", side), menu = $(".side-menu", side);
       meBtn.addEventListener("click", () => { const open = menu.hidden; menu.hidden = !open; meBtn.setAttribute("aria-expanded", String(open)); });
       document.addEventListener("click", (e) => { if (!e.target.closest(".side-me")) { menu.hidden = true; meBtn.setAttribute("aria-expanded", "false"); } });
-      $$("[data-signout-side]", side).forEach((b) => b.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; }));
+      $$("[data-signout-side]", side).forEach((b) => b.addEventListener("click", async () => { await signOut(); location.href = "/"; }));
       // Typing narrows the menu; Enter opens the first match.
       const q = $("[data-side-search]", side);
       q.addEventListener("input", () => {
@@ -576,7 +706,9 @@ export async function header(el, { portal, active, box: signInBox, authContext, 
   });
   const box = signInBox || (here ? portal : "site");
   $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin", { portal: box, context: authContext, onDone: onSignInDone }));
-  $("[data-signout]", el)?.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; });
+  $("[data-signout]", el)?.addEventListener("click", async () => { await signOut(); location.href = "/"; });
+  // A portal tab keeps an eye on who is signed in (see watchSession).
+  if (here) watchSession(portal, u);
   if (u?.mustChangePassword && !$(".pw-nag")) {
     const nag = document.createElement("div");
     nag.className = "pw-nag";
@@ -1183,6 +1315,8 @@ export function router(routes, fallback) {
   let shown = null; // the section on screen now
   let turn = 0; // only the latest tap gets to draw
   const go = async () => {
+    // Signed out or switched in another tab: this page stays on its notice.
+    if (sessionGone) return;
     // A window left open belongs to the page being left.
     document.querySelectorAll("dialog[open]").forEach((d) => { d.dataset.left = "1"; d.close(); });
     const path = location.hash.replace(/^#/, "") || "/";

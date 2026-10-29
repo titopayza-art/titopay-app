@@ -13,7 +13,10 @@ let EVENT = null, cam = null, nfcAbort = null, mode = "gate", deskTicket = null;
 const VERDICT = {
   admitted: ["ok", "ADMIT"], already_used: ["no", "ALREADY SCANNED"], invalid: ["no", "NOT VALID"], test_ticket: ["no", "TEST TICKET"], wrong_event: ["warn", "WRONG EVENT"],
   revoked: ["no", "REVOKED"], refunded: ["no", "REFUNDED"], resold: ["no", "RESOLD"], listed: ["no", "ON RESALE"], event_not_live: ["warn", "NOT OPEN"], offline: ["warn", "NO CONNECTION"],
+  replaced: ["no", "REPLACED"], refund_pending: ["no", "REFUND IN PROGRESS"],
 };
+// The event's age rule, in the words the gate needs: "18+ only: check ID".
+const ageRule = (a) => (a ? `${/^\d+$/.test(String(a)) ? `${a}+` : a} only: check ID` : "");
 // No answer, or the server too busy to answer: check against the phone's list.
 const unreachable = (err) => err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504;
 
@@ -31,7 +34,7 @@ function start(ev) {
   EVENT = ev;
   offline.forgetOthers(ev.id);
   if (!ev.can_scan && ev.can_sell_tickets) return boxOfficeApp(main, ev.id, { onBack: () => { localStorage.removeItem("tr_scan_event"); pickEvent(); }, backLabel: "Change event" });
-  render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1></div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
+  render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1>${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}</div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
     <div class="tabs mt" role="tablist">${ev.can_scan ? html`<button role="tab" aria-selected="true" data-mode="gate">Gate</button>` : ""}${ev.can_manage_tags ? html`<button role="tab" aria-selected="false" data-mode="desk">Tag desk</button>` : ""}${DESK && ev.can_manage_tags && ev.cashless_enabled ? html`<button role="tab" aria-selected="false" data-topup>Top-up desk</button>` : ""}${ev.can_sell_tickets ? html`<button role="tab" aria-selected="false" data-boxoffice>Box office</button>` : ""}</div>
     <div class="row between"><span id="stats" class="small muted"></span><span class="netbar on" id="net">● Online</span></div>
     <p class="small muted mb-0" id="offline-state" aria-live="polite"></p>
@@ -90,13 +93,13 @@ async function handle(value, fromNfc = false) {
   try {
     const r = await post("/api/staff/scan", body, { timeoutMs: 6000 });
     show(r);
-    if (r.outcome === "admitted" && body.payload) offline.markUsed(body.payload);
+    if (r.outcome === "admitted" && body.payload) offline.markUsed(body.payload).catch(() => {});
     setNet(true);
   } catch (err) {
     if (!unreachable(err)) { verdict("no", "ERROR", err.message); beep(false); }
     else {
       setNet(false);
-      const r = body.payload ? offline.check(body.payload, body.gate) : null;
+      const r = body.payload ? await offline.check(body.payload, body.gate).catch(() => null) : null;
       if (r) show(r);
       else { verdict("warn", "NO CONNECTION", body.payload ? "This ticket was NOT checked. Do not admit until it scans green." : "Tags can't be checked offline. Scan the ticket QR code."); beep(false); }
     }
@@ -108,7 +111,8 @@ function show(r) {
   const [kind, word] = VERDICT[r.outcome] || ["no", r.outcome];
   // A couple or table ticket lets several people in: say so in big letters.
   const big = r.outcome === "admitted" && r.admits > 1 ? `ADMIT ${r.admits}` : r.outcome === "admitted" && r.pass ? "PASS OK" : word;
-  verdict(kind, r.offline ? `${big} (OFFLINE)` : big, [r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : ""].filter(Boolean).join(" · "));
+  verdict(kind, r.offline ? `${big} (OFFLINE)` : big, [r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
+    ["admitted", "already_used"].includes(r.outcome) ? ageRule(r.ageRestriction) : ""].filter(Boolean).join(" · "));
   beep(r.outcome === "admitted");
 }
 
@@ -153,6 +157,8 @@ async function loadStats() {
 }
 
 window.addEventListener("offline", () => setNet(false));
+// Signed out (or signed in as someone else) in another tab: stop the camera and the list refresh.
+window.addEventListener("tr:session-changed", () => { cam?.stop(); nfcAbort?.abort(); offline.stop(); EVENT = null; });
 window.addEventListener("online", () => setNet(true));
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});

@@ -730,7 +730,7 @@ async function orderPage(ref) {
   const q = k ? `?k=${encodeURIComponent(k)}` : "";
   let tries = 0;
   const draw = async () => {
-    const { order: o, items, tickets, payment, guest, email } = await get(`/api/public/orders/${encodeURIComponent(ref)}${q}`);
+    const { order: o, items, tickets, payment, guest, email, ticketsHidden, ticketCount } = await get(`/api/public/orders/${encodeURIComponent(ref)}${q}`);
     const wallet = payment?.method === "titopay_wallet";
     document.title = `Order ${o.reference} | TicketRoom`;
     const pending = o.status === "pending_payment";
@@ -738,7 +738,8 @@ async function orderPage(ref) {
     render(main, html`<div class="wrap section stack-lg"><div class="card pad-lg stack" aria-live="polite">
       <div class="row between"><span class="muted small">Order ${o.reference}</span><span class="row">${o.test ? html`<span class="badge warn">Test</span>` : ""}${badge(o.status)}</span></div>
       ${o.test ? html`<p class="callout warn mb-0"><strong>Test order.</strong> This was paid while TicketRoom payments were in test mode. No real money moved, and these tickets will not open the gate.</p>` : ""}
-      ${paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you as well.</p>
+      ${paid && ticketsHidden ? html`<h1>Booking confirmed</h1><p>${ticketCount} ticket${ticketCount === 1 ? " is" : "s are"} booked for <strong>${o.event.title}</strong> and sent to the email address on the order. To see them, open the link in that confirmation email, or sign in with that email address.</p>`
+        : paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you as well.</p>
           ${guest ? html`<div class="callout"><strong>Keep your tickets in one place.</strong> Create a free account with <strong>${email}</strong> and confirm it: these tickets, and any you buy later, will be waiting there. You can then pass a ticket to a friend or change the name on it.
             <div class="row mt"><button class="btn btn-primary btn-sm" data-make-account>Create my account</button></div></div>`
           : html`<div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>`}

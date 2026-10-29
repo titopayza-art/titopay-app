@@ -101,7 +101,7 @@ const stopMock = () => { if (mock && mock.exitCode === null) mock.kill(); };
       tx(fn() => refund_create($o, tm_admin(), [$t['id']], true, 'customer', 'Money test'));
       tm_out(['list' => tm_err(fn() => tm_list($o)), 'helper' => function_exists('ticket_has_open_refund') ? ticket_has_open_refund($t['id']) : null,
         'other' => function_exists('ticket_has_open_refund') ? ticket_has_open_refund(tm_tickets(tm_buy($ev, 1)['id'])[0]['id']) : null]);`);
-    check(r.list === "refund_pending" && r.helper === true && r.other === false, "M3 a ticket with an open refund cannot be listed", js(r));
+    check(r.list === "refund_in_progress" && r.helper === true && r.other === false, "M3 a ticket with an open refund cannot be listed", js(r));
   });
 
   // --------------------------------------- M3, M6, M7: cancelling an event

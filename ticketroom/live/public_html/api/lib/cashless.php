@@ -122,14 +122,17 @@ function tag_normalise(?string $input): ?array
 function tag_hash(array $n): string { return hash_hmac('sha256', "tag|{$n['kind']}:{$n['value']}", hex2bin(key_hex('data'))); }
 function tag_activation_hash(string $tagId, string $code): string { return hash_hmac('sha256', "tagact|$tagId|" . strtoupper($code), hex2bin(key_hex('data'))); }
 function tag_display(string $code): string { return substr($code, 0, 4) . '-' . substr($code, 4); }
-function tag_resolve(?string $input): ?array
+// $printed = false where the band itself must be there (the gate, vendor
+// tills): the code printed on a band can be read off it by anyone nearby,
+// so there only the chip or the QR token is accepted.
+function tag_resolve(?string $input, bool $printed = true): ?array
 {
     $n = tag_normalise($input);
     if (!$n) return null;
-    if ($n['kind'] === 'code') return row('SELECT * FROM tags WHERE display_code = ?', [$n['value']]);
+    if ($n['kind'] === 'code') return $printed ? row('SELECT * FROM tags WHERE display_code = ?', [$n['value']]) : null;
     $t = row('SELECT * FROM tags WHERE token_hash = ?', [tag_hash($n)]);
     // Eight characters typed without the dash can look like a short chip UID.
-    if (!$t && !empty($n['maybeCode'])) $t = row('SELECT * FROM tags WHERE display_code = ?', [$n['value']]);
+    if (!$t && $printed && !empty($n['maybeCode'])) $t = row('SELECT * FROM tags WHERE display_code = ?', [$n['value']]);
     return $t;
 }
 function tag_log(string $tagId, string $action, ?array $actor, array $details = []): void
@@ -761,7 +764,7 @@ function pos_charge(array $u, array $t, array $b, ?array $qrIntent = null): arra
             if (!$eligible || account_type($u) !== 'customer') return $decline('account_inactive', ['user_id' => $u['id']]);
             $tag = ['user_id' => $u['id']];
         } else {
-            $tag = tag_resolve($b['tagInput']);
+            $tag = tag_resolve($b['tagInput'], false);
             if (!$tag) return $decline('tag_unknown');
             if ($tag['status'] !== 'active') return $decline('tag_' . $tag['status'], ['id' => $tag['id']]);
             if ($tag['event_id'] !== $t['event_id']) return $decline('tag_wrong_event', ['id' => $tag['id']]);

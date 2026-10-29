@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog } from "/assets/core.js?build=2026-10-22-phases";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 
@@ -38,7 +38,7 @@ async function apply() {
     return render(main, html`${head("This is the organiser portal")}
       <div class="card stack"><p class="mb-0">You're signed in as <strong>${u.email}</strong>, a TicketRoom staff account. Staff work in the admin portal; they don't sign up as organisers.</p>
         <p class="mb-0">To review organisers, open <strong>Organiser accounts</strong> in the admin portal. To try the organiser portal yourself, sign out and create a separate account with a different email.</p>
-        <div class="row"><a class="btn btn-primary" href="/admin#/organisers">Go to Organiser accounts</a><button class="btn btn-ghost" data-out>Sign out</button></div></div>`), $("[data-out]").addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/signin"; });
+        <div class="row"><a class="btn btn-primary" href="/admin#/organisers">Go to Organiser accounts</a><button class="btn btn-ghost" data-out>Sign out</button></div></div>`), $("[data-out]").addEventListener("click", async () => { await signOut(); location.href = "/signin"; });
   }
   render(main, html`${head("Create your organiser account", "Tell us who you are. TicketRoom reviews every organiser before their events go live.")}
     <div class="card"><form class="stack" id="ap">
@@ -192,7 +192,8 @@ function lineupText(l) {
   if (typeof l === "string") { try { list = JSON.parse(l || "[]"); } catch { list = []; } }
   return (Array.isArray(list) ? list : []).map((a) => (a.time ? `${a.time} ` : "") + a.name).join("\n");
 }
-function toIso(v) { return v ? new Date(v).toISOString() : undefined; }
+// Date boxes are South African time, whatever zone this computer is in.
+const toIso = fromLocalInput;
 function eventPayload(v) {
   const ageGroups = Object.keys(AGE_GROUPS).filter((k) => v[`ag_${k}`]);
   for (const k of Object.keys(AGE_GROUPS)) delete v[`ag_${k}`];
@@ -481,7 +482,7 @@ async function promosTab(el, d, reload) {
     if (value === null || (v.minimumSubtotal && minimumSubtotalCents === null)) throw Object.assign(new Error("Check the discount and minimum spend."), { details: { value: "Enter a valid amount.", minimumSubtotal: "Enter a valid amount or leave blank." } });
     await post(`${base()}/events/${d.event.id}/promo-codes`, { code: v.code, codeType: v.codeType, kind: v.kind, value,
       maxUses: v.maxUses ? Number(v.maxUses) : undefined, maxUsesPerEmail: v.maxUsesPerEmail ? Number(v.maxUsesPerEmail) : undefined,
-      minimumSubtotalCents, validFrom: v.validFrom ? new Date(v.validFrom).toISOString() : undefined, validTo: v.validTo ? new Date(v.validTo).toISOString() : undefined });
+      minimumSubtotalCents, validFrom: toIso(v.validFrom), validTo: toIso(v.validTo) });
     toast(`${v.codeType === "voucher" ? "Voucher" : "Promo code"} created.`, "good"); reload();
   });
   $("#pct")?.addEventListener("change", (e) => { const voucher = e.target.value === "voucher"; $("#pc").minLength = voucher ? 14 : 3; $("#pc").placeholder = voucher ? "Generate a secure code" : "EARLY10"; if (voucher) { if (!$("#pm").value) $("#pm").value = "1"; if (!$("#pme").value) $("#pme").value = "1"; } });
@@ -822,7 +823,7 @@ function campaignDialog(c, evs, done, opts = {}) {
     });
     $("[data-sched]", dlg).addEventListener("click", async () => {
       const at = $("#sat", dlg).value; if (!at) return toast("Pick a date and time.", "bad");
-      try { await post(`${base()}/campaigns/${current.id}/send`, { scheduledAt: new Date(at).toISOString() }); toast("Scheduled.", "good"); dlg.close(); } catch (err) { toast(err.message, "bad"); }
+      try { await post(`${base()}/campaigns/${current.id}/send`, { scheduledAt: toIso(at) }); toast("Scheduled.", "good"); dlg.close(); } catch (err) { toast(err.message, "bad"); }
     });
   };
   onSubmit(form, async (v) => {
