@@ -292,7 +292,16 @@ async function eventWorkspace({ id, tab = "" }) {
   $("[data-submit]")?.addEventListener("click", async () => {
     const ok = await confirmDialog("Publish this event?", "TicketRoom checks every new event before it goes live, usually within one business day. You'll get an email the moment it is published. Preview it first if you haven't yet.", { confirm: "Publish" });
     if (!ok) return;
-    try { await post(`${base()}/events/${id}/submit`); toast("Sent for publishing. We'll email you when it's live.", "good"); eventWorkspace({ id, tab }); } catch (err) { toast(err.message, "bad"); }
+    const send = () => post(`${base()}/events/${id}/submit`);
+    try {
+      try { await send(); }
+      catch (err) {
+        if (err.code !== "consent_required" || !err.details?.canConsent) throw err;
+        if (!(await vnConsentDialog(err.details.consent))) return;
+        await send();
+      }
+      toast("Sent for publishing. We'll email you when it's live.", "good"); eventWorkspace({ id, tab });
+    } catch (err) { toast(err.message, "bad"); }
   });
   $("[data-cancel]")?.addEventListener("click", async () => {
     if (e.cancellation_requested_at) return;
@@ -1026,7 +1035,7 @@ async function finance() {
 // is. Each item says why. Documents are private: only owners and TicketRoom
 // staff can open them, and every view is logged here.
 const KYC_TYPES = { "application/pdf": "PDF", "image/jpeg": "JPG", "image/png": "PNG" };
-const verifTodo = () => (VERIF ? VERIF.requirements.filter((i) => i.required && ["missing", "rejected"].includes(i.status)).length : 0);
+const verifTodo = () => (VERIF ? VERIF.requirements.filter((i) => i.required && ["missing", "rejected", "not_started"].includes(i.status)).length : 0);
 const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 function verifBanner() {
   if (!VERIF || VERIF.overall === "complete") return "";
@@ -1049,7 +1058,8 @@ function kycItem(it, own, eventId = "") {
   return html`<li class="kyc-item" data-req="${it.key}"><div class="grow kyc-body">
       <div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${!it.required && !it.recommended && it.key !== "phone" ? html`<span class="badge plain">optional</span>` : ""}</div>
       <div class="small muted">${it.reason}</div>
-      ${it.status === "rejected" ? html`<div class="callout bad small mb-0">Not accepted: ${it.rejectReason || "no reason given"}. Please upload a new copy.</div>` : ""}
+      ${it.status === "rejected" ? (it.kind === "echeck" ? html`<div class="callout bad small mb-0">Not confirmed: ${it.rejectReason || "no reason given"} Fix the details above and the check runs again.</div>` : html`<div class="callout bad small mb-0">Not accepted: ${it.rejectReason || "no reason given"}. Please upload a new copy.</div>`) : ""}
+      ${it.kind === "echeck" && it.detail && it.status !== "rejected" ? html`<div class="small">${it.detail}${it.check?.test ? html` <span class="badge warn">TEST</span>` : ""}</div>` : ""}
       ${it.signed ? html`<div class="tiny muted">Signed by ${it.signed.name} on ${fmtDateTime(it.signed.at)}.</div>` : ""}
       ${d && !d.deleted ? html`<div class="tiny muted">${KYC_TYPES[d.mimeType] || "File"}, ${kb(d.sizeBytes)}, uploaded ${fmtDateTime(d.uploadedAt)}${d.reviewedAt && d.status !== "submitted" ? ` · checked ${fmtDate(d.reviewedAt)}` : ""}${own ? html` · <a href="/api/verification/documents/${d.id}/file" target="_blank" rel="noopener">View</a>` : ""}</div>` : ""}
       ${kycProvider(d)}</div>${act ? html`<div>${act}</div>` : ""}</li>`;
@@ -1081,10 +1091,29 @@ function kycTermsDialog(done) {
     <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Sign the terms</button></div></form>`);
   onSubmit($("#kt", d), async (v) => { await post(`${base()}/verification/terms`, { fullName: v.fullName, accept: !!v.accept }); d.close(); toast("Terms signed.", "good"); await done(); });
 }
+// POPIA consent for the electronic checks (VerifyNow). Asked once; the exact
+// wording and its version are stored with the time.
+function vnConsentDialog(consent) {
+  return new Promise((resolve) => {
+    let given = false;
+    const d = dialog("Permission to check your details", html`<form class="stack" id="vnc">
+      <div class="small">${consent.text.split("\n").map((l) => (l.startsWith("- ") ? html`<div>• ${l.slice(2)}</div>` : html`<p class="mb-0">${l}</p>`))}</div>
+      <label class="check"><input type="checkbox" name="accept" required><span>I agree that TicketRoom may check these details with VerifyNow, for myself and for the organisation I act for.</span></label>
+      <div class="row end"><button type="button" class="btn btn-ghost" data-close>Not now</button><button class="btn btn-primary">Give permission</button></div></form>`, { onClose: () => resolve(given) });
+    onSubmit($("#vnc", d), async (v) => { await post(`${base()}/verification/consent`, { accept: !!v.accept, version: consent.version }); given = true; d.close(); toast("Thank you. We'll check your details in the background.", "good"); });
+  });
+}
 function kycWire(root, done) {
   $$("[data-up]", root).forEach((i) => i.addEventListener("change", () => kycUpload(i, done)));
   $("[data-terms]", root)?.addEventListener("click", () => kycTermsDialog(done));
   $("[data-phone]", root)?.addEventListener("click", async () => phoneVerifyDialog((await me())?.phone, done));
+  $("[data-vn-run]", root)?.addEventListener("click", async () => {
+    try {
+      if (!VERIF.electronic.consent.given && !(await vnConsentDialog(VERIF.electronic.consent))) return;
+      const r = await post(`${base()}/verification/checks/run`);
+      toast(r.queued ? "Checking your details. This usually takes a minute." : "Nothing to check right now.", "good"); await done();
+    } catch (err) { toast(err.message, "bad"); }
+  });
 }
 function gateRow(ok, title, text) {
   return html`<li class="${ok ? "ok" : "no"}"><span class="tick" aria-hidden="true">${ok ? "✓" : "✕"}</span><span><strong>${title}</strong><br><span class="small muted">${text}</span></span><span class="sr-only">${ok ? " (allowed)" : " (blocked)"}</span></li>`;
@@ -1110,12 +1139,19 @@ async function verification() {
         : ph?.status === "missing" ? gateRow(false, "Mobile number", "Confirm your mobile number with a code we SMS you. Events go live once it is confirmed.")
         : gateRow(true, "Mobile number", "Phone confirmation switches on when TicketRoom's SMS is set up. It does not hold anything up."); })()}
     </ol></section>
+    ${v.electronic.on ? html`<section class="card mt"><div class="card-title"><h2>Electronic checks</h2>${v.electronic.test ? html`<span class="badge warn">TEST</span>` : ""}</div>
+      <p class="small">We check your details with VerifyNow, a South African verification service, so most organisers are verified within minutes instead of waiting for a person. ${v.electronic.test ? html`<strong>TicketRoom is testing this:</strong> results are made up and nothing real is checked.` : ""}</p>
+      <p class="small mb-0">${v.electronic.consent.given ? `You gave permission on ${fmtDateTime(v.electronic.consent.at)}.` : "We ask your permission first (POPIA). We ask once, when you submit your first event or press the button below."}</p>
+      ${own && (v.electronic.due || !v.electronic.consent.given) ? html`<div class="row mt"><button class="btn btn-primary btn-sm" data-vn-run>Run checks now</button></div>` : ""}</section>` : ""}
     ${own ? html`<section class="card mt"><h2>About you</h2><form class="stack" id="kp">
       <fieldset class="field"><legend class="label">Who is selling tickets?</legend><div class="row">${Object.entries(v.entityNames).map(([k, l]) => html`<label class="check"><input type="radio" name="entityType" value="${k}" ${raw(p.entityType === k ? "checked" : "")}><span>${l}</span></label>`)}</div></fieldset>
       <div class="grid-2"><div class="field"><label for="kp-nat" data-who>Identity document</label><select id="kp-nat" name="nationality"><option value="sa" ${raw(p.nationality === "sa" ? "selected" : "")}>South African ID or Smart ID (citizen or permanent resident)</option><option value="foreign" ${raw(p.nationality === "foreign" ? "selected" : "")}>Passport (foreign national)</option></select></div>
         <div class="field"><label for="kp-name">Full name as on the ID</label><input id="kp-name" name="legalName" required maxlength="120" value="${p.legalName || ""}" autocomplete="off"></div></div>
       <div class="grid-2"><div class="field"><label for="kp-id">ID or passport number</label><input id="kp-id" name="idNumber" inputmode="text" maxlength="20" autocomplete="off" placeholder="${p.hasIdNumber ? `Saved (${p.idNumberMasked}). Leave blank to keep it.` : ""}"><span class="hint">Checked on this page (date of birth, citizenship and check digit) and stored encrypted.</span></div>
         <div class="field" data-org><label for="kp-reg">Registration number</label><input id="kp-reg" name="registrationNumber" maxlength="20" value="${p.registrationNumber || ""}" placeholder="2019/123456/07 or 123-456 NPO"></div></div>
+      ${v.electronic.on ? html`<div class="grid-2"><div class="field"><label for="kp-sur">Surname as on the ID</label><input id="kp-sur" name="surname" maxlength="80" value="${p.surname || ""}" autocomplete="off"><span class="hint">So the identity and bank checks compare the right part of your name.</span></div>
+        <div class="field" data-org><label for="kp-co">Registered name</label><input id="kp-co" name="companyName" maxlength="160" value="${p.companyName || ""}" placeholder="As registered with CIPC or the NPO directorate"></div></div>
+        <div class="field"><label for="kp-acct">Payout account type</label><select id="kp-acct" name="bankAccountType"><option value="">Choose</option>${Object.entries(v.electronic.bankTypes).map(([k, l]) => html`<option value="${k}" ${raw(p.bankAccountType === k ? "selected" : "")}>${l}</option>`)}</select><span class="hint">For the bank account check before payouts. Bank details are under <a href="#/settings">Settings</a>.</span></div>` : ""}
       <label class="check" data-company><input type="checkbox" name="repIsDirector" ${raw(p.repIsDirector ? "checked" : "")}><span>I am a director of the company</span></label>
       <label class="check"><input type="checkbox" name="plansPaid" ${raw(p.plansPaid || v.sellsPaid ? "checked" : "")} ${raw(v.sellsPaid && !p.plansPaid ? "disabled" : "")}><span>We will sell paid tickets<br><span class="small muted">Paid sellers also need a bank confirmation letter${p.entityType !== "npo" ? " and proof of address" : ""} before the first payout.</span></span></label>
       <div><button class="btn btn-dark">Save</button></div></form></section>` : html`<p class="callout small mt">Only the organisation's owners can upload documents and sign the terms. You can see what is still needed.</p>`}
@@ -1148,7 +1184,8 @@ async function verification() {
     onSubmit(f, async (x) => {
       const t = x.entityType || "individual";
       await put(`${base()}/verification/profile`, { entityType: t, nationality: x.nationality, legalName: x.legalName, idNumber: x.idNumber || undefined,
-        registrationNumber: t === "individual" ? undefined : x.registrationNumber, repIsDirector: t === "company" ? !!x.repIsDirector : true, plansPaid: !!x.plansPaid });
+        registrationNumber: t === "individual" ? undefined : x.registrationNumber, repIsDirector: t === "company" ? !!x.repIsDirector : true, plansPaid: !!x.plansPaid,
+        surname: x.surname || undefined, companyName: t === "individual" ? undefined : x.companyName || undefined, bankAccountType: x.bankAccountType || undefined });
       toast("Saved.", "good"); verification();
     });
   }

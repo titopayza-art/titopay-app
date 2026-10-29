@@ -33,10 +33,17 @@ route('PUT', '/api/organiser/:orgId/verification/profile', function ($a) {
         'legalName' => R::str(['min' => 2, 'max' => 120]), 'idNumber' => R::str(['optional' => true, 'max' => 20]),
         'registrationNumber' => R::str(['optional' => true, 'max' => 20]), 'repIsDirector' => org_bool(['optional' => true, 'fallback' => true]),
         'plansPaid' => org_bool(['optional' => true, 'fallback' => false]),
+        // For the VerifyNow checks: the registered name, the surname and the payout account type.
+        'companyName' => R::str(['optional' => true, 'max' => 160]), 'surname' => R::str(['optional' => true, 'max' => 80]),
+        'bankAccountType' => R::oneOf(array_keys(VN_BANK_TYPES), ['optional' => true]),
     ]);
     $cur = kyc_profile($a['orgId']);
     $fields = ['entity_type' => $b['entityType'], 'nationality' => $b['nationality'], 'legal_name' => $b['legalName'],
         'rep_is_director' => $b['entityType'] === 'company' ? ($b['repIsDirector'] ? 1 : 0) : 1, 'plans_paid' => $b['plansPaid'] ? 1 : 0];
+    foreach (['companyName' => 'company_name', 'surname' => 'surname', 'bankAccountType' => 'bank_account_type'] as $in => $col) {
+        if (array_key_exists($in, $b)) $fields[$col] = trim((string) $b[$in]) !== '' ? trim((string) $b[$in]) : null;
+    }
+    if ($b['entityType'] === 'individual') $fields['company_name'] = null;
     $newId = false;
     if (($b['idNumber'] ?? '') !== '') {
         $c = $b['nationality'] === 'foreign' ? passport_check($b['idNumber']) : sa_id_check($b['idNumber']);
@@ -74,7 +81,27 @@ route('PUT', '/api/organiser/:orgId/verification/profile', function ($a) {
     });
     // An ID document waiting for a number can be checked now.
     if ($newId) foreach (rows("SELECT * FROM verification_documents WHERE organiser_id = ? AND event_id IS NULL AND requirement IN ('id_document','rep_id') AND status = 'submitted'", [$a['orgId']]) as $d) kyc_run_identity($d);
+    // Changed details are checked again (in the background) once consent is on file.
+    kyc_vn_start($a['orgId'], $u['id'], false);
     return ['verification' => kyc_view($a['orgId'], true) + ['canManage' => true]];
+});
+
+// POPIA consent for the VerifyNow checks, asked once per consent text version.
+route('POST', '/api/organiser/:orgId/verification/consent', function ($a) {
+    [$u] = kyc_owner($a['orgId']);
+    $b = check(body(), ['accept' => R::bool(), 'version' => R::str(['max' => 60])]);
+    if (!$b['accept']) throw invalid(['accept' => 'Tick the box to give permission.']);
+    if ($b['version'] !== VN_CONSENT_VERSION) throw conflict('The wording changed. Read it again, then give permission.', 'consent_changed', ['consent' => ['version' => VN_CONSENT_VERSION, 'text' => VN_CONSENT_TEXT]]);
+    kyc_vn_give_consent($a['orgId'], $u, (string) $u['fullName']);
+    return ['verification' => kyc_view($a['orgId'], true) + ['canManage' => true]];
+});
+// Starts the checks that are due now (they run in the background).
+route('POST', '/api/organiser/:orgId/verification/checks/run', function ($a) {
+    [$u] = kyc_owner($a['orgId']);
+    limit('kycrun', 20, 3600, $u['id']);
+    if (!kyc_vn_on()) throw conflict('Electronic checks are not switched on.', 'verifynow_off');
+    $queued = kyc_vn_start($a['orgId'], $u['id'], true);
+    return ['queued' => count($queued), 'verification' => kyc_view($a['orgId'], true) + ['canManage' => true]];
 });
 
 // Signing the organiser terms: the typed full name, the time, the account and
@@ -196,7 +223,11 @@ route('GET', '/api/admin/verification', function () {
         $d['provider_label'] = $d['provider'] ? kyc_provider_label($d['provider']) : null;
     }
     unset($d);
-    return ['documents' => $list, 'provider' => ['name' => kyc_provider(), 'label' => kyc_provider_label(kyc_provider()), 'simulated' => kyc_provider() === 'sandbox', 'rule' => kyc_provider() === 'sandbox' ? KYC_SANDBOX_RULE : null],
+    // Electronic checks that need a person: review, failed or error, not decided yet.
+    $checks = array_map(fn($c) => kyc_vn_check_view($c, true) + ['organiserId' => $c['organiser_id'], 'organiserName' => $c['organiser_name'], 'organiserRef' => $c['organiser_ref']],
+        rows("SELECT k.*, o.name AS organiser_name, o.ref AS organiser_ref FROM kyc_checks k JOIN organisers o ON o.id = k.organiser_id
+               WHERE k.status IN ('review','failed','error') AND k.override IS NULL ORDER BY k.completed_at LIMIT 200"));
+    return ['documents' => $list, 'checks' => $checks, 'verifynow' => ['on' => kyc_vn_on(), 'test' => kyc_vn_mode() === 'sandbox'], 'provider' => ['name' => kyc_provider(), 'label' => kyc_provider_label(kyc_provider()), 'simulated' => kyc_provider() === 'sandbox', 'rule' => kyc_provider() === 'sandbox' ? KYC_SANDBOX_RULE : null],
         'settings' => kyc_settings(), 'counts' => ['submitted' => (int) val("SELECT count(*) FROM verification_documents WHERE status = 'submitted'")]];
 });
 route('GET', '/api/admin/organisers/:id/verification', function ($a) {
@@ -204,7 +235,7 @@ route('GET', '/api/admin/organisers/:id/verification', function ($a) {
     $org = row('SELECT id, ref, name, status, contact_email, contact_phone, created_at, approved_at, bank_name, bank_account_holder, bank_account_last4, bank_branch_code FROM organisers WHERE id = ?', [$a['id']]);
     if (!$org) throw not_found('Organiser not found.');
     $owners = rows("SELECT u.full_name, u.email, u.phone, u.email_verified_at IS NOT NULL AS email_verified FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = ? AND m.role = 'owner'", [$org['id']]);
-    return ['organiser' => $org, 'owners' => $owners, 'verification' => kyc_view($org['id'], true)];
+    return ['organiser' => $org, 'owners' => $owners, 'verification' => kyc_view($org['id'], true), 'checks' => kyc_vn_checks_view($org['id'])];
 });
 route('POST', '/api/admin/verification/documents/:id/decide', function ($a) {
     $u = adm_any();
@@ -216,6 +247,22 @@ route('POST', '/api/admin/verification/documents/:id/decide', function ($a) {
     if (!$b['approve'] && empty($b['reason'])) throw bad('Tell the organiser why, so they can fix it.', ['reason' => 'Required when rejecting.']);
     $r = kyc_decide($d['id'], $b['approve'], $b['approve'] ? null : $b['reason'], $u);
     return ['document' => kyc_doc_view($r)];
+});
+// VerifyNow checks: run one again (a new request), or accept / reject a result.
+route('POST', '/api/admin/verification/checks/:id/rerun', function ($a) {
+    $u = adm_any();
+    if (!has_role($u, ...KYC_REVIEW_ROLES)) throw forbidden('Your role cannot run checks.');
+    limit('kycrerun', 60, 3600, $u['id']);
+    return ['check' => kyc_vn_check_view(kyc_vn_rerun($a['id'], $u), true)];
+});
+route('POST', '/api/admin/verification/checks/:id/decide', function ($a) {
+    $u = adm_any();
+    $c = row('SELECT check_type FROM kyc_checks WHERE id = ?', [$a['id']]);
+    if (!$c) throw not_found('Check not found.');
+    if (!has_role($u, ...KYC_REVIEW_ROLES) && !($c['check_type'] === 'bank' && has_role($u, 'finance'))) throw forbidden('Your role cannot decide this check.');
+    $b = check(body(), ['accept' => R::bool(), 'note' => R::str(['optional' => true, 'max' => 400])]);
+    if (!$b['accept'] && empty($b['note'])) throw bad('Tell the organiser why, so they can fix it.', ['note' => 'Required when rejecting.']);
+    return ['check' => kyc_vn_check_view(kyc_vn_decide($a['id'], $b['accept'], $b['note'] ?? null, $u), true)];
 });
 route('POST', '/api/admin/organisers/:id/verification/risk', function ($a) {
     $u = adm_admin();

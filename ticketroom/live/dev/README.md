@@ -18,6 +18,8 @@ changes `live/public_html`.
 | `tests/ops.js <dir> [port]` | Operations and security regressions (O* and S* in TRIAGE.md): email lease and retries, backups, keys and data folder, cron, health, rate limits, uploads, emails. Uses SMTP stand-ins on 127.0.0.1:8800-8802. |
 | `run-all.sh <port> <dir>` | Serves a fresh instance, runs `smoke.js` (TR_STRICT=0 by default) and every suite in `tests/`, then stops the server it started. |
 | `tests/tickets.js <dir> [port]` | Regression tests for the ticket, checkout and gate fixes (T1-T14, P1 (a) and (b)). `TR_ONLY=T6` runs the tests whose name starts with that. |
+| `tests/verifynow.js <dir> [port]` | VerifyNow electronic organiser checks (KYC/KYB): Integrations card, POPIA consent, background checks with pass / review / fail, admin review, payouts gated by the bank check, webhook signatures, idempotent retries, 429, no credits, nothing secret in logs. Starts `mock-verifynow.js` on 8805 (`TR_VN_MOCK_PORT`) and points the instance at it through `config.php` (`verifynow.baseUrl`, test-only). |
+| `mock-verifynow.js <port> <key>` | Local stand-in for the VerifyNow API with its documented sandbox behaviour (inputs ending 90 / 91, 2-second repeat 429, scenario header, signed bank webhooks, job polling, idempotency, credits). Tests only. |
 
 ## Run it
 

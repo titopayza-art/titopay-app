@@ -519,6 +519,8 @@ export const badge = (status) => {
     failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain",
     // organiser verification
     missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn",
+    // electronic checks (VerifyNow)
+    not_started: "plain", passed: "good", review: "warn", error: "bad", running: "warn", superseded: "plain",
     // Promote
     posted: "good", ended: "plain",
     // Waitlists and TicketRoom Exchange

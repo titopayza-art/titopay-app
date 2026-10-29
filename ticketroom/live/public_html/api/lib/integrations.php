@@ -76,6 +76,18 @@ const INTEGRATION_FIELDS = [
         'httpUrl' => ['label' => 'Check-identity web address', 'secret' => true, 'plain' => true, 'provider' => 'http', 'hint' => 'Starting with https://. TicketRoom posts JSON (reference, documentType, idNumber, fullName, dateOfBirth, country) and expects {"status": "verified" | "declined" | "refer"}.'],
         'httpAuth' => ['label' => 'Authorization header', 'secret' => true, 'provider' => 'http', 'hint' => 'Optional. The whole value, for example: Bearer 1a2b3c…'],
     ],
+    // VerifyNow electronic checks on organisers (KYC/KYB). See lib/verifynow.php.
+    // The SA ID check with Home Affairs always runs when this is on.
+    'verifynow' => [
+        'enabled' => ['label' => 'Electronic checks with VerifyNow', 'options' => ['off' => 'Off (documents are checked by TicketRoom staff only)', 'on' => 'On: check organisers with VerifyNow']],
+        'mode' => ['label' => 'Mode', 'options' => ['sandbox' => 'Sandbox: TEST results, free, nothing real is checked', 'production' => 'Production: real Home Affairs, CIPC and bank checks (uses credits)']],
+        'apiKey' => ['label' => 'VerifyNow API key', 'secret' => true, 'hint' => 'Starts with vn_live_. VerifyNow portal → API keys. Production refuses anything else.'],
+        'webhookSecret' => ['label' => 'Bank check notifications', 'secret' => true, 'auto' => true, 'hint' => 'Nothing to enter: TicketRoom makes this signing secret when you save, and sends it with each bank check.'],
+        'checkAml' => ['label' => 'Sanctions and PEP screening (person and company)', 'options' => ['on' => 'On', 'off' => 'Off']],
+        'checkCipc' => ['label' => 'CIPC company match (registered companies)', 'options' => ['on' => 'On', 'off' => 'Off']],
+        'checkBank' => ['label' => 'Bank account check (before payouts)', 'options' => ['on' => 'On: replaces the bank confirmation letter', 'off' => 'Off: ask for a bank confirmation letter']],
+        'checkFace' => ['label' => 'Face match (selfie against Home Affairs photo)', 'options' => ['off' => 'Off', 'on' => 'On: organisers also upload a selfie']],
+    ],
     // Sign in with Google, for customer and organiser accounts (never staff).
     'google' => [
         'enabled' => ['label' => 'Sign in with Google', 'options' => ['off' => 'Off', 'on' => 'On: customers and organisers can continue with Google']],
@@ -186,6 +198,9 @@ function http_request(string $method, string $url, array $headers = [], ?string 
         // rebinding to a private service between validation and connection.
         if ($pinned) curl_setopt($c, CURLOPT_RESOLVE, ["{$pinned[0]}:{$pinned[1]}:{$pinned[2]}"]);
         if ($body !== null) curl_setopt($c, CURLOPT_POSTFIELDS, $body);
+        // Response headers (lower-case names), for Retry-After and the like.
+        $rh = [];
+        curl_setopt($c, CURLOPT_HEADERFUNCTION, function ($ch, $line) use (&$rh) { $p = strpos($line, ':'); if ($p !== false) $rh[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1)); return strlen($line); });
         $text = curl_exec($c);
         $status = (int) curl_getinfo($c, CURLINFO_HTTP_CODE);
         $err = curl_error($c);
@@ -197,8 +212,10 @@ function http_request(string $method, string $url, array $headers = [], ?string 
         $text = @file_get_contents($url, false, $ctx);
         if ($text === false) throw new RuntimeException('Could not reach ' . parse_url($url, PHP_URL_HOST));
         $status = preg_match('#HTTP/\S+ (\d{3})#', $http_response_header[0] ?? '', $m) ? (int) $m[1] : 0;
+        $rh = [];
+        foreach (array_slice($http_response_header ?? [], 1) as $line) { $p = strpos($line, ':'); if ($p !== false) $rh[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1)); }
     }
-    return ['status' => $status, 'text' => (string) $text, 'json' => json_decode((string) $text, true)];
+    return ['status' => $status, 'text' => (string) $text, 'json' => json_decode((string) $text, true), 'headers' => $rh];
 }
 
 // ============================================================== SMS

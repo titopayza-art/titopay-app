@@ -643,6 +643,7 @@ route('PUT', '/api/organiser/:orgId/bank', function ($a) {
         [$b['bankName'], $b['accountHolder'], encrypt_str($b['accountNumber']), $last4, $b['branchCode'], $a['orgId']]);
     // Changing where money goes is high-risk, so it is audited.
     audit('organiser.bank_changed', ['actor' => $u, 'entityType' => 'organiser', 'entityId' => $a['orgId'], 'organiserId' => $a['orgId'], 'details' => ['last4' => $last4]]);
+    kyc_vn_start($a['orgId'], $u['id'], false); // a new account is checked again before payouts
     return ['organiser' => org_view(row('SELECT * FROM organisers WHERE id = ?', [$a['orgId']]), $role)];
 });
 
@@ -924,6 +925,9 @@ route('POST', '/api/organiser/:orgId/events/:eventId/submit', function ($a) {
     // FICA: the organiser's ID, signed terms (and the event's own permits when
     // its risk calls for them) must be uploaded before it goes to review.
     kyc_require_for_event($event, 'submitted');
+    // VerifyNow checks that are due (never run, or details changed) are queued
+    // to run in the background; the first time asks for POPIA consent (409 consent_required).
+    kyc_vn_start($event['organiser_id'], $u['id'], true);
     q("UPDATE events SET status = 'pending_approval', updated_at = ? WHERE id = ?", [now_iso(), $event['id']]);
     audit('event.submitted', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id']]);
     return ['status' => 'pending_approval'];

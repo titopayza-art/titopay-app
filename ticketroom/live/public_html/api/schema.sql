@@ -1355,7 +1355,10 @@ CREATE TABLE IF NOT EXISTS organiser_verification (
   completed_at        TEXT,
   completed_scope     TEXT,
   closed_at           TEXT,
-  updated_at          TEXT NOT NULL
+  updated_at          TEXT NOT NULL,
+  company_name        TEXT,
+  surname             TEXT,
+  bank_account_type   TEXT
 );
 CREATE TABLE IF NOT EXISTS verification_documents (
   id                  TEXT PRIMARY KEY,
@@ -1402,3 +1405,48 @@ CREATE TABLE IF NOT EXISTS phone_codes (
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- VerifyNow electronic checks on organisers (upgrade 50, lib/verifynow.php).
+-- POPIA consent: one row per organiser and consent text version.
+CREATE TABLE IF NOT EXISTS kyc_consents (
+  id           TEXT PRIMARY KEY,
+  organiser_id TEXT NOT NULL REFERENCES organisers(id),
+  user_id      TEXT NOT NULL REFERENCES users(id),
+  text_version TEXT NOT NULL,
+  text_sha256  TEXT NOT NULL,
+  full_name    TEXT,
+  ip           TEXT,
+  created_at   TEXT NOT NULL,
+  withdrawn_at TEXT
+);
+CREATE INDEX IF NOT EXISTS kyc_consents_org_idx ON kyc_consents (organiser_id, text_version);
+-- One row per check run. Never holds images or full ID or account numbers.
+CREATE TABLE IF NOT EXISTS kyc_checks (
+  id              TEXT PRIMARY KEY,
+  organiser_id    TEXT NOT NULL REFERENCES organisers(id),
+  check_type      TEXT NOT NULL CHECK (check_type IN ('said','aml_person','aml_company','cipc','bank','face')),
+  status          TEXT NOT NULL CHECK (status IN ('queued','running','waiting','passed','review','failed','error','superseded')),
+  mode            TEXT NOT NULL CHECK (mode IN ('sandbox','production')),
+  subject_hash    TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  provider_ref    TEXT,
+  job_id          TEXT,
+  reasons         TEXT,
+  response_json   TEXT,
+  http_status     INTEGER,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  last_error      TEXT,
+  override        TEXT CHECK (override IS NULL OR override IN ('accepted','rejected')),
+  decision_note   TEXT,
+  decided_by      TEXT REFERENCES users(id),
+  decided_at      TEXT,
+  consent_id      TEXT REFERENCES kyc_consents(id),
+  requested_by    TEXT REFERENCES users(id),
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  completed_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS kyc_checks_org_idx ON kyc_checks (organiser_id, check_type, created_at);
+CREATE INDEX IF NOT EXISTS kyc_checks_due_idx ON kyc_checks (status, next_attempt_at);
+CREATE UNIQUE INDEX IF NOT EXISTS kyc_checks_job_uq ON kyc_checks (job_id) WHERE job_id IS NOT NULL;

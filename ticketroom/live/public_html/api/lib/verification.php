@@ -39,6 +39,7 @@ const KYC_ITEMS = [
     'npo_certificate' => ['label' => 'NPO registration certificate', 'kind' => 'document', 'reason' => 'Confirms the organisation is a registered non-profit.'],
     'constitution' => ['label' => 'Constitution', 'kind' => 'document', 'reason' => 'Shows how the organisation is run and who may act for it.'],
     'resolution' => ['label' => 'Resolution appointing the representative', 'kind' => 'document', 'reason' => 'Confirms the organisation chose you to act for it.'],
+    'selfie' => ['label' => 'Selfie for the face match', 'kind' => 'document', 'reason' => 'A clear, recent photo of your face (JPG or PNG). VerifyNow compares it with your Home Affairs photo.'],
     'terms' => ['label' => 'Signed organiser terms', 'kind' => 'terms', 'reason' => 'Your agreement to run events lawfully and honour every ticket.'],
     'email' => ['label' => 'Verified email address', 'kind' => 'check', 'reason' => 'So buyers and TicketRoom can reach you.'],
     'phone' => ['label' => 'Verified mobile number', 'kind' => 'check', 'reason' => 'So buyers, gate staff and TicketRoom can reach you on the day. Confirm it with a code we SMS you.'],
@@ -178,7 +179,8 @@ function kyc_profile(string $orgId): array
     if ($v) return $v;
     return ['organiser_id' => $orgId, 'entity_type' => 'individual', 'nationality' => 'sa', 'legal_name' => null, 'id_number_enc' => null, 'id_number_last4' => null,
         'id_dob' => null, 'registration_number' => null, 'rep_is_director' => 1, 'plans_paid' => 0, 'terms_version' => null, 'terms_signed_at' => null, 'terms_signed_by' => null,
-        'terms_signed_name' => null, 'terms_ip' => null, 'risk_override' => null, 'risk_note' => null, 'completed_at' => null, 'completed_scope' => null, 'closed_at' => null, 'updated_at' => null];
+        'terms_signed_name' => null, 'terms_ip' => null, 'risk_override' => null, 'risk_note' => null, 'completed_at' => null, 'completed_scope' => null, 'closed_at' => null, 'updated_at' => null,
+        'company_name' => null, 'surname' => null, 'bank_account_type' => null];
 }
 function kyc_profile_save(string $orgId, array $fields): void
 {
@@ -236,8 +238,10 @@ function kyc_org_items(array $v, bool $paid): array
     if ($paid) {
         if ($type === 'individual') $keys['proof_of_address'] = ['payouts'];
         if ($type === 'company') $keys['business_address'] = ['payouts'];
-        $keys['bank_confirmation'] = ['payouts'];
+        // With the VerifyNow bank check on, the letter is only a fallback.
+        $keys['bank_confirmation'] = kyc_vn_bank_applies($v) ? [] : ['payouts'];
     }
+    if (kyc_vn_on() && kyc_vn_check_on('checkFace') && $v['nationality'] === 'sa') $keys['selfie'] = [];
     $out = [];
     foreach ($keys as $k => $need) {
         $label = KYC_ITEMS[$k]['label'];
@@ -246,7 +250,8 @@ function kyc_org_items(array $v, bool $paid): array
         if ($k === 'bank_confirmation' && $type !== 'individual') $label = 'Business bank confirmation letter';
         $out[] = ['key' => $k, 'label' => $label, 'kind' => KYC_ITEMS[$k]['kind'], 'reason' => KYC_ITEMS[$k]['reason'], 'needFor' => $need, 'required' => $need !== []];
     }
-    return $out;
+    // Electronic checks (VerifyNow), when switched on under Integrations.
+    return array_merge($out, kyc_vn_items($v, $paid));
 }
 
 // How risky an event is, and why. TicketRoom can override it either way.
@@ -314,9 +319,12 @@ function kyc_with_status(array $items, array $docs, array $v, string $orgId): ar
         $it['status'] = match ($it['kind']) {
             'terms' => ($v['terms_signed_at'] && $v['terms_version'] === KYC_TERMS_VERSION) ? 'approved' : 'missing',
             'check' => $it['key'] === 'email' ? ($emailOk ? 'approved' : 'missing') : ($phoneOk ? 'approved' : ($smsOn ? 'missing' : 'not_verified')),
+            'echeck' => 'pending',
             default => $doc && !$doc['deleted_at'] ? $doc['status'] : 'missing',
         };
-        $it['rejectReason'] = $it['status'] === 'rejected' ? ($doc['reject_reason'] ?? null) : null;
+        if ($it['kind'] === 'echeck') kyc_vn_item_status($it, $orgId);
+        if ($it['kind'] !== 'echeck') $it['rejectReason'] = $it['status'] === 'rejected' ? ($doc['reject_reason'] ?? null) : null;
+        else $it['rejectReason'] ??= null;
         if ($it['kind'] === 'terms' && $it['status'] === 'approved') $it['signed'] = ['name' => $v['terms_signed_name'], 'at' => $v['terms_signed_at'], 'version' => $v['terms_version']];
     }
     return $items;
@@ -344,7 +352,8 @@ function kyc_missing(array $items, string $need, string $level): array
     $out = [];
     foreach ($items as $it) {
         if (!in_array($need, $it['needFor'], true)) continue;
-        $ok = $it['status'] === 'approved' || ($level === 'submitted' && $it['status'] === 'submitted');
+        // An electronic check not started yet runs when the event is submitted.
+        $ok = $it['status'] === 'approved' || ($level === 'submitted' && in_array($it['status'], ['submitted', 'not_started'], true));
         if (!$ok) $out[] = $it['label'];
     }
     return $out;
@@ -353,7 +362,7 @@ function kyc_overall(array $items): string
 {
     $req = array_filter($items, fn($i) => $i['required']);
     if (!array_filter($req, fn($i) => $i['status'] !== 'approved')) return 'complete';
-    if (!array_filter($req, fn($i) => in_array($i['status'], ['missing', 'rejected'], true))) return 'in_review';
+    if (!array_filter($req, fn($i) => in_array($i['status'], ['missing', 'rejected', 'not_started'], true))) return 'in_review';
     return 'action_needed';
 }
 function kyc_gates(array $state): array
@@ -395,7 +404,7 @@ function kyc_require_for_payout(string $orgId): void
     $state = kyc_state($orgId);
     $missing = $state['paid'] ? kyc_missing($state['items'], 'payouts', 'approved') : ['Bank confirmation letter'];
     if (!$missing) return;
-    $bank = in_array('Bank confirmation letter', $missing, true) || in_array('Business bank confirmation letter', $missing, true);
+    $bank = (bool) array_intersect(['Bank confirmation letter', 'Business bank confirmation letter', VN_CHECKS['bank']['label']], $missing);
     throw conflict(($bank ? 'Payouts start once your bank account is verified. ' : '') . 'Still needed: ' . kyc_list_text($missing) . '. Upload them under Verification.',
         $bank ? 'bank_not_verified' : 'verification_required', ['missing' => $missing]);
 }
@@ -458,6 +467,7 @@ function kyc_identity_check(array $subject): array
 // by a real provider, referred or failed: left for staff, with the outcome shown.
 function kyc_run_identity(array $doc): void
 {
+    if ($doc['status'] === 'submitted' && kyc_vn_doc_uploaded($doc)) return; // VerifyNow already confirmed these details
     if (!in_array($doc['requirement'], ['id_document', 'rep_id'], true) || $doc['status'] !== 'submitted') return;
     $v = kyc_profile($doc['organiser_id']);
     if (!$v['id_number_enc'] || kyc_provider() === 'manual') return;
@@ -544,6 +554,7 @@ function kyc_retention(): int
         $had = val('SELECT id_number_enc FROM organiser_verification WHERE organiser_id = ?', [$o['organiser_id']]);
         if ($docs || $had) {
             q('UPDATE organiser_verification SET id_number_enc = NULL, id_number_last4 = NULL, id_dob = NULL, updated_at = ? WHERE organiser_id = ?', [now_iso(), $o['organiser_id']]);
+            q('UPDATE kyc_checks SET response_json = NULL, reasons = NULL WHERE organiser_id = ?', [$o['organiser_id']]);
             audit('verification.retention_deleted', ['actor' => ['id' => null], 'actorRole' => 'system', 'entityType' => 'organiser', 'entityId' => $o['organiser_id'], 'organiserId' => $o['organiser_id'], 'details' => ['documents' => count($docs)]]);
         }
     }
@@ -555,7 +566,7 @@ function kyc_profile_view(array $v): array
 {
     return ['entityType' => $v['entity_type'], 'nationality' => $v['nationality'], 'legalName' => $v['legal_name'], 'idNumberMasked' => kyc_mask($v['id_number_last4']),
         'hasIdNumber' => (bool) $v['id_number_enc'], 'dateOfBirth' => $v['id_dob'], 'registrationNumber' => $v['registration_number'], 'repIsDirector' => (bool) $v['rep_is_director'],
-        'plansPaid' => (bool) $v['plans_paid'], 'riskOverride' => $v['risk_override'], 'riskNote' => $v['risk_note'], 'closedAt' => $v['closed_at'], 'completedAt' => $v['completed_at']];
+        'plansPaid' => (bool) $v['plans_paid'], 'companyName' => $v['company_name'] ?? null, 'surname' => $v['surname'] ?? null, 'bankAccountType' => $v['bank_account_type'] ?? null, 'riskOverride' => $v['risk_override'], 'riskNote' => $v['risk_note'], 'closedAt' => $v['closed_at'], 'completedAt' => $v['completed_at']];
 }
 // Everything the Verification page shows. $full: owners and staff (documents,
 // what is held, who looked); other team members get the checklist only.
@@ -578,6 +589,7 @@ function kyc_view(string $orgId, bool $full): array
         'limits' => ['maxBytes' => kyc_max_bytes(), 'types' => array_keys(KYC_TYPES)], 'termsVersion' => KYC_TERMS_VERSION,
         'retention' => ['years' => $s['retentionYears'], 'discardRejectedDays' => $s['discardRejectedDays']],
         'bank' => ['last4' => $state['org']['bank_account_last4'], 'bankName' => $state['org']['bank_name']],
+        'electronic' => kyc_vn_summary($orgId),
     ];
     if ($full) {
         $out['profile'] = kyc_profile_view($state['v']);

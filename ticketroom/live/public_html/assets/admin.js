@@ -1089,12 +1089,40 @@ function kycDecideWire(root, redraw) {
   $$("[data-kyc-ok]", root).forEach((b) => b.addEventListener("click", () => kycDecide(b.dataset.kycOk, true, redraw)));
   $$("[data-kyc-no]", root).forEach((b) => b.addEventListener("click", () => kycDecide(b.dataset.kycNo, false, redraw)));
 }
+// VerifyNow checks: plain reasons, what was sent back (images and full ID and
+// account numbers removed), and staff actions.
+const CHECK_STATUS = { queued: "queued", running: "checking", waiting: "waiting for the bank", passed: "passed", review: "review", failed: "failed", error: "error", superseded: "replaced" };
+function checkRow(c, withOrg = false) {
+  const open = ["queued", "running", "waiting"].includes(c.status);
+  const can = isA() || isS() || (isF() && c.type === "bank");
+  return html`<li class="kyc-item" data-check="${c.id}" data-check-type="${c.type}"><div class="grow kyc-body">
+    <div class="row"><strong>${c.label}</strong>${badge(c.status)}${c.override ? html`<span class="badge ${c.override === "accepted" ? "good" : "bad"}">${c.override} by staff</span>` : ""}${c.test ? html`<span class="badge warn">TEST</span>` : ""}</div>
+    ${withOrg ? html`<div class="small"><a href="#/organisers/${c.organiserId}">${c.organiserName}</a> <span class="tiny muted mono">${c.organiserRef || ""}</span></div>` : ""}
+    ${c.reasons.length ? html`<ul class="small mb-0">${c.reasons.map((r) => html`<li>${r}</li>`)}</ul>` : open ? html`<div class="small muted">${CHECK_STATUS[c.status]}${c.lastError ? `: ${c.lastError}` : ""}</div>` : ""}
+    ${c.decisionNote ? html`<div class="tiny">Staff note: ${c.decisionNote}${c.decidedBy ? ` (${c.decidedBy})` : ""}</div>` : ""}
+    <div class="tiny muted">${fmtDateTime(c.createdAt)}${c.providerRef ? html` · VerifyNow ref <span class="mono">${c.providerRef}</span>` : ""} · request key <span class="mono">${c.idempotencyKey}</span>${c.attempts > 1 ? ` · ${c.attempts} tries` : ""}${c.httpStatus ? ` · HTTP ${c.httpStatus}` : ""}</div>
+    ${c.response ? html`<details class="tiny"><summary>What VerifyNow sent back</summary><pre class="mono small">${JSON.stringify(c.response, null, 2)}</pre></details>` : ""}</div>
+    ${can && c.status !== "superseded" ? html`<div class="row">${!open ? html`<button class="btn btn-ghost btn-sm" data-check-rerun="${c.id}">Run again</button>` : ""}${!open && !c.override && c.status !== "passed" ? html`<button class="btn btn-good btn-sm" data-check-ok="${c.id}">Accept</button><button class="btn btn-ghost btn-sm" data-check-no="${c.id}">Reject</button>` : ""}</div>` : ""}</li>`;
+}
+function checkWire(root, redraw) {
+  $$("[data-check-rerun]", root).forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/verification/checks/${b.dataset.checkRerun}/rerun`), "Queued. It runs in the background within a minute.")) redraw(); }));
+  $$("[data-check-ok]", root).forEach((b) => b.addEventListener("click", async () => {
+    const note = await confirmDialog("Accept this result?", "Say what you checked, for example that you compared the ID document. The organiser sees this note.", { confirm: "Accept", input: { label: "What you checked", required: true } });
+    if (!note) return;
+    if (await act(() => post(`/api/admin/verification/checks/${b.dataset.checkOk}/decide`, { accept: true, note }), "Accepted.")) redraw();
+  }));
+  $$("[data-check-no]", root).forEach((b) => b.addEventListener("click", async () => {
+    const why = await reason("Not accepted", "Tell the organiser what is wrong, so they can fix their details.", "What needs fixing");
+    if (why && await act(() => post(`/api/admin/verification/checks/${b.dataset.checkNo}/decide`, { accept: false, note: why }), "Sent back to the organiser.")) redraw();
+  }));
+}
 async function verificationQueue() {
   const status = sessionStorage.getItem("adm_kyc") || "submitted";
   const r = await get(`/api/admin/verification?status=${status}`);
   const s = r.settings;
   render(main, html`${head("Verification", "Organiser documents (FICA). Open each one, compare it with the organiser's details, then approve it or say what is wrong.")}
     ${r.provider.simulated ? html`<p class="callout warn small"><strong>Identity checks are in sandbox mode (simulated).</strong> ${r.provider.rule} Switch to staff review or your own provider under <a href="#/integrations">Integrations</a> before going live.</p>` : html`<p class="small muted">Identity checks: ${r.provider.label}.</p>`}
+    ${r.checks.length ? html`<section class="card mb"><h2>Electronic checks that need a look</h2><p class="small muted">VerifyNow could not confirm these by itself. Compare them with the documents, then accept, reject or run the check again.</p><ul class="kyc-list">${r.checks.map((c) => checkRow(c, true))}</ul></section>` : ""}
     <div class="row mb"><label for="kq-s">Show</label><select id="kq-s">${[["submitted", "Waiting for a check"], ["approved", "Approved recently"], ["rejected", "Not accepted recently"]].map(([k, l]) => html`<option value="${k}" ${raw(k === status ? "selected" : "")}>${l}</option>`)}</select></div>
     ${tbl(["Organiser", "Document", "Uploaded", "Identity check", "Status", ""], r.documents.map((d) => html`<tr><td><a href="#/organisers/${d.organiser_id}"><strong>${d.organiser_name}</strong></a><div class="tiny muted mono">${d.organiser_ref || ""}</div></td>
       <td>${d.label}${d.event_title ? html`<div class="tiny muted">Event: ${d.event_title}</div>` : ""}<div class="tiny muted">${(d.mime_type || "").split("/")[1]?.toUpperCase()} · ${kb(d.size_bytes)}</div></td>
@@ -1111,16 +1139,17 @@ async function verificationQueue() {
   $("#kq-s").addEventListener("change", (e) => { sessionStorage.setItem("adm_kyc", e.target.value); verificationQueue(); });
   if (isA()) onSubmit($("#kset"), async (v) => { await put("/api/admin/settings/verification", { retentionYears: Number(v.retentionYears), discardRejectedDays: Number(v.discardRejectedDays) }); toast("Keeping rules saved.", "good"); });
   kycDecideWire(main, verificationQueue);
+  checkWire(main, verificationQueue);
 }
 const RISK_OPTS = [["auto", "Automatic (by the rules)"], ["high", "Always high risk"], ["normal", "Waive extra checks"]];
 async function organiserDetail({ id }) {
-  const { organiser: o, owners, verification: v } = await get(`/api/admin/organisers/${id}/verification`);
+  const { organiser: o, owners, verification: v, checks } = await get(`/api/admin/organisers/${id}/verification`);
   const p = v.profile;
   const redraw = () => organiserDetail({ id });
   const item = (it, eventId = "") => {
     const d = it.document;
     return html`<li class="kyc-item"><div class="grow kyc-body"><div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${it.required ? "" : html`<span class="badge plain">not required</span>`}</div>
-      <div class="tiny muted">${it.reason}</div>${it.signed ? html`<div class="tiny">Signed by ${it.signed.name}, ${fmtDateTime(it.signed.at)} (${it.signed.version})</div>` : ""}
+      <div class="tiny muted">${it.reason}</div>${it.detail ? html`<div class="tiny">${it.detail}</div>` : ""}${it.signed ? html`<div class="tiny">Signed by ${it.signed.name}, ${fmtDateTime(it.signed.at)} (${it.signed.version})</div>` : ""}
       ${it.rejectReason ? html`<div class="tiny">Not accepted: ${it.rejectReason}</div>` : ""}
       ${d && !d.deleted ? html`<div class="tiny muted">Uploaded ${fmtDateTime(d.uploadedAt)} · ${kb(d.sizeBytes)}${d.reviewedBy ? ` · checked by ${d.reviewedBy}` : ""}</div>${providerNote(d.provider, d.provider?.label, d.provider?.simulated)}` : ""}</div>
       ${d && !d.deleted ? html`<div class="row">${fileLink(d.id)}${d.status === "submitted" ? html`<button class="btn btn-good btn-sm" data-kyc-ok="${d.id}">Approve</button><button class="btn btn-ghost btn-sm" data-kyc-no="${d.id}">Reject</button>` : ""}</div>` : ""}</li>`;
@@ -1140,6 +1169,10 @@ async function organiserDetail({ id }) {
         <p class="tiny muted mb-0">Each "Show" is recorded in the audit log and shown to the organiser.</p></section></div>
     <section class="card mt"><h2>What is unlocked</h2><ul class="small">${gateLi(v.gates.freePublish, "Free events can go live")}${gateLi(v.gates.paidPublish, "Paid events can go on sale")}${gateLi(v.gates.payouts, "Payouts")}</ul></section>
     <section class="card mt"><h2>Checklist</h2><ul class="kyc-list">${v.requirements.map((it) => item(it))}</ul></section>
+    ${v.electronic.on || checks.length ? html`<section class="card mt"><div class="card-title"><h2>Electronic checks (VerifyNow)</h2>${v.electronic.test ? html`<span class="badge warn">TEST (sandbox)</span>` : ""}</div>
+      <p class="small ${v.electronic.consent.given ? "muted" : ""}">${v.electronic.consent.given ? `Permission given ${fmtDateTime(v.electronic.consent.at)} (${v.electronic.consent.version}).` : "The organiser has not given permission for the checks yet. They are asked when they submit an event."}</p>
+      ${checks.length ? html`<ul class="kyc-list">${checks.filter((c) => c.status !== "superseded").map((c) => checkRow(c))}</ul>
+        ${checks.some((c) => c.status === "superseded") ? html`<details class="small"><summary>Earlier runs</summary><ul class="kyc-list">${checks.filter((c) => c.status === "superseded").map((c) => checkRow(c))}</ul></details>` : ""}` : html`<p class="muted small mb-0">No checks yet.</p>`}</section>` : ""}
     <section class="card mt"><div class="card-title"><h2>Risk and event documents</h2></div>
       <form class="row" id="orisk"><label for="or-sel">Organiser risk</label><select id="or-sel" name="riskOverride" ${raw(isA() ? "" : "disabled")}>${RISK_OPTS.map(([k, l]) => html`<option value="${k}" ${raw((p.riskOverride || "auto") === k ? "selected" : "")}>${l}</option>`)}</select>
         <input name="note" class="grow" maxlength="300" placeholder="Why (kept in the audit log)" value="${p.riskNote || ""}" aria-label="Why" ${raw(isA() ? "" : "disabled")}>${isA() ? html`<button class="btn btn-ghost btn-sm">Save</button>` : ""}</form>
@@ -1152,6 +1185,7 @@ async function organiserDetail({ id }) {
       <h3 class="mt">Who opened them</h3>${v.accessLog.length ? html`<ul class="small">${v.accessLog.map((x) => html`<li>${fmtDateTime(x.at)}: ${x.who}, ${x.action.toLowerCase()}</li>`)}</ul>` : html`<p class="small muted">Nobody yet.</p>`}
       ${isA() ? html`<div class="row mt">${p.closedAt ? html`<button class="btn btn-ghost btn-sm" data-close-org="reopen">Reopen (stop the deletion countdown)</button>` : html`<button class="btn btn-ghost btn-sm" data-close-org="close">Mark the account closed</button>`}<span class="tiny muted">Closing starts the ${v.retention.years}-year keeping period; documents are then deleted automatically.</span></div>` : ""}</section>`);
   kycDecideWire(main, redraw);
+  checkWire(main, redraw);
   if (isA()) {
     onSubmit($("#orisk"), async (x) => { await post(`/api/admin/organisers/${id}/verification/risk`, { riskOverride: x.riskOverride, note: x.note || undefined }); toast("Risk saved.", "good"); redraw(); });
     $$("[data-ev-risk]").forEach((s) => s.addEventListener("change", async () => { if (await act(() => post(`/api/admin/events/${s.dataset.evRisk}/risk`, { riskOverride: s.value }), "Event risk saved.")) redraw(); }));
@@ -1174,6 +1208,7 @@ const INTEG_HELP = {
   payouts: "Choose manual EFT or Peach Payments. Test approved payouts in Peach sandbox first; sandbox transfers never settle real organiser balances. Production transfers require a separate finance action after approval and cannot be recalled.",
   email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
   sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets. Use BulkSMS or Clickatell, or connect your own provider through its web API.",
+  verifynow: "Electronic checks on organisers by VerifyNow: SA ID numbers with Home Affairs (always), and the checks you choose below. They run in the background after the organiser gives permission, and anything VerifyNow cannot confirm comes to Verification for a person to decide.",
   identity: "How organisers' ID documents are checked (FICA). Staff review works now. The sandbox simulates a provider for testing. Your own provider is called with the ID number when an ID document is uploaded; anything it does not confirm goes to staff.",
   google: "Optional. Lets customers and organisers sign in or sign up with their Google account, no password needed. Staff always use the admin password sign-in.",
 };
@@ -1197,11 +1232,15 @@ function integrationCard(i) {
     ${i.key === "payments" && i.testOrders ? html`<div class="callout warn small row between"><span><strong>${i.testOrders} test order${i.testOrders === 1 ? "" : "s"}</strong> on record. They never count as sales or payouts. Clear them before you go live to free their seats.</span>${isA() ? html`<button type="button" class="btn btn-ghost btn-sm" data-clear-test>Clear test orders</button>` : ""}</div>` : ""}
     ${i.key === "identity" && i.sandboxRule ? html`<p class="callout warn small mb-0"><strong>Sandbox (simulated):</strong> ${i.sandboxRule}</p>` : ""}
     ${i.key === "identity" && i.pending ? html`<p class="small mb-0"><a href="#/verification">${i.pending} document${i.pending === 1 ? "" : "s"} waiting for a check</a></p>` : ""}
+    ${i.key === "verifynow" && i.test ? html`<p class="callout warn small mb-0"><strong>TEST (sandbox):</strong> VerifyNow returns synthetic results and nothing real is checked. Checks run in this mode are marked TEST. Switch to Production with a live key before relying on them.</p>` : ""}
+    ${i.key === "verifynow" && i.problem ? html`<p class="callout bad small mb-0"><strong>Problem:</strong> ${i.problem}</p>` : ""}
+    ${i.key === "verifynow" ? html`<p class="small mb-0" data-vn-credits>Credits: ${i.credits && i.credits.credits != null ? html`<strong>${i.credits.credits}</strong> <span class="tiny muted">(at ${fmtDateTime(i.credits.at)})</span>` : "press Test connection to see the balance"}.${i.running ? ` ${i.running} check${i.running === 1 ? "" : "s"} running.` : ""}${i.waiting ? html` <a href="#/verification">${i.waiting} check${i.waiting === 1 ? "" : "s"} waiting for a person</a>.` : ""}</p>
+      <p class="small mb-0">Bank check results arrive at <span class="mono">${i.notifyUrl}</span>, signed with the secret TicketRoom made. Nothing to set up in VerifyNow: the address is sent with each check.</p>` : ""}
     ${i.redirectUrl ? html`<p class="small mb-0">In Google Cloud, create an OAuth client ID (Web application) and add this under Authorised redirect URIs: <span class="mono">${i.redirectUrl}</span></p>` : ""}
     ${i.key === "payouts" && i.provider === "peach" ? html`<p class="callout warn small mb-0"><strong>Sandbox and production are separate.</strong> Sandbox lets finance submit test payouts against Peach’s sandbox after approval; these never settle or reduce real organiser balances. Production transfers are irreversible, must be pre-funded, and require careful beneficiary checks. Configure this URL in Peach’s Payouts webhook settings and request a source-of-funds review before your first live payout.</p>` : ""}
-    ${i.notifyUrl ? html`<p class="small mb-0">${i.key === "payouts" ? "Payout status webhook:" : "Payment notifications arrive at"} <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : i.provider === "peach" && i.key === "payments" ? " Configure this URL on your Peach Checkout profile and add the custom header X-TicketRoom-Peach-Secret using the saved webhook secret." : i.provider === "peach" ? " Configure this endpoint in Peach Payouts and provide the signing secret from Peach." : ". PayFast is told this address with every payment."}</p>` : ""}
+    ${i.notifyUrl && i.key !== "verifynow" ? html`<p class="small mb-0">${i.key === "payouts" ? "Payout status webhook:" : "Payment notifications arrive at"} <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : i.provider === "peach" && i.key === "payments" ? " Configure this URL on your Peach Checkout profile and add the custom header X-TicketRoom-Peach-Secret using the saved webhook secret." : i.provider === "peach" ? " Configure this endpoint in Peach Payouts and provide the signing secret from Peach." : ". PayFast is told this address with every payment."}</p>` : ""}
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
-      ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">Check connection</button>
+      ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">${i.key === "verifynow" ? "Test connection" : "Check connection"}</button>
           ${i.key === "payments" && i.provider === "yoco" ? html`<button type="button" class="btn btn-ghost" data-yoco-page="test">Test payment page (Test)</button><button type="button" class="btn btn-ghost" data-yoco-page="live">Test payment page (Live)</button>` : ""}
           ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : i.key === "identity" ? html`<button type="button" class="btn btn-ghost" data-test="identity">Try a check</button>` : ""}</div>
         <p class="tiny muted mb-0">Saving asks for your password. Saved keys and passwords are encrypted and never shown again, not even to admins.</p>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
@@ -1261,7 +1300,7 @@ async function integrations() {
     } catch (err) { if (tab) tab.close(); toast(err.message, "bad"); }
   }));
   $$("[data-health]").forEach((b) => b.addEventListener("click", async () => {
-    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Working. ${r.detail || ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
+    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Working. ${r.detail || ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); if (b.dataset.health === "verifynow") integrations(); }
     catch (err) { toast(err.message, "bad"); }
   }));
   $$("[data-test]").forEach((b) => b.addEventListener("click", async () => {

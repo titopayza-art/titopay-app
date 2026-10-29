@@ -11,6 +11,7 @@ route('POST', '/api/webhooks/:provider', function ($a) {
     limit('webhook', 600, 60);
     $prov = $a['provider'];
     if ($prov === 'peach-payouts') return finance_peach_payout_webhook();
+    if ($prov === 'verifynow') return kyc_vn_webhook();
     if ($prov === 'peach') {
         $payload = json_decode((string) $GLOBALS['TR_REQ']['raw'], true);
         if (!is_array($payload)) throw bad('Invalid Peach checkout notification.');
@@ -602,7 +603,7 @@ route('GET', '/api/me/refunds', function () {
 });
 
 // ============================================================== integrations
-const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'payouts' => 'Payouts', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'google' => 'Sign in with Google'];
+const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'payouts' => 'Payouts', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'verifynow' => 'VerifyNow', 'google' => 'Sign in with Google'];
 function fin_integration(string $group): array
 {
     $form = integration_form($group);
@@ -640,6 +641,17 @@ function fin_integration(string $group): array
             'sandboxRule' => $p === 'sandbox' ? KYC_SANDBOX_RULE : null, 'credentials' => $creds ?: (object) [], 'fields' => $form,
             'pending' => (int) val("SELECT count(*) FROM verification_documents WHERE status = 'submitted'")];
     }
+    if ($group === 'verifynow') {
+        $mode = kyc_vn_mode();
+        $credits = json_decode((string) val("SELECT value FROM meta WHERE key = 'verifynow_credits'"), true);
+        $problem = json_decode((string) val("SELECT value FROM meta WHERE key = 'verifynow_problem'"), true);
+        return ['key' => 'verifynow', 'group' => 'verifynow', 'label' => 'VerifyNow', 'provider' => kyc_vn_on() ? 'verifynow' : 'none',
+            'environment' => $mode === 'sandbox' ? 'TEST (sandbox)' : 'live', 'test' => $mode === 'sandbox',
+            'status' => kyc_vn_on() ? 'active' : 'not set up', 'endpoint' => kyc_vn_base(), 'notifyUrl' => kyc_vn_webhook_url(),
+            'credits' => $credits, 'problem' => $problem['text'] ?? null, 'credentials' => $creds ?: (object) [], 'fields' => $form,
+            'waiting' => (int) val("SELECT count(*) FROM kyc_checks WHERE status IN ('review','failed','error') AND override IS NULL"),
+            'running' => (int) val("SELECT count(*) FROM kyc_checks WHERE status IN ('queued','running','waiting')")];
+    }
     if ($group === 'google') {
         $on = google_ready();
         return ['key' => 'google', 'group' => 'google', 'label' => 'Sign in with Google', 'provider' => cfg('google.enabled') === 'on' ? 'google' : 'none', 'environment' => $on ? 'live' : 'not set up',
@@ -653,20 +665,28 @@ route('GET', '/api/admin/integrations', function () {
     adm_admin(); // provider settings are for admins only
     return [
         'defaults' => ['bookingFeeCents' => (int) (settings_all()['fees']['ticketFeeFixedCents'] ?? 1000), 'bookingFeeBps' => (int) (settings_all()['fees']['ticketFeeBps'] ?? 0), 'organiserCommissionBps' => (int) (settings_all()['fees']['organiserCommissionBps'] ?? 500), 'organiserCommissionFixedCents' => (int) (settings_all()['fees']['organiserCommissionFixedCents'] ?? 250)],
-        'integrations' => [fin_integration('payments'), fin_integration('payouts'), fin_integration('mail'), fin_integration('sms'), fin_integration('google'), fin_integration('kyc')],
+        'integrations' => [fin_integration('payments'), fin_integration('payouts'), fin_integration('mail'), fin_integration('sms'), fin_integration('google'), fin_integration('kyc'), fin_integration('verifynow')],
     ];
 });
 // Saving needs the admin's own password: these settings move money and send mail as TicketRoom.
 route('PUT', '/api/admin/integrations/:key', function ($a) {
     $u = adm_admin();
     limit('integsave', 20, 3600, $u['id']);
-    $group = ['email' => 'mail', 'payments' => 'payments', 'payouts' => 'payouts', 'sms' => 'sms', 'identity' => 'kyc', 'google' => 'google'][$a['key']] ?? null;
+    $group = ['email' => 'mail', 'payments' => 'payments', 'payouts' => 'payouts', 'sms' => 'sms', 'identity' => 'kyc', 'verifynow' => 'verifynow', 'google' => 'google'][$a['key']] ?? null;
     if (!$group) throw not_found('Unknown integration.');
     $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'values' => R::obj([], ['optional' => true]), 'clear' => R::arr(R::str(['max' => 60]), ['optional' => true, 'max' => 20])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
     $values = is_array(body()['values'] ?? null) ? body()['values'] : [];
     // The sandbox is practice only: it can never be put in live mode.
     if ($group === 'payments' && ($values['provider'] ?? pay_provider()) === 'sandbox') $values['mode'] = 'test';
+    if ($group === 'verifynow') {
+        // Production only with a live key; the signing secret is TicketRoom's own, never typed in.
+        unset($values['webhookSecret']);
+        $key = trim((string) ($values['apiKey'] ?? '')) ?: (in_array('apiKey', $b['clear'] ?? [], true) ? '' : (string) cfg('verifynow.apiKey', ''));
+        if (($values['mode'] ?? kyc_vn_mode()) === 'production' && $key !== '' && !kyc_vn_live_key_ok($key)) throw invalid(['apiKey' => 'Production needs a live key, starting with vn_live_. Copy it again from the VerifyNow portal.']);
+        if (($values['mode'] ?? kyc_vn_mode()) === 'production' && ($values['enabled'] ?? cfg('verifynow.enabled')) === 'on' && $key === '') throw invalid(['apiKey' => 'Enter the live API key.']);
+        if (strlen((string) cfg('verifynow.webhookSecret', '')) < 32) $values['webhookSecret'] = kyc_vn_new_webhook_secret();
+    }
     $wasLive = $group === 'payments' && pay_provider() !== 'none' && pay_mode() === 'live';
     $changed = tx(fn() => integration_save($group, $values, $b['clear'] ?? [], $u['id']));
     // Going live: test orders and practice money are cleared first, so nothing
@@ -676,6 +696,7 @@ route('PUT', '/api/admin/integrations/:key', function ($a) {
         $wentLive = clear_test_orders($u);
         audit('payments.went_live', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'payments', 'ip' => client_ip(), 'details' => $wentLive]);
     }
+    if ($group === 'verifynow' && in_array('apiKey', $changed, true)) { q("DELETE FROM meta WHERE key IN ('verifynow_problem','verifynow_credits')"); }
     // New mail settings: try them straight away rather than after a pause.
     if ($group === 'mail') q("DELETE FROM meta WHERE key = 'mail_paused_until'");
     $warning = null;
@@ -739,6 +760,7 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     elseif ($key === 'payments') $result = fin_payments_health();
     elseif ($key === 'payouts') $result = fin_payouts_health();
     elseif ($key === 'identity') $result = fin_identity_health();
+    elseif ($key === 'verifynow') $result = kyc_vn_health();
     elseif ($key === 'google') $result = !google_ready() ? ['ok' => false, 'detail' => 'Switch it on and enter the client ID and secret.']
         : (preg_match('/^[\w-]+\.apps\.googleusercontent\.com$/', (string) cfg('google.clientId')) ? ['ok' => true, 'detail' => 'Ready. Make sure ' . google_redirect_uri() . ' is listed under Authorised redirect URIs in Google Cloud.']
         : ['ok' => false, 'detail' => 'That does not look like a Google OAuth client ID (it ends in .apps.googleusercontent.com).']);

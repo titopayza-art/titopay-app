@@ -24,6 +24,7 @@ require TR_APP . '/lib/cashless.php';
 require TR_APP . '/lib/cashdesk.php';
 require TR_APP . '/lib/boxoffice.php';
 require TR_APP . '/lib/verification.php';
+require TR_APP . '/lib/verifynow.php';
 require TR_APP . '/lib/promote.php';
 require TR_APP . '/lib/exchange.php';
 require TR_APP . '/lib/ops.php';
@@ -214,7 +215,7 @@ function tr_install_db(string $hash, ?string $adminEmail = null, ?string $adminN
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 49;
+const SCHEMA_VERSION = 50;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -531,6 +532,19 @@ const UPGRADES = [
     // message being sent and the time of its next try. Only its own columns,
     // each added if missing (see tr_upgrade_ops).
     49 => ['@ops'],
+    // VerifyNow electronic checks: POPIA consent, one row per check, and the
+    // extra details the checks need (registered name, surname, account type).
+    50 => [
+        'ALTER TABLE organiser_verification ADD COLUMN company_name TEXT',
+        'ALTER TABLE organiser_verification ADD COLUMN surname TEXT',
+        'ALTER TABLE organiser_verification ADD COLUMN bank_account_type TEXT',
+        'CREATE TABLE IF NOT EXISTS kyc_consents (id TEXT PRIMARY KEY, organiser_id TEXT NOT NULL REFERENCES organisers(id), user_id TEXT NOT NULL REFERENCES users(id), text_version TEXT NOT NULL, text_sha256 TEXT NOT NULL, full_name TEXT, ip TEXT, created_at TEXT NOT NULL, withdrawn_at TEXT)',
+        'CREATE INDEX IF NOT EXISTS kyc_consents_org_idx ON kyc_consents (organiser_id, text_version)',
+        "CREATE TABLE IF NOT EXISTS kyc_checks (id TEXT PRIMARY KEY, organiser_id TEXT NOT NULL REFERENCES organisers(id), check_type TEXT NOT NULL CHECK (check_type IN ('said','aml_person','aml_company','cipc','bank','face')), status TEXT NOT NULL CHECK (status IN ('queued','running','waiting','passed','review','failed','error','superseded')), mode TEXT NOT NULL CHECK (mode IN ('sandbox','production')), subject_hash TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, provider_ref TEXT, job_id TEXT, reasons TEXT, response_json TEXT, http_status INTEGER, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, override TEXT CHECK (override IS NULL OR override IN ('accepted','rejected')), decision_note TEXT, decided_by TEXT REFERENCES users(id), decided_at TEXT, consent_id TEXT REFERENCES kyc_consents(id), requested_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT)",
+        'CREATE INDEX IF NOT EXISTS kyc_checks_org_idx ON kyc_checks (organiser_id, check_type, created_at)',
+        'CREATE INDEX IF NOT EXISTS kyc_checks_due_idx ON kyc_checks (status, next_attempt_at)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS kyc_checks_job_uq ON kyc_checks (job_id) WHERE job_id IS NOT NULL',
+    ],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -687,6 +701,8 @@ function jobs(): array
         // Organiser campaigns booked for later go out when their time comes.
         // Verification documents past their keeping time are deleted (POPIA).
         ['verification-retention', 21600, fn() => kyc_retention()],
+        // VerifyNow checks on organisers: queued by requests, run here (retries, Retry-After, bank job polling).
+        ['verification-checks', 5, fn() => kyc_vn_work()],
         // Promote packages end with their event; unpaid ones lapse after a day.
         ['end-promotions', 300, fn() => promo_expire()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
