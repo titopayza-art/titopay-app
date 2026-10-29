@@ -1,0 +1,232 @@
+TICKETROOM WEBSITE: READ THIS FIRST
+===================================
+
+This is build 2026-10-22-phases.
+
+UPDATING A SITE THAT IS ALREADY LIVE
+------------------------------------
+  1. Keep maintenance ON for the whole update. cPanel → File Manager →
+     public_html. Settings → tick "Show Hidden Files".
+  2. Before replacing files, make a cPanel backup of public_html and a separate
+     private backup of ticketroom-data (or the existing tr-data/data folder).
+     Never delete or overwrite those data folders during the code update.
+  3. DELETE the old ticketroom.zip in public_html first. Every version has
+     that same name, and cPanel will not upload over a file with the same
+     name: you would extract the old version again.
+     Never delete the data, ticketroom-data or tr-data folders.
+  4. Upload the new ticketroom.zip, right-click → Extract into /public_html,
+     then delete ticketroom.zip.
+  5. Open https://ticketroom.co.za/version.txt. It must say
+     "TicketRoom build 2026-10-22-phases". If it shows an older build, repeat 2 and 3.
+  6. Confirm https://ticketroom.co.za/api/health and /api/config report the
+     same provider. For a free-ticket-only opening, choose "Not set up (free
+     events only)" in Admin → Integrations → Payments; health/config should
+     report provider "none", cardPaymentsEnabled false, and paymentsTest false.
+  7. Staff sign in at ticketroom.co.za/admin (not the website's sign-in).
+     Admin and email-code verification remain available during maintenance.
+     Staff email OTP is mandatory. Customers and organisers can optionally
+     enable email sign-in codes in their account or organiser Settings → Security.
+  8. Test a free ticket and its email on staging first. Production intentionally
+     blocks visitor checkout while maintenance is on. If there is no staging
+     site, arrange a controlled go-live smoke-test window after backups,
+     provider settings, and staff OTP are verified; turning maintenance off is
+     the public opening, and it should happen only in that agreed window.
+  9. On your phone: close TicketRoom and open it again. Remove an old
+     home-screen icon and add it again.
+  Details: DEPLOY-AFRIHOST.md, "Already live? Updating to a new version".
+
+PUTTING IT LIVE
+---------------
+Open DEPLOY-AFRIHOST.md in this folder and work down it. It is the whole job
+in order, with the cPanel screens named. It also documents setting up Peach
+Payments in separate sandbox and production environments.
+
+PRICING
+-------
+The standard commission is 5% of net ticket sales plus R2.50 per paid
+ticket. The service fee is R10 per paid ticket. Organisers choose whether
+they or customers cover the service fee for each event. An admin can change
+these defaults under Admin → Site settings → Commission and service fees.
+
+The short version:
+  1. Get a valid SSL certificate FIRST. This build refuses HTTP.
+  2. cPanel → File Manager → public_html. Settings (top right) → tick
+     "Show Hidden Files". Upload ticketroom.zip, extract into public_html,
+     then DELETE ticketroom.zip.
+  3. Create ticketroom-data NEXT TO public_html (never inside it) and make it
+     writable by PHP. Create ticketroom-data/bootstrap-secret with a random
+     secret of at least 32 characters.
+  4. Open https://ticketroom.co.za/setup.php within 15 minutes. Enter that
+     secret and create the owner account. The secret is deleted on success.
+     Then sign in at https://ticketroom.co.za/admin. Staff sign-in requires a
+     one-time code sent to the verified staff email address; secure that
+     mailbox with its own MFA before adding staff.
+
+
+THE THREE PORTALS: ONE ACCOUNT, ONE PORTAL
+------------------------------------------
+  Admin portal      /admin        red bar     TicketRoom staff
+  Organiser portal  /organisers   blue bar    organisers and their events
+  Customer portal   /account      green bar   ticket buyers
+
+Every account is one kind and signs in on its own portal only. Customers
+sign up on the website or the customer portal; organisers with "Start
+selling"; staff accounts are made only by an admin under Staff & roles.
+The admin sign-in has no "Create account" and no "Forgot password".
+
+
+IN THE ADMIN PORTAL (ticketroom.co.za/admin)
+-----------------------------------------
+  Integrations      Set up email, card payments (Yoco or PayFast) and SMS
+                    (BulkSMS, Clickatell or your own provider's web API)
+                    yourself. Keys, passwords and usernames are stored
+                    encrypted and never shown again; saving asks for your
+                    password. "Use the test account" switches on PayFast's
+                    test mode in one click. Send a test email to any address.
+  Site settings     Maintenance mode closes the website to visitors on the
+                    server (staff keep working, with a yellow reminder bar).
+                    Retail applications and sales start off with a Coming
+                    soon page. Activate the programme under Site settings →
+                    Retail partner programme when ready.
+  Careers           Create, edit, publish, unpublish or remove job posts.
+                    Published roles appear on ticketroom.co.za/careers; add
+                    a secure HTTPS link to the application form for each role.
+  Email templates   Every email TicketRoom sends: preview it, or send a test
+                    to any address.
+  Support           Every question is a conversation: reply to the
+                    customer by email, or send it to the event's organiser
+                    (they reply from their portal). "Take it back" any time.
+  Refunds, Payouts, Payments, Reconciliation, Ledger
+                    Every rand in and out. Refunds and payouts need finance
+                    approval; the ledger must always balance.
+  Staff & roles     Add people to the team and choose what each may do:
+                    Admin, Finance or Support. Each gets their own staff
+                    account on a work email and an email to set their
+                    password. Locked out? "Send password link" here. The
+                    owner (hello@) can only be changed by the owner.
+  QR codes          Make a QR code for any link, event page, WhatsApp
+                    chat, email or phone number. Download PNG or SVG.
+  Subscribers       Everyone who asked for updates from the website.
+                    Send them an update (test it on yourself first), or
+                    export the list.
+  All events and     Search by Event ID (EV-...), Organiser ID (ORG-...)
+  Organiser accounts or name. Every event and organiser gets its ID when it
+                    is created; ask callers for it.
+Organisers get a QR code for each event as soon as they create it, and
+again any time under the event's Overview tab.
+
+Organisers can sell any kind of ticket (general, early bird, VIP, VVIP,
+golden circle, student, child, pensioner, couple, group or table, day and
+season passes, backstage, hospitality and more). Couple, group and table
+tickets let several people in on one QR code; the scanner shows "ADMIT 2".
+They choose which age groups an event is for, and visitors can filter by
+age group. Crew, artists, media, vendors and guests get gate passes from
+the event's Gate passes tab: each has its own QR code and private link,
+can allow re-entry or one entry, and can be cancelled or replaced.
+
+Customers can buy without an account: they give a name and email, and
+their tickets arrive by email with a private link. If they create an
+account later with the same email (and confirm it), the tickets are already
+in it. Every account confirms its email before it can sign in, and one
+email or mobile number can only have one account.
+
+New organisers sign up in one step from /sell (their account and their
+organisation together), then a checklist on their dashboard walks them to
+their first live event.
+
+Customers can like events (saved under Saved events), share them on
+WhatsApp, Facebook, X or email, add them to their calendar, and save each
+ticket as a picture. Apple Wallet and Google Wallet buttons switch on once
+TicketRoom's wallet accounts are set up: see DEPLOY-AFRIHOST.md.
+
+
+WHAT IS WHERE
+-------------
+  index.html, sell.html, help.html …   The pages. Plain files.
+  legal/                               Terms, privacy, cookies, PAIA.
+  assets/                              Styles, scripts, logo.
+  api/                                 The PHP behind /api/. Never shown to
+                                       visitors. Do not edit; uploads replace it.
+  data/                                Legacy installs only. New installations
+                                       must not put any data here.
+
+  ticketroom-data/  (NEXT TO public_html, not inside it)
+                                       The database, the ticket keys, uploaded
+                                       posters and YOUR settings (config.php).
+                                       The web cannot reach it, and uploads
+                                       never touch it. BACK IT UP. New installs
+                                       stop rather than place data in the web
+                                       folder.
+  index.php                            Front door, for hosts that send every
+                                       request to PHP.
+  version.txt                          The build. Open
+                                       https://ticketroom.co.za/version.txt to
+                                       see which build the server has.
+
+Addresses are clean: ticketroom.co.za/sell, /help, /contact,
+/legal/privacy, /events/<event>, /account, /organisers, /scan, /admin.
+
+
+IF THE SITE DID NOT CHANGE AFTER AN UPLOAD
+------------------------------------------
+Open https://ticketroom.co.za/version.txt
+  * "404 Not Found": the files are not in the folder the domain shows.
+    cPanel → Domains → ticketroom.co.za → its "Document Root" is where the
+    files go.
+  * An older build: something is serving a cached copy. cPanel →
+    LiteSpeed Web Cache Manager → Purge All, and purge Cloudflare if used.
+  * The new build: the upload worked. Open the page in a private window.
+
+
+THE DEPLOY CHECK
+----------------
+Diagnostics are disabled by default. For a short maintenance window, set
+'security' => ['diagnosticsEnabled' => true] in ticketroom-data/config.php,
+create ticketroom-data/unlock-check, then open
+https://ticketroom.co.za/deploy-check.php within 30 minutes.
+It reports what reached the server, whether the API, clean addresses and
+email work, and what is left over from earlier uploads. Fix anything marked
+"Fix". Delete ticketroom-data/unlock-check and switch diagnostics off when done.
+
+
+EMAIL
+-----
+Until the hello@ mailbox password is set, email goes out through the
+server's built-in mail, which often lands in spam. To fix it:
+  1. cPanel → Email Accounts: make sure hello@ticketroom.co.za exists.
+  2. File Manager → ticketroom-data/config.php (the folder next to
+     public_html) → Edit. Put the mailbox password between the quotes on
+     the smtpPass line. Save.
+For big events (thousands of tickets) use an email relay instead (Amazon
+SES, Mailgun or Brevo): put its details in the same four smtp lines.
+
+
+FORGOTTEN ADMIN PASSWORD
+------------------------
+Staff (finance, support, other admins): an admin opens Staff & roles and
+presses "Send password link". After setting it, sign in with the new password
+and enter the one-time code sent to the staff email address.
+
+For the owner, or if no admin can sign in, use the host's MFA-protected
+control plane first. Emergency recovery is disabled by default. If it is
+formally approved, enable 'security' => ['emergencyRecoveryEnabled' => true]
+in ticketroom-data/config.php, then:
+  1. In File Manager, open ticketroom-data and create a file called
+     unlock-reset. Open it (Edit), type a random secret word of at least 24
+     characters, and save.
+  2. Within 30 minutes, open https://ticketroom.co.za/set-password.php,
+     enter that word, the account email and the new password.
+The page only works while that private file exists, for 30 minutes, and with the
+word in it. Wrong guesses are rate-limited; the file remains until success or expiry. It removes the file itself
+once the password is set. Customers and organisers use "Forgot password?"
+on the sign-in screen instead.
+
+
+OLD FILES FROM EARLIER UPLOADS
+------------------------------
+Earlier packages left a tr-app folder (and sometimes ticketroom-app,
+holding or tr-data). They are blocked from the web, but delete them:
+deploy-check.php lists exactly which are still there. If an earlier
+install kept its data in tr-data or in ticketroom-data next to
+public_html, TicketRoom keeps using it, so nothing is lost; deploy-check
+says so.

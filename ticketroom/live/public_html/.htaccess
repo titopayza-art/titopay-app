@@ -1,0 +1,123 @@
+# TicketRoom: Apache / LiteSpeed settings (Afrihost cPanel)
+#
+# The pages are plain .html files and are served straight from disk. Only
+# /api/ (and uploaded images at /media/) run PHP, through api/index.php.
+
+DirectoryIndex index.html index.php
+Options -Indexes
+RewriteEngine On
+
+# --- One address for the site --------------------------------------------
+# www.ticketroom.co.za goes to ticketroom.co.za. The scheme is carried
+# across, so this is safe before the certificate exists.
+RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+RewriteRule ^ %{REQUEST_SCHEME}://%1%{REQUEST_URI} [R=301,L]
+
+# --- Force https -----------------------------------------------------------
+# Sign-in and tickets require HTTPS. Deploy a valid certificate before upload.
+# Do not trust X-Forwarded-Proto here: a direct client can send that header.
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://ticketroom.co.za%{REQUEST_URI} [R=308,L]
+
+# --- Private folders --------------------------------------------------------
+# data/ holds the database, keys and uploads. tr-app/ and tr-data/ are left
+# over from the earlier package (delete them; deploy-check.php lists them).
+RewriteRule ^(data|tr-app|tr-data)(/|$) - [F,L]
+
+# --- The API ----------------------------------------------------------------
+# Everything under /api/ runs api/index.php; nothing else in api/ is served.
+RewriteCond %{REQUEST_URI} !^/api/index\.php$
+RewriteRule ^api(/|$) /api/index.php [L,QSA]
+RewriteRule ^media/ /api/index.php [L,QSA]
+
+# Maintenance mode (admin portal, Site settings): while maintenance.on exists,
+# every page goes through index.php, which shows visitors the notice and
+# TicketRoom staff the site. The admin portal and contact form stay open.
+RewriteRule ^maintenance\.on$ - [F,L]
+RewriteCond %{DOCUMENT_ROOT}/maintenance.on -f
+RewriteCond %{REQUEST_URI} !^/(admin|admin\.html|contact|contact\.html)$
+RewriteRule ^([^.]*|.*\.html)$ /index.php [L]
+
+# --- Addresses that moved ---------------------------------------------------
+RewriteRule ^organiser(/.*)?$ /organisers$1 [R=301,L]
+RewriteRule ^(privacy|cookies|terms)/?$ /legal/$1 [R=301,L]
+RewriteRule ^legal/refunds/?$ /legal/terms [R=301,L]
+RewriteRule ^browse/?$ / [R=301,L]
+
+# --- Clean addresses --------------------------------------------------------
+# One address per page: /sell, never /sell.html, and / rather than /index.html.
+# THE_REQUEST is the browser's original request, so the internal rewrites
+# below cannot trigger these redirects and loop.
+RewriteCond %{THE_REQUEST} "\s/+([^?\s]*/)?index(\.html)?[\s?]" [NC]
+RewriteRule ^ /%1 [R=301,L]
+RewriteCond %{THE_REQUEST} "\s/+(.+?)\.html[\s?]" [NC]
+RewriteRule ^ /%1 [R=301,L]
+
+# A trailing slash on anything but a real folder is dropped.
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.+)/$ /$1 [R=301,L]
+
+# Event and order pages share one page each; the address says which.
+RewriteRule ^events/[^/]+(/tickets)?$ /event.html [L]
+RewriteRule ^orders/[^/]+$ /order.html [L]
+
+# The clean address serves the matching .html file.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{DOCUMENT_ROOT}/$1.html -f
+RewriteRule ^(.+?)/?$ /$1.html [L]
+
+ErrorDocument 404 /404.html
+
+# --- Never served -----------------------------------------------------------
+# Hidden files, notes, archives and databases. .zip matters: an archive left in
+# public_html would let anyone who guesses its name download the site.
+<FilesMatch "^\.|\.(md|sql|sqlite|sqlite-wal|sqlite-shm|zip|tar|gz|bak|log|ini)$|^START-HERE\.txt$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# --- Caching ----------------------------------------------------------------
+# Pages, styles and scripts are re-checked on every visit (a quick "not
+# changed" when nothing is new), so a new upload shows straight away.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|css|js|webmanifest)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  <FilesMatch "\.(png|jpg|jpeg|webp|svg|ico)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
+  # Pages may only run TicketRoom's own scripts and talk to TicketRoom itself,
+  # so injected code could not run or send data anywhere else.
+  <FilesMatch "\.html$">
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://www.payfast.co.za https://sandbox.payfast.co.za; frame-ancestors 'none'"
+    Header set Permissions-Policy "camera=(self), microphone=(), geolocation=(self), payment=()"
+  </FilesMatch>
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "DENY"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set X-Permitted-Cross-Domain-Policies "none"
+  <Files "login-otp.html">
+    Header always set Cache-Control "no-store"
+    Header always set Referrer-Policy "no-referrer"
+  </Files>
+  <FilesMatch "^(admin|login-otp|order|pay|pass|signin|organisers|pos)\.html$">
+    Header always set Cache-Control "no-store, max-age=0"
+    Header always set Pragma "no-cache"
+    Header always set X-Robots-Tag "noindex, nofollow"
+  </FilesMatch>
+</IfModule>
+
+# --- Compression ------------------------------------------------------------
+# The scanner's offline ticket list for a full stadium shrinks from about
+# 4 MB to under 1 MB.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain text/csv application/javascript text/javascript application/json image/svg+xml application/manifest+json
+</IfModule>

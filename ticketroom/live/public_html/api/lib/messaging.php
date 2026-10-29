@@ -1,0 +1,642 @@
+<?php
+// Messaging: outbox queue, delivery (SMTP, PHP mail() or log), templates,
+// branded HTML rendering, the back-office catalogue and automated emails.
+declare(strict_types=1);
+
+// ============================================================== outbox
+function outbox_enqueue(array $m): ?string
+{
+    if (empty($m['to'])) return null;
+    $id = uuid();
+    q('INSERT OR IGNORE INTO message_outbox (id, channel, kind, to_address, subject, body, campaign_id, user_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        [$id, $m['channel'] ?? 'email', $m['kind'] ?? 'transactional', $m['to'], $m['subject'] ?? null, $m['body'], $m['campaignId'] ?? null, $m['userId'] ?? null, now_iso()]);
+    $GLOBALS['TR_OUTBOX_DIRTY'] = true;
+    return $id;
+}
+function mail_mode(): string
+{
+    // 'auto' (the default): send through the mailbox once its password is set.
+    $mode = (string) cfg('mail.mode', 'auto');
+    if ($mode !== 'auto' && $mode !== '') return $mode;
+    return cfg('mail.smtpHost') && (string) cfg('mail.smtpPass', '') !== '' ? 'smtp' : 'mail';
+}
+// Sends one batch. Marketing is re-checked against consent at send time.
+// When the mail server cannot be reached, email waits two minutes before the
+// next try instead of every message waiting out its own connection timeout.
+const MAIL_PAUSE_SECONDS = 120;
+function mail_paused(): bool { return (int) val("SELECT value FROM meta WHERE key = 'mail_paused_until'") > time(); }
+function outbox_deliver(int $limit = 25): int
+{
+    $emailOff = mail_paused();
+    $claimed = tx(function () use ($limit, $emailOff) {
+        $list = rows("SELECT o.*, c.organiser_id FROM message_outbox o LEFT JOIN campaigns c ON c.id = o.campaign_id
+                       WHERE o.status = 'queued' AND o.attempts < 5" . ($emailOff ? " AND o.channel = 'sms'" : '') . " ORDER BY o.created_at LIMIT $limit");
+        foreach ($list as $m) q('UPDATE message_outbox SET attempts = attempts + 1 WHERE id = ?', [$m['id']]);
+        return $list;
+    });
+    $sent = 0;
+    $down = false;
+    foreach ($claimed as $m) {
+        // Mail server unreachable: put the rest back untouched and try later.
+        if ($down && $m['channel'] !== 'sms') { q('UPDATE message_outbox SET attempts = attempts - 1 WHERE id = ?', [$m['id']]); continue; }
+        try {
+            if ($m['kind'] === 'marketing') {
+                $g = val("SELECT granted FROM marketing_consents WHERE user_id = ? AND COALESCE(organiser_id,'') = COALESCE(?,'') AND channel = ?", [$m['user_id'], $m['organiser_id'], $m['channel']]);
+                if (!$g) { q("UPDATE message_outbox SET status = 'suppressed', last_error = 'consent withdrawn' WHERE id = ?", [$m['id']]); continue; }
+            }
+            if ($m['channel'] === 'sms') { $mode = sms_provider(); $msgId = sms_send($m['to_address'], $m['body']); }
+            else {
+                $mode = mail_mode();
+                $msgId = send_email($mode, $m['to_address'], (string) ($m['subject'] ?: 'TicketRoom'), $m['body']);
+            }
+            q("UPDATE message_outbox SET status = 'sent', provider = ?, provider_message_id = ?, sent_at = ?, last_error = NULL WHERE id = ?", [$mode, $msgId, now_iso(), $m['id']]);
+            if ($m['campaign_id']) q('UPDATE campaigns SET delivered_count = delivered_count + 1 WHERE id = ?', [$m['campaign_id']]);
+            $sent++;
+        } catch (Throwable $e) {
+            if ($m['channel'] !== 'sms' && str_starts_with($e->getMessage(), 'SMTP connect failed')) {
+                $down = true;
+                q("INSERT INTO meta (key, value) VALUES ('mail_paused_until', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) (time() + MAIL_PAUSE_SECONDS)]);
+                error_log('[ticketroom] mail server unreachable, email paused for ' . MAIL_PAUSE_SECONDS . 's: ' . $e->getMessage());
+                // Not this message's fault: it keeps all its tries for when the server is back.
+                q('UPDATE message_outbox SET attempts = attempts - 1, last_error = ? WHERE id = ?', [substr(integration_scrub($e->getMessage()), 0, 300), $m['id']]);
+                continue;
+            }
+            $final = $m['attempts'] + 1 >= 5;
+            q('UPDATE message_outbox SET status = ?, last_error = ? WHERE id = ?', [$final ? 'failed' : 'queued', substr(integration_scrub($e->getMessage()), 0, 300), $m['id']]);
+            if ($final && $m['campaign_id']) q('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?', [$m['campaign_id']]);
+        }
+    }
+    return $sent;
+}
+
+// Sends one email straight away (tests from the admin portal), bypassing the
+// queue, and records it in Messages like any other.
+function send_now(string $to, string $subject, string $body, ?string $userId = null): array
+{
+    $mode = mail_mode();
+    $id = uuid();
+    try {
+        $msgId = send_email($mode, $to, $subject, $body);
+        q("INSERT INTO message_outbox (id, channel, kind, to_address, subject, body, user_id, status, provider, provider_message_id, attempts, sent_at, created_at) VALUES (?,?,?,?,?,?,?,'sent',?,?,1,?,?)",
+            [$id, 'email', 'transactional', $to, $subject, $body, $userId, $mode, $msgId, now_iso(), now_iso()]);
+        q("DELETE FROM meta WHERE key = 'mail_paused_until'");
+        return ['ok' => true, 'detail' => $mode === 'log' ? "Recorded, not sent: email is set to \"Do not send\". Choose SMTP mailbox under Integrations." : "Sent to $to. Check the inbox (and spam) in a minute."];
+    } catch (Throwable $e) {
+        $err = integration_scrub($e->getMessage());
+        q("INSERT INTO message_outbox (id, channel, kind, to_address, subject, body, user_id, status, attempts, last_error, created_at) VALUES (?,?,?,?,?,?,?,'failed',1,?,?)",
+            [$id, 'email', 'transactional', $to, $subject, $body, $userId, substr($err, 0, 300), now_iso()]);
+        return ['ok' => false, 'detail' => "Not sent: $err"];
+    }
+}
+
+// ============================================================== delivery
+function mail_from(): array { return [(string) cfg('mail.fromEmail', 'hello@ticketroom.co.za'), (string) cfg('mail.fromName', 'TicketRoom')]; }
+function mime_header(string $s): string { return preg_match('/[^\x20-\x7e]/', $s) ? '=?UTF-8?B?' . base64_encode($s) . '?=' : $s; }
+function build_mime(string $to, string $subject, string $text): array
+{
+    [$fromEmail, $fromName] = mail_from();
+    $boundary = 'tr-' . bin2hex(random_bytes(12));
+    $domain = substr(strrchr($fromEmail, '@') ?: '@ticketroom.co.za', 1);
+    $msgId = '<' . bin2hex(random_bytes(12)) . '@' . $domain . '>';
+    $headers = [
+        'From' => mime_header($fromName) . " <$fromEmail>",
+        'Reply-To' => $fromEmail,
+        'Date' => date(DATE_RFC2822),
+        'Message-ID' => $msgId,
+        'MIME-Version' => '1.0',
+        'Content-Type' => "multipart/alternative; boundary=\"$boundary\"",
+    ];
+    $html = email_html($subject, $text);
+    $body = "--$boundary\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($text))
+        . "--$boundary\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($html))
+        . "--$boundary--\r\n";
+    return [$headers, $body, $msgId];
+}
+function send_email(string $mode, string $to, string $subject, string $text): string
+{
+    if (!preg_match('/^[^\s@<>()"\',;:\r\n]+@[A-Za-z0-9.-]+$/', $to)) throw new RuntimeException('invalid recipient');
+    [$headers, $body, $msgId] = build_mime($to, $subject, $text);
+    if ($mode === 'log') {
+        $line = json_encode(['at' => now_iso(), 'to' => $to, 'subject' => $subject], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        @file_put_contents(data_dir() . '/mail.log', $line . "\n", FILE_APPEND | LOCK_EX);
+        return 'log';
+    }
+    if ($mode === 'mail') {
+        $h = '';
+        foreach ($headers as $k => $v) $h .= "$k: $v\r\n";
+        $ok = mail($to, mime_header($subject), $body, rtrim($h), '-f' . mail_from()[0]);
+        if (!$ok) throw new RuntimeException('PHP mail() refused the message');
+        return $msgId;
+    }
+    smtp_send($to, $subject, $headers, $body);
+    return $msgId;
+}
+// Minimal SMTP client: implicit TLS (465) or STARTTLS (587/25), AUTH LOGIN.
+// One SMTP connection is kept open for the whole delivery run (a big match
+// sends tens of thousands of tickets; logging in for every email is slow and
+// mail servers throttle it). It is closed at the end of the request.
+function smtp_send(string $to, string $subject, array $headers, string $body): void
+{
+    static $conn = null;
+    if ($conn) {
+        try { smtp_message($conn, $to, $subject, $headers, $body); return; }
+        catch (RuntimeException $e) { if (!str_starts_with($e->getMessage(), 'SMTP link')) { smtp_reset($conn); throw $e; } @fclose($conn['fp']); $conn = null; }
+    }
+    $conn = smtp_open();
+    register_shutdown_function(function () use (&$conn) { if ($conn) { @fwrite($conn['fp'], "QUIT\r\n"); @fclose($conn['fp']); $conn = null; } });
+    try { smtp_message($conn, $to, $subject, $headers, $body); }
+    catch (RuntimeException $e) { smtp_reset($conn); throw $e; }
+}
+function smtp_cmd(array $c, ?string $line, array $ok): string
+{
+    $fp = $c['fp'];
+    if ($line !== null && @fwrite($fp, $line . "\r\n") === false) throw new RuntimeException('SMTP link lost');
+    $data = '';
+    while (($l = fgets($fp, 1024)) !== false) { $data .= $l; if (strlen($l) < 4 || $l[3] !== '-') break; }
+    if ($data === '') throw new RuntimeException('SMTP link lost');
+    if (!in_array((int) substr($data, 0, 3), $ok, true)) throw new RuntimeException('SMTP: ' . trim(preg_replace('/\s+/', ' ', $data)));
+    return $data;
+}
+function smtp_open(): array
+{
+    $host = (string) cfg('mail.smtpHost');
+    $port = (int) cfg('mail.smtpPort', 465);
+    $user = (string) cfg('mail.smtpUser');
+    $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
+    $fp = @stream_socket_client(($port === 465 ? 'ssl://' : 'tcp://') . "$host:$port", $errno, $err, 10, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) throw new RuntimeException("SMTP connect failed: $err");
+    stream_set_timeout($fp, 20);
+    $c = ['fp' => $fp];
+    try {
+        smtp_cmd($c, null, [220]);
+        $ehlo = 'EHLO ' . (parse_url(base_url(), PHP_URL_HOST) ?: 'localhost');
+        $caps = smtp_cmd($c, $ehlo, [250]);
+        if ($port !== 465 && stripos($caps, 'STARTTLS') !== false) {
+            smtp_cmd($c, 'STARTTLS', [220]);
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new RuntimeException('SMTP TLS failed');
+            smtp_cmd($c, $ehlo, [250]);
+        }
+        if ($user !== '') {
+            smtp_cmd($c, 'AUTH LOGIN', [334]);
+            smtp_cmd($c, base64_encode($user), [334]);
+            smtp_cmd($c, base64_encode((string) cfg('mail.smtpPass')), [235]);
+        }
+    } catch (Throwable $e) { @fclose($fp); throw $e; }
+    return $c;
+}
+function smtp_message(array $c, string $to, string $subject, array $headers, string $body): void
+{
+    smtp_cmd($c, 'MAIL FROM:<' . mail_from()[0] . '>', [250]);
+    smtp_cmd($c, "RCPT TO:<$to>", [250, 251]);
+    smtp_cmd($c, 'DATA', [354]);
+    $h = "To: $to\r\nSubject: " . mime_header($subject) . "\r\n";
+    foreach ($headers as $k => $v) $h .= "$k: $v\r\n";
+    $data = preg_replace('/^\./m', '..', $h . "\r\n" . $body);
+    smtp_cmd($c, $data . "\r\n.", [250]);
+}
+// After a refused recipient, clear the half-started message so the same
+// connection can carry on with the next email.
+function smtp_reset(array $c): void
+{
+    try { smtp_cmd($c, 'RSET', [250]); } catch (Throwable) {}
+}
+function smtp_health(): array
+{
+    if (mail_mode() !== 'smtp') return ['ok' => mail_mode() !== 'log', 'detail' => mail_mode() === 'mail' ? 'Using the hosting server\'s built-in mail (PHP mail()). Add the hello@ mailbox SMTP details for better delivery.' : 'Emails are only logged, not sent.'];
+    try {
+        $fp = @stream_socket_client(((int) cfg('mail.smtpPort', 465) === 465 ? 'ssl://' : 'tcp://') . cfg('mail.smtpHost') . ':' . cfg('mail.smtpPort', 465), $no, $err, 8);
+        if (!$fp) return ['ok' => false, 'detail' => "SMTP: $err"];
+        fclose($fp);
+        return ['ok' => true, 'detail' => 'SMTP server reachable (' . cfg('mail.smtpHost') . ')'];
+    } catch (Throwable $e) {
+        return ['ok' => false, 'detail' => 'SMTP: ' . $e->getMessage()];
+    }
+}
+
+// ============================================================== HTML version
+// "Label: https://…" alone on a line -> button; "- " lines -> bullets;
+// everything after the "-- " line -> footer.
+function email_html(string $subject, string $text): string
+{
+    $esc = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+    $linkify = fn($s) => preg_replace_callback('#https?://[^\s<]+[^\s<.,;:!?)]#', fn($m) => '<a href="' . $m[0] . '" style="color:#1B3770">' . $m[0] . '</a>', $esc($s));
+    $parts = preg_split("/\n\n-- \n/u", $text, 2);
+    $main = $parts[0];
+    $footer = $parts[1] ?? '';
+    $blocks = '';
+    foreach (preg_split("/\n{2,}/", $main) as $block) {
+        $lines = explode("\n", $block);
+        if (count($lines) === 1 && preg_match('/^([^:\n]{2,40}): (https?:\/\/\S+)$/u', $lines[0], $m)) {
+            $blocks .= '<p style="margin:24px 0"><a href="' . $esc($m[2]) . '" style="background:#F2A93B;color:#0B1D3F;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">' . $esc($m[1]) . '</a></p>';
+            continue;
+        }
+        $bullets = array_values(array_filter($lines, fn($l) => str_starts_with($l, '- ')));
+        if ($bullets && count($bullets) >= count($lines) - 1) {
+            if (count($lines) > count($bullets)) $blocks .= '<p style="margin:16px 0 6px">' . $linkify($lines[0]) . '</p>';
+            $blocks .= '<ul style="margin:0 0 16px;padding-left:20px">' . implode('', array_map(fn($l) => '<li style="margin:4px 0">' . $linkify(substr($l, 2)) . '</li>', $bullets)) . '</ul>';
+            continue;
+        }
+        $blocks .= '<p style="margin:0 0 16px">' . implode('<br>', array_map($linkify, $lines)) . '</p>';
+    }
+    $foot = implode('<br>', array_map($linkify, explode("\n", $footer)));
+    return '<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . $esc($subject) . '</title></head>'
+        . '<body style="margin:0;padding:0;background:#F5F7FB;font-family:Arial,Helvetica,sans-serif;color:#0E1A30">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB"><tr><td align="center" style="padding:24px 12px">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden">'
+        . '<tr><td style="background:#0B1D3F;padding:20px 28px;font-size:22px;font-weight:800;letter-spacing:1px;color:#ffffff">TICKET<span style="color:#F2A93B">ROOM</span><div style="font-size:11px;font-weight:600;letter-spacing:3px;color:#AFC0DD;margin-top:4px">YOUR EVENT. YOUR TICKET.</div></td></tr>'
+        . '<tr><td style="padding:28px;font-size:15px;line-height:1.55">' . $blocks . '</td></tr>'
+        . '<tr><td style="padding:16px 28px;background:#EEF1F6;font-size:12px;color:#5E6C84;line-height:1.5">' . $foot . '</td></tr>'
+        . '</table></td></tr></table></body></html>';
+}
+
+// ============================================================== templates
+const FOOTER = "\n\n-- \nTicketRoom · ticketroom.co.za · ticketroom.co.za/contact\nTicketRoom (Pty) Ltd · Reg. no. 2026/811077/07";
+function sa_time(?string $iso, string $fmt): string
+{
+    $d = new DateTimeImmutable($iso ?: 'now');
+    return $d->setTimezone(new DateTimeZone('Africa/Johannesburg'))->format($fmt);
+}
+function when_str(?string $iso): string { return sa_time($iso, 'l, j F Y \a\t H:i'); }
+function time_str(?string $iso): string { return sa_time($iso, 'H:i'); }
+function first_name(?string $n): string { $p = preg_split('/\s+/', trim((string) $n)); return ($p[0] ?? '') !== '' ? $p[0] : 'there'; }
+function plural(int $n, string $w): string { return $n . ' ' . $w . ($n === 1 ? '' : 's'); }
+function place(array $e): string { return implode(', ', array_filter([$e['venue_name'] ?? null, $e['address'] ?? null, $e['city'] ?? null])); }
+
+// Same wording as src/modules/messaging/templates.js in the Node edition.
+function tpl(string $name, array $a): array
+{
+    $B = base_url();
+    $hi = 'Hi ' . first_name($a['name'] ?? ($a['order']['buyer_name'] ?? null)) . ",\n\n";
+    switch ($name) {
+        case 'orderConfirmed':
+            $o = $a['order']; $e = $a['event']; $n = (int) $a['ticketCount']; $free = (int) $o['total_cents'] === 0; $isAre = $n === 1 ? 'is' : 'are';
+            $test = (int) ($o['test'] ?? 0) === 1;
+            return [
+                'subject' => ($test ? '[TEST] ' : '') . ($free ? 'Your free ' . ($n === 1 ? 'ticket' : 'tickets') . " for {$e['title']}" : "Your tickets for {$e['title']} ({$o['reference']})"),
+                'body' => $hi . ($test ? "This is a TEST order, paid while TicketRoom payments were in test mode. No real money moved and these tickets will not get you in.\n\n" : '') . ($free ? "You're booked for {$e['title']}. Your " . plural($n, 'free ticket') . " $isAre waiting in your TicketRoom account."
+                                       : 'Thanks for your order. Your ' . plural($n, 'ticket') . " for {$e['title']} $isAre ready.")
+                    . "\n\n" . place($e) . "\n" . when_str($e['starts_at']) . "\nOrder {$o['reference']}" . ($free ? '' : ' · ' . format_zar((int) $o['total_cents']))
+                    . (!empty($a['doorTender']) ? "\nPaid at the venue by " . str_replace('_', ' ', $a['doorTender']['method']) . "\nReceipt {$a['doorTender']['receipt_reference']}" : '')
+                    . (!empty($a['guestLink'])
+                        ? "\n\nView your tickets: {$a['guestLink']}\n\nKeep this email: the link opens your tickets on any phone. Want them all in one place? Create a free account with this email address at $B/account and confirm it. Your tickets will be waiting."
+                        : "\n\nOpen my tickets: $B/account#/tickets")
+                    . "\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in."
+                    . ($free && empty($a['guestLink']) ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : '') . FOOTER,
+            ];
+        case 'eventReminder':
+            $e = $a['event']; $soon = !empty($a['soon']); $n = (int) $a['ticketCount'];
+            $tips = ["- Open your tickets before you leave home. They'll still work if the signal at the venue is bad.", '- Turn your screen brightness up so the QR code scans first time.', '- Each ticket lets one person in, once.'];
+            if (!empty($e['age_restriction'])) $tips[] = "- This event is {$e['age_restriction']}, so bring ID.";
+            if (!empty($e['transfers_enabled'])) $tips[] = "- Can't go? Send your ticket to a friend before the event starts.";
+            return [
+                'subject' => $soon ? "{$e['title']} starts at " . time_str($e['starts_at']) : "{$e['title']} is tomorrow",
+                'body' => $hi . ($soon ? "{$e['title']} starts at " . time_str($e['starts_at']) . ' today.' : "{$e['title']} is tomorrow.") . ' You have ' . plural($n, 'ticket') . ".\n\n"
+                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nOpen my tickets: $B/account#/tickets\n\nA few things that help at the gate:\n" . implode("\n", $tips) . "\n\nEnjoy it!" . FOOTER,
+            ];
+        case 'checkoutAbandoned':
+            $e = $a['event'];
+            return ['subject' => "Still want to go to {$e['title']}?",
+                'body' => $hi . "You started booking tickets for {$e['title']} but didn't finish, so we couldn't hold them for you. There are still tickets available.\n\n"
+                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nFinish my booking: {$a['eventUrl']}\n\nIf something went wrong at checkout, ask us to call you back at $B/contact and we'll sort it out.\n\nThis is the only reminder we'll send about it. To stop emails like this, unsubscribe here: {$a['unsubscribeUrl']}" . FOOTER];
+        case 'refundDone':
+            $o = $a['order']; $e = $a['event'];
+            return ['subject' => "Your refund for {$e['title']} ({$o['reference']})",
+                'body' => $hi . 'We have refunded ' . format_zar((int) $a['amountCents']) . " for your order {$o['reference']} ({$e['title']}).\n\nIt goes back to the card or account you paid with. Banks usually show it within 3 to 7 working days. Any refunded tickets no longer work at the gate.\n\nQuestions? Reply to this email or ask us to call you back at $B/contact." . FOOTER];
+        case 'payoutRequested':
+            return ['subject' => "Payout {$a['reference']} requested", 'body' => $hi . "We've received your payout request of " . format_zar((int) $a['amountCents']) . " for {$a['organiser']}. TicketRoom finance checks every request, then pays it by EFT to {$a['bank']}. You'll get an email when it's paid.\n\nSee your balance: $B/organisers#/finance" . FOOTER];
+        case 'payoutPaid':
+            return ['subject' => "Payout {$a['reference']} is on its way", 'body' => $hi . 'We have paid ' . format_zar((int) $a['amountCents']) . " to {$a['bank']} for {$a['organiser']}. Bank reference: {$a['bankReference']}.\n\nEFTs usually clear within 1 to 2 working days.\n\nSee your balance: $B/organisers#/finance" . FOOTER];
+        case 'payoutRejected':
+            return ['subject' => "Payout {$a['reference']} was not approved", 'body' => $hi . 'Your payout request of ' . format_zar((int) $a['amountCents']) . " was not approved.\n\nThe reason: {$a['note']}\n\nThe amount is back in your available balance. Reply to this email if you have questions." . FOOTER];
+        case 'eventCancelled':
+            $e = $a['event'];
+            return ['subject' => "{$e['title']} has been cancelled",
+                'body' => $hi . "We're sorry to tell you that the organiser has cancelled {$e['title']}, which was set for " . when_str($e['starts_at']) . '.'
+                    . (!empty($a['reason']) ? "\n\nThe reason they gave: {$a['reason']}" : '') . "\n\n"
+                    . (!empty($a['paid']) ? "You don't need to do anything. We've started a full refund, service fee included, to the card or account you paid with. It usually shows within 3 to 7 working days." : "Your free tickets have been cancelled, so there's nothing you need to do.")
+                    . "\n\nSee what else is on: $B/" . FOOTER];
+        case 'transferOffer':
+            $e = $a['event'];
+            return ['subject' => "{$a['fromName']} sent you a ticket for {$e['title']}",
+                'body' => "{$a['fromName']} has sent you a ticket for {$e['title']} on " . when_str($e['starts_at']) . ".\n\nAccept the ticket: {$a['claimUrl']}\n\nThe link works for 7 days. You'll need a TicketRoom account to accept it, and signing up is free." . FOOTER];
+        case 'transferDone':
+            return ['subject' => "Your ticket for {$a['event']['title']} has been accepted",
+                'body' => "{$a['toEmail']} has accepted the ticket you sent for {$a['event']['title']}. The QR code on your copy no longer works." . FOOTER];
+        case 'verifyEmail':
+            return ['subject' => 'Please confirm your email address',
+                'body' => $hi . "Thanks for signing up to TicketRoom. Please confirm your email address so your tickets and updates reach you.\n\nConfirm my email: {$a['url']}\n\nIf you didn't create a TicketRoom account, you can ignore this email." . FOOTER];
+        case 'finishAccount':
+            return ['subject' => 'Finish creating your TicketRoom account',
+                'body' => $hi . "Someone, hopefully you, asked to create a TicketRoom account with this email. You've booked with us before, so your tickets are already waiting: choose a password to open them. This link works for 24 hours.\n\nChoose my password: {$a['url']}\n\nIf it wasn't you, ignore this email. Nothing changes until a password is chosen from this link." . FOOTER];
+        case 'passwordReset':
+            return ['subject' => 'Reset your TicketRoom password',
+                'body' => $hi . "Someone, hopefully you, asked to reset the password on your TicketRoom account. This link works for one hour.\n\nChoose a new password: {$a['url']}\n\nIf it wasn't you, ignore this email and your password will stay the same." . FOOTER];
+        case 'staffLoginCode':
+            return ['subject' => 'Your TicketRoom staff sign-in code',
+                'body' => $hi . "Your one-time staff sign-in code is {$a['code']}. It expires in 10 minutes and can be used once.\n\nIf you did not try to sign in, ignore this message and tell the TicketRoom owner." . FOOTER];
+        case 'loginCode':
+            return ['subject' => 'Your TicketRoom sign-in code',
+                'body' => $hi . "Your one-time sign-in code is {$a['code']}. It expires in 10 minutes and can be used once.\n\nIf you did not try to sign in, ignore this email. You can turn off login codes in your account Security settings." . FOOTER];
+        case 'supportReply':
+            return ['subject' => "Re: {$a['subject']} ({$a['reference']})",
+                'body' => $hi . $a['message'] . "\n\n" . ($a['from'] ?? 'The TicketRoom team') . "\n\nTo add anything, reply to this email or use our contact form at $B/contact and mention {$a['reference']}." . FOOTER];
+        case 'queryPassedOn':
+            return ['subject' => "Your question is with {$a['organiser']} ({$a['reference']})",
+                'body' => $hi . "Thanks for your patience. Your question is about an event run by {$a['organiser']}, so we've passed it to them with everything you told us. They'll reply to you by email.\n\nIf you don't hear from them within two working days, reply to this email and we'll follow up." . FOOTER];
+        case 'queryForOrganiser':
+            return ['subject' => "Customer question for {$a['organiser']} ({$a['reference']})",
+                'body' => "Hi {$a['organiser']},\n\nTicketRoom customer care has passed you a question from {$a['customer']}" . ($a['event'] ? " about {$a['event']}" : '') . ".\n\n\"{$a['subject']}\"\n{$a['body']}\n" . ($a['note'] ? "\nNote from customer care: {$a['note']}\n" : '')
+                    . "\nPlease reply within two working days: $B/organisers#/queries\n\nYour reply is emailed to the customer from TicketRoom. If it isn't yours to answer, send it back to TicketRoom from the same page." . FOOTER];
+        case 'callbackReceived':
+            return ['subject' => "We've got your callback request ({$a['reference']})",
+                'body' => $hi . "Thanks for getting in touch. Your reference is {$a['reference']}, and someone from our team will get back to you within {$a['responseTime']}.\n\nOur office hours: {$a['hoursNote']}\n\nIf there's anything to add, reply to this email or use our contact form at $B/contact and mention {$a['reference']}." . FOOTER];
+        case 'contactReceived':
+            return ['subject' => "We've got your message ({$a['reference']})",
+                'body' => $hi . "Thanks for getting in touch about \"{$a['topic']}\". Your reference is {$a['reference']}, and someone from our team will reply within {$a['responseTime']}.\n\nOur office hours: {$a['hoursNote']}\n\nIf there's anything to add, reply to this email or use our contact form at $B/contact and mention {$a['reference']}." . FOOTER];
+        case 'accountDeletionReceived':
+            return ['subject' => "We've received your account deletion request ({$a['reference']})",
+                'body' => $hi . "We've received your request to delete your TicketRoom account. Your reference is {$a['reference']}. Our team will review it and get back to you within {$a['responseTime']}.\n\nYour account and its records have not been deleted, and your account remains active while we review the request. We may need to resolve upcoming tickets, balances or organiser responsibilities, and retain some transaction, financial or other information where required by law.\n\nIf you need to add anything, reply to this email and mention {$a['reference']}." . FOOTER];
+        case 'unsubscribeLink':
+            return ['subject' => 'Unsubscribe from TicketRoom marketing',
+                'body' => $hi . "You asked to stop getting marketing emails from TicketRoom and the organisers you follow. Please confirm below. The link works for 7 days.\n\nConfirm unsubscribe: {$a['url']}\n\nWe'll still email you about tickets you already have. If you didn't ask for this, you can ignore this email." . FOOTER];
+        case 'newsletterConfirm':
+            return ['subject' => 'Confirm your TicketRoom updates',
+                'body' => "Hi there,\n\nThanks for signing up for TicketRoom updates: new events, ticket releases and the odd bit of news. Please confirm it's you. The link works for 7 days.\n\nConfirm my subscription: {$a['url']}\n\nIf you didn't sign up, ignore this email and you won't hear from us." . FOOTER];
+        case 'newsletterUpdate':
+            return ['subject' => $a['subject'],
+                'body' => rtrim($a['message']) . "\n\n-- \nYou're getting this because you subscribed to TicketRoom updates on ticketroom.co.za. To stop them, unsubscribe here: {$a['unsubscribeUrl']}\nTicketRoom (Pty) Ltd · Reg. no. 2026/811077/07"];
+        case 'organiserApproved':
+            return ['subject' => "{$a['organiser']} is approved on TicketRoom",
+                'body' => $hi . "{$a['organiser']} has been approved. You can now send your events to us for review, and email people who asked to hear from you.\n\nGo to the organiser portal: $B/organisers\n\nFor now, free events are listed at no cost. Paid ticket sales are coming soon.\n\nIf you'd like a hand setting up your first event, ask us to call you at $B/contact." . FOOTER];
+        case 'organiserRejected':
+            return ['subject' => 'About your TicketRoom organiser application',
+                'body' => $hi . "Thanks for applying to list events on TicketRoom as {$a['organiser']}. We can't approve the application at this stage."
+                    . (!empty($a['reason']) ? "\n\nReason: {$a['reason']}" : '') . "\n\nIf you can send us more information, reply to this email or ask us to call you at $B/contact." . FOOTER];
+        case 'eventPublished':
+            return ['subject' => "Your event is live: {$a['event']['title']}",
+                'body' => $hi . "{$a['event']['title']} has been approved and is now live on TicketRoom.\n\nSee the event page: {$a['eventUrl']}\n\nA few next steps:\n- Share the link on your socials and in your WhatsApp groups.\n- Make a tracking link for each place you share it, so you can see what works.\n- Add your door staff under Staff so they can scan tickets on their phones." . FOOTER];
+        case 'eventChangesRequested':
+            return ['subject' => "Changes needed before {$a['event']['title']} can go live",
+                'body' => $hi . "We've looked at {$a['event']['title']} and need a few changes before we can publish it.\n\n"
+                    . (!empty($a['reason']) ? "What to change: {$a['reason']}\n\n" : '') . "Edit my event: $B/organisers#/events/{$a['event']['id']}\n\nOnce you've made the changes, send it to us again and we'll take another look." . FOOTER];
+        case 'eventChangeReviewed':
+            $approved = !empty($a['approved']);
+            return ['subject' => $approved ? "Event changes approved: {$a['event']['title']}" : "Event changes need attention: {$a['event']['title']}",
+                'body' => $hi . ($approved ? "The requested changes to {$a['event']['title']} have been approved and applied to the live event." : "The requested changes to {$a['event']['title']} were not approved, so the live event has not been changed.")
+                    . (!empty($a['note']) ? "\n\nAdmin review: {$a['note']}" : '') . "\n\nOpen the event in your organiser portal: $B/organisers#/events/{$a['event']['id']}/details" . FOOTER];
+        case 'eventDetailsUpdated':
+            return ['subject' => "Updated details for {$a['event']['title']}",
+                'body' => $hi . "The organiser has changed important details for an event you have a ticket for. Your ticket is still valid.\n\n"
+                    . "Event: {$a['event']['title']}\nDate and time: " . when_str($a['event']['starts_at']) . ' to ' . when_str($a['event']['ends_at']) . "\nVenue: {$a['event']['venue_name']}, {$a['event']['city']}"
+                    . (!empty($a['event']['address']) ? "\nAddress: {$a['event']['address']}" : '')
+                    . "\n\nCheck the latest information before travelling: {$a['eventUrl']}\nIf the change affects your plans, please use the TicketRoom contact form and include your order reference: $B/contact?topic=tickets" . FOOTER];
+        case 'teamInvite':
+            return ['subject' => "You've been added to the TicketRoom team",
+                'body' => $hi . "{$a['by']} has added you to the TicketRoom team as {$a['roles']}. " . ($a['url'] ? "Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\n" : "Sign in with your usual TicketRoom password.\n\n") . "After signing in you land in the admin portal. Keep your password to yourself: this account can see customer details." . FOOTER];
+        case 'staffPasswordReset':
+            return ['subject' => 'Choose a new TicketRoom password',
+                'body' => $hi . "{$a['by']} has sent you a link to choose a new password for the TicketRoom admin portal. It works for 24 hours.\n\nChoose my password: {$a['url']}\n\nIf you didn't ask for this, tell {$a['by']} straight away." . FOOTER];
+        case 'orgMemberInvite':
+            return ['subject' => "{$a['organiser']} added you to their team on TicketRoom",
+                'body' => $hi . "{$a['by']} has added you to the {$a['organiser']} team on TicketRoom, with the " . ucfirst($a['role']) . " role. Set a password to open the organiser portal. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nAfter that, sign in at ticketroom.co.za/organisers." . FOOTER];
+        case 'topupConfirmed':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "Top-up confirmed for {$a['event']['title']}",
+                'body' => $hi . ($test ? "This was a TEST top-up, paid while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "We've added " . format_zar((int) $a['amountCents']) . " to your cashless balance for {$a['event']['title']}. Your balance is now " . format_zar((int) $a['balanceCents']) . ".\n\n"
+                    . "Pay at the stalls by tapping your wristband. Purchases of " . format_zar(cashless_limits()['pinThresholdCents']) . " or more need your spending PIN.\n\nSee my balance: $B/account#/wallet" . FOOTER];
+        case 'walletRefundDone':
+            return ['subject' => "Your unused balance for {$a['event']['title']} is on its way",
+                'body' => $hi . 'We have refunded ' . format_zar((int) $a['amountCents']) . " of unused cashless balance for {$a['event']['title']} (reference {$a['reference']}).\n\nIt goes back to the card you topped up with. Banks usually show it within 3 to 7 working days." . FOOTER];
+        case 'vendorInvite':
+            return ['subject' => "{$a['organiser']} added you to {$a['vendor']} on TicketRoom",
+                'body' => $hi . "{$a['organiser']} has added you to the team for {$a['vendor']} at {$a['event']}, so you can sell with the TicketRoom till. Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/pos on your phone, sign in, and enter the till key your manager gives you." . FOOTER];
+        case 'deskTopup':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . format_zar((int) $a['amountCents']) . " added to your wristband for {$a['event']['title']}",
+                'body' => $hi . ($test ? "This was a TEST top-up, made while TicketRoom payments were in test mode.\n\n" : '')
+                    . 'The top-up desk added ' . format_zar((int) $a['amountCents']) . ' (' . ($a['method'] === 'cash' ? 'paid in cash' : 'paid by card') . ") to your cashless balance for {$a['event']['title']}.\n\nYour balance is now " . format_zar((int) $a['balanceCents']) . ".\nReference {$a['reference']}\n\nSee my balance: $B/account#/wallet" . FOOTER];
+        case 'cashoutReminder':
+            return ['subject' => 'You have ' . format_zar((int) $a['balanceCents']) . " left from {$a['event']['title']}",
+                'body' => $hi . "Thanks for coming to {$a['event']['title']}. You still have " . format_zar((int) $a['balanceCents']) . " on your cashless balance.\n\nCash it out in one tap: back to the card you topped up with, or by EFT to your bank account.\n\nCash out my balance: {$a['url']}\n\n"
+                    . "If you don't choose, money you topped up online by card goes back to that card automatically after {$a['days']} days." . (!empty($a['policy']) ? "\n\nThe organiser's refund policy: {$a['policy']}" : '') . FOOTER];
+        case 'cashoutPaid':
+            return ['subject' => "Your cash-out {$a['reference']} is on its way",
+                'body' => $hi . 'We have paid ' . format_zar((int) $a['amountCents']) . " from your {$a['event']['title']} balance to {$a['bank']}. EFTs usually clear within 1 to 2 working days." . FOOTER];
+        case 'cashoutRejected':
+            return ['subject' => "Your cash-out {$a['reference']} was not paid",
+                'body' => $hi . 'We could not pay your cash-out of ' . format_zar((int) $a['amountCents']) . ".\n\nThe reason: {$a['note']}\n\nThe money is back on your balance. Open your wallet to choose another way, or reply to this email." . FOOTER];
+        case 'staffInvite':
+            $jobs = array_filter([(empty($a['canScan']) ? null : 'scan admission tickets'), (empty($a['canManageTags']) ? null : 'help attendees with wristbands'), (empty($a['canSellTickets']) ? null : 'sell tickets and reconcile door payments')]);
+            return ['subject' => "{$a['organiser']} added you to the event team on TicketRoom",
+                'body' => $hi . "{$a['organiser']} has added you to the team for {$a['event']}" . ($jobs ? ' to ' . implode(', ', $jobs) : '') . ". Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone and sign in to see your event tools." . FOOTER];
+        case 'verificationApproved':
+            $for = !empty($a['event']) ? " for {$a['event']}" : '';
+            return ['subject' => "Approved: {$a['document']}",
+                'body' => $hi . "We've checked your {$a['document']}$for and approved it. Thank you.\n\nSee what is still needed, if anything: $B/organisers#/verification" . FOOTER];
+        case 'verificationRejected':
+            $for = !empty($a['event']) ? " for {$a['event']}" : '';
+            return ['subject' => "Please upload your {$a['document']} again",
+                'body' => $hi . "We couldn't accept the {$a['document']}$for that {$a['organiser']} uploaded.\n\nThe reason: " . ($a['reason'] ?: 'it could not be read.')
+                    . "\n\nUpload a new copy here: $B/organisers#/verification\n\nA clear photo or a PDF of the whole page works best. Questions? Reply to this email." . FOOTER];
+        case 'verificationComplete':
+            return ['subject' => "{$a['organiser']} is verified on TicketRoom",
+                'body' => $hi . "Everything we need to verify {$a['organiser']} has been checked and approved.\n\n"
+                    . (!empty($a['paid']) ? 'Your events can go on sale once we approve them, and payouts can be made to your verified bank account.' : 'Your events can go live once we approve them. If you start selling paid tickets, we will ask for your bank details and a bank confirmation letter before the first payout.')
+                    . "\n\nWe keep your documents private and only as long as the law (FICA) requires. See what we hold: $B/organisers#/verification" . FOOTER];
+        case 'gatePass':
+            return ['subject' => "Your gate pass for {$a['event']}",
+                'body' => $hi . "{$a['organiser']} has given you a {$a['role']} pass for {$a['event']} ({$a['when']}, {$a['venue']}).\n\nOpen your pass: {$a['url']}\n\nShow the QR code at the gate. " . ($a['reentry'] ? 'It lets you in and out as often as you need.' : 'It works for one entry.') . " Keep the link to yourself: anyone with it can use your pass." . FOOTER];
+        // Waitlists, TicketRoom Exchange and friend top-ups (lib/exchange.php).
+        case 'waitlistJoined':
+            $e = $a['event'];
+            return ['subject' => "You're on the waitlist for {$e['title']}",
+                'body' => $hi . "You're number {$a['position']} in line for a {$a['ticketType']} ticket for {$e['title']} on " . when_str($e['starts_at']) . ".\n\n"
+                    . "When a ticket comes up (someone gets a refund, a booking isn't paid, or a fan resells theirs at no more than they paid), we'll email you a private link. It holds the ticket for you for {$a['minutes']} minutes, so keep an eye on your inbox.\n\n"
+                    . "Changed your mind? Leave the waitlist: {$a['leaveUrl']}" . FOOTER];
+        case 'waitlistOffer':
+            $e = $a['event'];
+            return ['subject' => "A ticket for {$e['title']} is yours if you want it",
+                'body' => $hi . "Good news: a {$a['ticketType']} ticket for {$e['title']} has come up, and you're next in line.\n\n"
+                    . 'Price: ' . format_zar((int) $a['priceCents']) . ' plus a ' . format_zar((int) $a['feeCents']) . ' service fee' . (!empty($a['resale']) ? ' (a fan is reselling it at no more than they paid)' : '') . ".\n\n"
+                    . "Get my ticket: {$a['url']}\n\nWe're holding it for you until " . time_str($a['until']) . " ({$a['minutes']} minutes). After that it goes to the next person in line." . FOOTER];
+        case 'resaleSold':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "Your ticket for {$a['event']['title']} has sold",
+                'body' => $hi . ($test ? "This was a TEST sale, made while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "Your ticket for {$a['event']['title']} sold on TicketRoom Exchange. The buyer has a new ticket with a new code, so your old QR code no longer works.\n\n"
+                    . 'We\'re paying you ' . format_zar((int) $a['amountCents']) . ($a['method'] === 'card' ? ', back to the card you paid with. Banks usually show it within 3 to 7 working days.' : ' by EFT to the bank account you gave us. TicketRoom finance pays within a few working days.')
+                    . "\nReference {$a['reference']}" . FOOTER];
+        case 'resalePaid':
+            return ['subject' => "Your resale money for {$a['event']['title']} is on its way",
+                'body' => $hi . 'We have paid you ' . format_zar((int) $a['amountCents']) . " for the ticket you sold for {$a['event']['title']} (reference {$a['reference']}).\n\n"
+                    . ($a['method'] === 'card' ? 'It goes back to the card you paid with. Banks usually show it within 3 to 7 working days.' : "It went by EFT to {$a['bank']}. EFTs usually clear within 1 to 2 working days.") . FOOTER];
+        case 'friendTopup':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "{$a['fromName']} topped up your balance for {$a['event']['title']}",
+                'body' => $hi . ($test ? "This was a TEST top-up, paid while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "{$a['fromName']} added " . format_zar((int) $a['amountCents']) . " to your cashless balance for {$a['event']['title']}. Your balance is now " . format_zar((int) $a['balanceCents']) . ".\n\n"
+                    . "Pay at the stalls by tapping your wristband. Link one in your account if you haven't yet.\n\nSee my balance: $B/account#/wallet" . FOOTER];
+        case 'friendTopupSent':
+            $test = !empty($a['test']);
+            return ['subject' => ($test ? '[TEST] ' : '') . "You topped up {$a['friendName']} for {$a['event']['title']}",
+                'body' => $hi . ($test ? "This was a TEST top-up. No real money moved.\n\n" : '')
+                    . 'Done. ' . format_zar((int) $a['amountCents']) . " is on {$a['friendName']}'s cashless balance for {$a['event']['title']}, and we've let them know.\nReference {$a['reference']}" . FOOTER];
+        case 'friendInvite':
+            return ['subject' => "{$a['fromName']} wants to top up your wallet for {$a['event']['title']}",
+                'body' => "Hi there,\n\n{$a['fromName']} wants to add money to your cashless balance for {$a['event']['title']}, so you can tap and pay at the stalls.\n\n"
+                    . "You need a free TicketRoom account first. Sign up with this email address: {$a['url']}\n\nOnce you've confirmed it, let {$a['fromName']} know and they can top you up.\n\nThe event: {$a['eventUrl']}" . FOOTER];
+        // Promote (lib/promote.php).
+        case 'promotionConfirmed':
+            $p = $a['promotion']; $e = $a['event']; $test = (int) ($p['test'] ?? 0) === 1;
+            $how = ($p['paid_with'] ?? 'card') === 'balance' ? 'from your TicketRoom balance' : 'by card';
+            return ['subject' => ($test ? '[TEST] ' : '') . "Promote is on for {$e['title']} ({$p['reference']})",
+                'body' => $hi . ($test ? "This is a TEST purchase, made while TicketRoom payments were in test mode. No real money moved.\n\n" : '')
+                    . "Thanks for promoting {$e['title']} with TicketRoom. Here is your receipt.\n\n"
+                    . "Promote package for {$e['title']}\nReference {$p['reference']}\nPaid " . format_zar((int) $p['price_cents']) . " $how, " . sa_time($p['paid_at'] ?? null, 'j F Y') . "\n"
+                    . 'Runs until the event ends: ' . when_str($e['ends_at'] ?? $p['ends_at']) . "\n\n"
+                    . "What you get until then:\n- As many email campaigns to your opted-in ticket buyers as you like\n- SMS campaigns, once SMS is switched on for your account\n- Your event on TicketRoom's social media: send us your caption and dates\n- Analytics for every campaign: messages sent, clicks, tickets and revenue\n\n"
+                    . "Start now: $B/organisers#/events/{$e['id']}/promote" . FOOTER];
+        case 'promotionRefunded':
+            $p = $a['promotion']; $e = $a['event'];
+            return ['subject' => "Your Promote package for {$e['title']} was refunded",
+                'body' => $hi . 'We have refunded ' . format_zar((int) $a['amountCents']) . " for Promote {$p['reference']} ({$e['title']}).\n\n"
+                    . (!empty($a['toBalance']) ? 'It is back in your TicketRoom balance.' : 'It goes back to the card you paid with. Banks usually show it within 3 to 7 working days.')
+                    . "\n\nQuestions? Reply to this email." . FOOTER];
+        case 'socialRequested':
+            $e = $a['event']; $r = $a['request']; $p = $a['promotion'];
+            return ['subject' => "Social post request: {$e['title']} ({$p['reference']})",
+                'body' => "{$a['organiser']} asked for a social post for {$e['title']}.\n\nCaption:\n{$r['caption']}\n\n"
+                    . 'Preferred dates: ' . ($r['preferredDates'] ?: 'any') . "\nLinks: " . ($r['links'] ? implode(' ', $r['links']) : 'none') . "\nImages: " . count($r['images'])
+                    . "\n\nOpen the Promotions queue: $B/admin#/promotions" . FOOTER];
+        case 'socialPostLive':
+            $e = $a['event'];
+            return ['subject' => "{$e['title']} is on TicketRoom's socials",
+                'body' => $hi . "Your post for {$e['title']} is live on TicketRoom's social media.\n\n" . implode("\n", $a['links'])
+                    . "\n\nShare it with your crowd: every like and share helps more people find your event.\n\nSee your campaign results: $B/organisers#/events/{$e['id']}/promote" . FOOTER];
+    }
+    throw new InvalidArgumentException("Unknown template $name");
+}
+
+// Every email the PHP edition sends, with sample data for previews.
+function email_catalog(): array
+{
+    $B = base_url();
+    $d = new DateTimeImmutable('tomorrow 19:00', new DateTimeZone('Africa/Johannesburg'));
+    $ev = ['id' => '00000000-0000-0000-0000-000000000000', 'title' => 'Soweto Sunset Sessions', 'slug' => 'soweto-sunset-sessions', 'starts_at' => iso_at((float) $d->format('U')),
+        'venue_name' => 'Orlando Amphitheatre', 'address' => 'Mooki St, Orlando East', 'city' => 'Soweto', 'age_restriction' => '18+', 'transfers_enabled' => true];
+    $today = $ev + []; $today['starts_at'] = iso_at((float) (new DateTimeImmutable('today 19:00', new DateTimeZone('Africa/Johannesburg')))->format('U'));
+    $o = ['buyer_name' => 'Lerato Mokoena', 'reference' => 'TR-7KQ2M9', 'total_cents' => 0];
+    return [
+        ['key' => 'orderConfirmedFree', 'name' => 'Free tickets confirmed', 'audience' => 'Attendee', 'trigger' => 'Right after someone gets free tickets', 'sample' => fn() => tpl('orderConfirmed', ['order' => $o, 'event' => $ev, 'ticketCount' => 2])],
+        ['key' => 'orderConfirmedPaid', 'name' => 'Paid tickets confirmed', 'audience' => 'Attendee', 'trigger' => 'As soon as the payment provider confirms a card payment', 'sample' => fn() => tpl('orderConfirmed', ['order' => ['total_cents' => 34000] + $o, 'event' => $ev, 'ticketCount' => 2])],
+        ['key' => 'finishAccount', 'name' => 'Finish creating your account', 'audience' => 'Attendee', 'trigger' => 'When someone who bought as a guest signs up with the same email', 'sample' => fn() => tpl('finishAccount', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'supportReply', 'name' => 'Reply to a customer question', 'audience' => 'Everyone', 'trigger' => 'When customer care or the organiser replies to a question', 'sample' => fn() => tpl('supportReply', ['name' => 'Lerato Mokoena', 'subject' => 'Is there parking at the venue?', 'reference' => 'SC-3QJAPVRK', 'message' => 'Yes, there is secure parking at the venue for R20 per car. Gates open an hour before the show.', 'from' => 'Ayanda, TicketRoom customer care'])],
+        ['key' => 'queryPassedOn', 'name' => 'Question passed to the organiser', 'audience' => 'Everyone', 'trigger' => 'When customer care passes a question to the organiser', 'sample' => fn() => tpl('queryPassedOn', ['name' => 'Lerato Mokoena', 'organiser' => 'Soweto Community Arts', 'reference' => 'SC-3QJAPVRK'])],
+        ['key' => 'queryForOrganiser', 'name' => 'Customer question for the organiser', 'audience' => 'Organiser', 'trigger' => 'When customer care passes a question to the organiser', 'sample' => fn() => tpl('queryForOrganiser', ['organiser' => 'Soweto Community Arts', 'reference' => 'SC-3QJAPVRK', 'customer' => 'Lerato Mokoena', 'event' => 'Soweto Sunset Sessions', 'subject' => 'Is there parking at the venue?', 'body' => 'Hi, I have two tickets for Saturday. Is there safe parking nearby?', 'note' => 'Customer asks about parking.'])],
+        ['key' => 'payoutRequested', 'name' => 'Payout requested', 'audience' => 'Organiser', 'trigger' => 'When an organiser asks for a payout', 'sample' => fn() => tpl('payoutRequested', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321'])],
+        ['key' => 'payoutRejected', 'name' => 'Payout not approved', 'audience' => 'Organiser', 'trigger' => 'When finance turns down a payout request', 'sample' => fn() => tpl('payoutRejected', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'note' => 'The bank account name does not match the organisation. Please update your bank details.'])],
+        ['key' => 'eventReminderDay', 'name' => 'Event reminder: day before', 'audience' => 'Attendee', 'trigger' => 'Automatic, about 24 hours before the event starts', 'setting' => 'reminderDayBefore', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketCount' => 2, 'soon' => false])],
+        ['key' => 'eventReminderSoon', 'name' => 'Event reminder: starting soon', 'audience' => 'Attendee', 'trigger' => 'Automatic, within 3 hours of the start', 'setting' => 'reminderSoon', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $today, 'ticketCount' => 2, 'soon' => true])],
+        ['key' => 'checkoutAbandoned', 'name' => 'Abandoned checkout', 'audience' => 'Attendee', 'trigger' => 'Automatic, once, after an unfinished booking (delay set below)', 'setting' => 'abandonedCheckout', 'sample' => fn() => tpl('checkoutAbandoned', ['name' => 'Lerato Mokoena', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions", 'unsubscribeUrl' => "$B/unsubscribe?t=sample"])],
+        ['key' => 'eventCancelled', 'name' => 'Event cancelled', 'audience' => 'Attendee', 'trigger' => 'When an event is cancelled', 'sample' => fn() => tpl('eventCancelled', ['name' => 'Lerato Mokoena', 'event' => $ev, 'reason' => 'Severe weather warning for the venue', 'paid' => false])],
+        ['key' => 'transferOffer', 'name' => 'Ticket transfer received', 'audience' => 'Attendee', 'trigger' => 'When someone sends a ticket', 'sample' => fn() => tpl('transferOffer', ['fromName' => 'Thabo Nkosi', 'event' => $ev, 'claimUrl' => "$B/account#/claim/sample"])],
+        ['key' => 'transferDone', 'name' => 'Ticket transfer accepted', 'audience' => 'Attendee', 'trigger' => 'When the friend accepts', 'sample' => fn() => tpl('transferDone', ['event' => $ev, 'toEmail' => 'friend@example.co.za'])],
+        ['key' => 'verifyEmail', 'name' => 'Welcome / confirm email', 'audience' => 'Everyone', 'trigger' => 'On sign-up', 'sample' => fn() => tpl('verifyEmail', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/verify/sample"])],
+        ['key' => 'passwordReset', 'name' => 'Password reset', 'audience' => 'Everyone', 'trigger' => 'On "Forgot password"', 'sample' => fn() => tpl('passwordReset', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'loginCode', 'name' => 'Optional customer and organiser sign-in code', 'audience' => 'Customer or organiser', 'trigger' => 'When login codes are enabled in Security settings', 'sample' => fn() => tpl('loginCode', ['name' => 'Lerato Mokoena', 'code' => '482916'])],
+        ['key' => 'contactReceived', 'name' => 'Contact form received', 'audience' => 'Everyone', 'trigger' => 'When someone writes in from the Contact page', 'sample' => fn() => tpl('contactReceived', ['name' => 'Lerato Mokoena', 'reference' => 'CQ-7J2M9P4X', 'topic' => 'My tickets', 'responseTime' => '24–48 hours', 'email' => 'hello@ticketroom.co.za', 'hoursNote' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.'])],
+        ['key' => 'callbackReceived', 'name' => 'Callback request received', 'audience' => 'Everyone', 'trigger' => 'When the callback form is sent', 'sample' => fn() => tpl('callbackReceived', ['name' => 'Lerato Mokoena', 'reference' => 'CB-4H8D2K', 'responseTime' => '24–48 hours', 'email' => 'hello@ticketroom.co.za', 'hoursNote' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.'])],
+        ['key' => 'unsubscribeLink', 'name' => 'Unsubscribe link', 'audience' => 'Everyone', 'trigger' => 'From the Unsubscribe page', 'sample' => fn() => tpl('unsubscribeLink', ['name' => 'Lerato Mokoena', 'url' => "$B/unsubscribe?t=sample"])],
+        ['key' => 'newsletterConfirm', 'name' => 'Confirm updates subscription', 'audience' => 'Subscriber', 'trigger' => 'When someone subscribes to updates on the website', 'sample' => fn() => tpl('newsletterConfirm', ['url' => "$B/subscribe?t=sample"])],
+        ['key' => 'newsletterUpdate', 'name' => 'TicketRoom update', 'audience' => 'Subscriber', 'trigger' => 'Sent from Admin portal → Subscribers', 'sample' => fn() => tpl('newsletterUpdate', ['subject' => 'New this month on TicketRoom', 'message' => "Hi there,\n\nThree big free events have just been listed in Soweto and Pretoria, and the Derby Day tickets open on Friday.\n\nSee what's on: $B/", 'unsubscribeUrl' => "$B/unsubscribe?t=sample"])],
+        ['key' => 'organiserApproved', 'name' => 'Organiser approved', 'audience' => 'Organiser', 'trigger' => 'When admin approves an organiser', 'sample' => fn() => tpl('organiserApproved', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts'])],
+        ['key' => 'organiserRejected', 'name' => 'Organiser not approved', 'audience' => 'Organiser', 'trigger' => 'When admin rejects an organiser', 'sample' => fn() => tpl('organiserRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'reason' => "We couldn't verify the contact details."])],
+        ['key' => 'eventPublished', 'name' => 'Event published', 'audience' => 'Organiser', 'trigger' => 'When admin approves an event', 'sample' => fn() => tpl('eventPublished', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
+        ['key' => 'eventChangesRequested', 'name' => 'Event needs changes', 'audience' => 'Organiser', 'trigger' => 'When admin sends an event back', 'sample' => fn() => tpl('eventChangesRequested', ['name' => 'Naledi Dlamini', 'event' => $ev, 'reason' => 'Please add the full venue address and a poster image.'])],
+        ['key' => 'eventChangeReviewed', 'name' => 'Event change request reviewed', 'audience' => 'Organiser', 'trigger' => 'When an admin approves or rejects a proposed event change', 'sample' => fn() => tpl('eventChangeReviewed', ['name' => 'Naledi Dlamini', 'event' => $ev, 'approved' => true, 'note' => 'Verified the updated venue and confirmed buyer notices.'])],
+        ['key' => 'eventDetailsUpdated', 'name' => 'Important event details updated', 'audience' => 'Ticket holder', 'trigger' => 'After admin approves a title, date or venue change for a live event', 'sample' => fn() => tpl('eventDetailsUpdated', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
+        ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/admin#/reset/sample"])],
+        ['key' => 'staffPasswordReset', 'name' => 'Staff password reset', 'audience' => 'Staff', 'trigger' => 'When an admin sends a staff member a new-password link', 'sample' => fn() => tpl('staffPasswordReset', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'url' => "$B/admin#/reset/sample"])],
+        ['key' => 'orgMemberInvite', 'name' => 'Added to an organiser team', 'audience' => 'Organiser', 'trigger' => 'When an organiser adds a new team member', 'sample' => fn() => tpl('orgMemberInvite', ['by' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'role' => 'manager', 'url' => "$B/organisers#/reset/sample"])],
+        ['key' => 'refundDone', 'name' => 'Refund paid', 'audience' => 'Attendee', 'trigger' => 'When a refund reaches the customer\'s card', 'sample' => fn() => tpl('refundDone', ['name' => 'Sipho', 'order' => ['reference' => 'TR-8K2M4Q', 'buyer_name' => 'Sipho'], 'event' => ['title' => 'Soweto Sunset Sessions'], 'amountCents' => 32000])],
+        ['key' => 'payoutPaid', 'name' => 'Payout paid', 'audience' => 'Organiser', 'trigger' => 'When finance records the EFT', 'sample' => fn() => tpl('payoutPaid', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321', 'bankReference' => 'TR PO-4H8T2W'])],
+        ['key' => 'gatePass', 'name' => 'Gate pass', 'audience' => 'Attendee', 'trigger' => 'When an organiser issues a gate pass with an email address', 'sample' => fn() => tpl('gatePass', ['name' => 'Lerato', 'organiser' => 'Soweto Community Arts', 'role' => 'Crew', 'event' => 'Soweto Sunset Sessions', 'when' => 'Sat 21 Nov 2026, 15:00', 'venue' => 'Thokoza Park, Soweto', 'url' => "$B/pass?t=sample", 'reentry' => true])],
+        ['key' => 'topupConfirmed', 'name' => 'Cashless top-up confirmed', 'audience' => 'Attendee', 'trigger' => 'When a card top-up of an event balance is confirmed', 'sample' => fn() => tpl('topupConfirmed', ['name' => 'Lerato Mokoena', 'event' => $ev, 'amountCents' => 20000, 'balanceCents' => 35000])],
+        ['key' => 'walletRefundDone', 'name' => 'Unused balance refunded', 'audience' => 'Attendee', 'trigger' => 'When finance pays back an unused cashless balance', 'sample' => fn() => tpl('walletRefundDone', ['name' => 'Lerato Mokoena', 'event' => $ev, 'reference' => 'RF-7KQ2M9PX', 'amountCents' => 8500])],
+        ['key' => 'deskTopup', 'name' => 'Top-up at the desk', 'audience' => 'Attendee', 'trigger' => 'When the top-up desk adds money and the guest wants a receipt', 'sample' => fn() => tpl('deskTopup', ['name' => 'Lerato Mokoena', 'event' => $ev, 'amountCents' => 20000, 'balanceCents' => 26500, 'reference' => 'DT-7KQ2M9PX', 'method' => 'cash'])],
+        ['key' => 'cashoutReminder', 'name' => 'Balance left after the event', 'audience' => 'Attendee', 'trigger' => 'Automatic, once, after a cashless event ends', 'sample' => fn() => tpl('cashoutReminder', ['name' => 'Lerato Mokoena', 'event' => $ev, 'balanceCents' => 8500, 'url' => "$B/account#/wallet", 'policy' => null, 'days' => 14])],
+        ['key' => 'cashoutPaid', 'name' => 'Cash-out paid by EFT', 'audience' => 'Attendee', 'trigger' => 'When finance records the EFT', 'sample' => fn() => tpl('cashoutPaid', ['name' => 'Lerato Mokoena', 'event' => $ev, 'reference' => 'CO-7KQ2M9PX', 'amountCents' => 8500, 'bank' => 'FNB ••••4321'])],
+        ['key' => 'cashoutRejected', 'name' => 'Cash-out not paid', 'audience' => 'Attendee', 'trigger' => 'When finance turns down an EFT cash-out', 'sample' => fn() => tpl('cashoutRejected', ['name' => 'Lerato Mokoena', 'reference' => 'CO-7KQ2M9PX', 'amountCents' => 8500, 'note' => 'The account number did not match the name.'])],
+        ['key' => 'vendorInvite', 'name' => 'Vendor staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new person to a vendor team', 'sample' => fn() => tpl('vendorInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'vendor' => 'Kota King', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'verificationApproved', 'name' => 'Verification document approved', 'audience' => 'Organiser', 'trigger' => 'When staff (or the identity check) approve a verification document', 'sample' => fn() => tpl('verificationApproved', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'document' => 'SA ID or Smart ID card'])],
+        ['key' => 'verificationRejected', 'name' => 'Verification document not accepted', 'audience' => 'Organiser', 'trigger' => 'When staff reject a verification document, with the reason', 'sample' => fn() => tpl('verificationRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'document' => 'Bank confirmation letter', 'reason' => 'The letter is older than 3 months. Please ask your bank for a new one.'])],
+        ['key' => 'verificationComplete', 'name' => 'Verification complete', 'audience' => 'Organiser', 'trigger' => 'When every required verification item is approved', 'sample' => fn() => tpl('verificationComplete', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'paid' => true])],
+        ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/scan#/reset/sample"])],
+        ['key' => 'waitlistJoined', 'name' => 'Joined a waitlist', 'audience' => 'Attendee', 'trigger' => 'When someone joins the waitlist for a sold-out ticket', 'sample' => fn() => tpl('waitlistJoined', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketType' => 'General', 'position' => 3, 'leaveUrl' => "$B/events/soweto-sunset-sessions?leave=sample", 'minutes' => WAITLIST_OFFER_MINUTES])],
+        ['key' => 'waitlistOffer', 'name' => 'Waitlist ticket offer', 'audience' => 'Attendee', 'trigger' => 'When a ticket comes up for the next person in line', 'sample' => fn() => tpl('waitlistOffer', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketType' => 'General', 'priceCents' => 15000, 'feeCents' => 1000, 'resale' => true, 'url' => "$B/events/soweto-sunset-sessions?offer=sample", 'until' => iso_in(1800), 'minutes' => WAITLIST_OFFER_MINUTES])],
+        ['key' => 'resaleSold', 'name' => 'Resale ticket sold', 'audience' => 'Attendee', 'trigger' => 'When a ticket listed on TicketRoom Exchange is bought', 'sample' => fn() => tpl('resaleSold', ['name' => 'Sipho', 'event' => $ev, 'amountCents' => 15000, 'method' => 'card', 'reference' => 'RP-7KQ2M9PX'])],
+        ['key' => 'resalePaid', 'name' => 'Resale money paid', 'audience' => 'Attendee', 'trigger' => 'When a seller is paid for a resold ticket', 'sample' => fn() => tpl('resalePaid', ['name' => 'Sipho', 'event' => $ev, 'amountCents' => 15000, 'reference' => 'RP-7KQ2M9PX', 'method' => 'eft', 'bank' => 'FNB ••••4321'])],
+        ['key' => 'friendTopup', 'name' => 'Topped up by a friend', 'audience' => 'Attendee', 'trigger' => "When a friend's card top-up of your balance is confirmed", 'sample' => fn() => tpl('friendTopup', ['name' => 'Zanele', 'fromName' => 'Sipho Ndlovu', 'event' => $ev, 'amountCents' => 20000, 'balanceCents' => 20000])],
+        ['key' => 'friendTopupSent', 'name' => 'You topped up a friend', 'audience' => 'Attendee', 'trigger' => "When your top-up of a friend's balance is confirmed", 'sample' => fn() => tpl('friendTopupSent', ['name' => 'Sipho', 'friendName' => 'Zanele Khumalo', 'event' => $ev, 'amountCents' => 20000, 'reference' => 'TU-7KQ2M9PX'])],
+        ['key' => 'friendInvite', 'name' => 'Invite to get topped up', 'audience' => 'Everyone', 'trigger' => 'When someone wants to top up a friend who has no account yet', 'sample' => fn() => tpl('friendInvite', ['fromName' => 'Sipho Ndlovu', 'event' => $ev, 'url' => "$B/account", 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
+        ['key' => 'promotionConfirmed', 'name' => 'Promote receipt', 'audience' => 'Organiser', 'trigger' => 'When a Promote purchase is paid (card or balance)', 'sample' => fn() => tpl('promotionConfirmed', ['name' => 'Naledi', 'event' => $ev + ['ends_at' => $ev['starts_at']],
+            'promotion' => ['reference' => 'PR-7KQ2M9XW', 'price_cents' => 160000, 'paid_with' => 'card', 'paid_at' => now_iso(), 'ends_at' => $ev['starts_at'], 'test' => 0]])],
+        ['key' => 'promotionRefunded', 'name' => 'Promote refunded', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom refunds a Promote package (event cancelled)', 'sample' => fn() => tpl('promotionRefunded', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'amountCents' => 160000, 'toBalance' => false])],
+        ['key' => 'socialRequested', 'name' => 'Social post request', 'audience' => 'Staff', 'trigger' => 'When a promoted organiser asks for a social post', 'sample' => fn() => tpl('socialRequested', ['organiser' => 'Soweto Community Arts', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'],
+            'request' => ['caption' => 'Sunset, good music and the best crowd in Soweto. Book before they sell out.', 'preferredDates' => 'Friday and Saturday morning', 'links' => ["$B/events/soweto-sunset-sessions"], 'images' => ['poster']]])],
+        ['key' => 'socialPostLive', 'name' => 'Social post is live', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom posts a promoted event on its socials', 'sample' => fn() => tpl('socialPostLive', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'links' => ['https://www.instagram.com/p/sample/']])],
+    ];
+}
+
+// ============================================================== automated emails
+function notify_once(string $key, array $msg): bool
+{
+    return tx(function () use ($key, $msg) {
+        if (affected('INSERT OR IGNORE INTO notification_log (key, created_at) VALUES (?, ?)', [$key, now_iso()]) === 0) return false;
+        outbox_enqueue($msg);
+        return true;
+    });
+}
+function send_reminders(): int
+{
+    $s = setting('emails');
+    $sent = 0;
+    $windows = [];
+    if ($s['reminderDayBefore']) $windows[] = ['day', false, 4 * 3600, 24 * 3600];
+    if ($s['reminderSoon']) $windows[] = ['soon', true, 0, 3 * 3600];
+    foreach ($windows as [$kind, $soon, $from, $to]) {
+        $list = rows("SELECT e.id, e.title, e.starts_at, e.venue_name, e.address, e.city, e.age_restriction, e.transfers_enabled,
+                             u.id AS user_id, u.email, u.full_name, count(*) AS tickets
+                        FROM tickets t JOIN events e ON e.id = t.event_id JOIN users u ON u.id = t.owner_user_id
+                       WHERE t.status = 'valid' AND e.status = 'published' AND u.status = 'active' AND e.starts_at > ? AND e.starts_at <= ?
+                         AND NOT EXISTS (SELECT 1 FROM notification_log n WHERE n.key = 'reminder:' || ? || ':' || e.id || ':' || u.id)
+                       GROUP BY e.id, u.id LIMIT 300", [iso_in($from), iso_in($to), $kind]);
+        foreach ($list as $x) {
+            if (notify_once("reminder:$kind:{$x['id']}:{$x['user_id']}", ['to' => $x['email'], 'userId' => $x['user_id']] + tpl('eventReminder', ['name' => $x['full_name'], 'event' => $x, 'ticketCount' => (int) $x['tickets'], 'soon' => $soon]))) $sent++;
+        }
+    }
+    return $sent;
+}
+function send_abandoned(): int
+{
+    $s = setting('emails');
+    if (!$s['abandonedCheckout']) return 0;
+    $list = rows("SELECT o.user_id, o.event_id, u.email, u.full_name, e.title, e.slug, e.starts_at, e.venue_name, e.address, e.city, max(o.created_at) AS last_at
+                    FROM orders o JOIN users u ON u.id = o.user_id JOIN events e ON e.id = o.event_id
+                   WHERE o.status IN ('expired','cancelled','failed') AND u.status = 'active' AND o.created_at < ? AND o.created_at > ?
+                     AND e.status = 'published' AND e.starts_at > ? AND COALESCE(e.sales_end_at, e.ends_at) > ? AND (e.sales_start_at IS NULL OR e.sales_start_at <= ?)
+                     AND EXISTS (SELECT 1 FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale' AND tt.quantity_sold + tt.quantity_held < tt.quantity_total)
+                     AND NOT EXISTS (SELECT 1 FROM orders p WHERE p.user_id = o.user_id AND p.event_id = o.event_id AND p.status IN ('pending_payment','paid','partially_refunded'))
+                     AND NOT EXISTS (SELECT 1 FROM marketing_consents mc WHERE mc.user_id = o.user_id AND mc.organiser_id IS NULL AND mc.channel = 'email' AND mc.granted = 0)
+                     AND NOT EXISTS (SELECT 1 FROM notification_log n WHERE n.key = 'abandoned:' || o.event_id || ':' || o.user_id)
+                   GROUP BY o.user_id, o.event_id LIMIT 300",
+        [iso_in(-3600 * (int) $s['abandonedDelayHours']), iso_in(-48 * 3600), iso_in(3 * 3600), now_iso(), now_iso()]);
+    $sent = 0;
+    foreach ($list as $x) {
+        $unsub = base_url() . '/unsubscribe?t=' . sign_link(['u' => $x['user_id'], 'all' => true], 30 * 86400);
+        if (notify_once("abandoned:{$x['event_id']}:{$x['user_id']}", ['to' => $x['email'], 'userId' => $x['user_id']]
+            + tpl('checkoutAbandoned', ['name' => $x['full_name'], 'event' => $x, 'eventUrl' => base_url() . "/events/{$x['slug']}", 'unsubscribeUrl' => $unsub]))) $sent++;
+    }
+    return $sent;
+}
