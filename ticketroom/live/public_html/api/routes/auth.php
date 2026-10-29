@@ -2,9 +2,13 @@
 // /api/health, /api/config and /api/auth/* — accounts, sessions, POPIA rights.
 declare(strict_types=1);
 
+// For uptime monitors: "ok" means the site and its database answer;
+// "healthy" also means the background jobs ran on time, email is not backed
+// up and a recent backup exists. Counts and times only, nothing private.
 route('GET', '/api/health', function () {
     val('SELECT 1');
-    return ['ok' => true, 'service' => 'ticketroom', 'edition' => 'php', 'version' => TR_VERSION, 'provider' => pay_provider()];
+    $s = ops_status();
+    return ['ok' => true, 'healthy' => !ops_problems($s), 'service' => 'ticketroom', 'edition' => 'php', 'version' => TR_VERSION, 'provider' => pay_provider()] + $s;
 });
 route('GET', '/api/config', fn() => [
     'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'googleSignIn' => google_ready(), 'titopayWallet' => false,
@@ -42,6 +46,15 @@ function send_verification(array $u, ?string $context = null): void
     outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('verifyEmail', ['name' => $u['full_name'], 'url' => $url]));
 }
 
+// Someone tried to sign up with an email that already has an account. The
+// sign-up form answers exactly as for a new account (so it never says who
+// has one); the owner of the email gets a note instead.
+function send_account_exists(array $u): void
+{
+    if (!limit_ok('existsend', 3, 3600, $u['id'])) return;
+    outbox_enqueue(['to' => $u['email'], 'userId' => $u['id']] + tpl('accountExists', ['name' => $u['full_name'], 'url' => base_url() . ACCOUNT_PORTALS[account_type($u)]]));
+}
+
 // Sign-up. Every account confirms its email before it can sign in, and one
 // email (or mobile number) belongs to one account. Someone who bought as a
 // guest signs up with the same email: once they confirm it, the guest
@@ -51,13 +64,15 @@ route('POST', '/api/auth/register', function () {
     $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true]),
         'password' => R::password(), 'marketingOptIn' => R::bool(), 'acceptTerms' => R::bool(), 'context' => R::oneOf(['retail'], ['optional' => true])]);
     if (!$b['acceptTerms']) throw bad('Please accept the Terms and Privacy Notice.', ['acceptTerms' => 'Required.']);
-    tx(function () use ($b) {
+    $taken = tx(function () use ($b) {
         $now = now_iso();
         $existing = user_by_email($b['email']);
         // Customer sign-up makes customer accounts only; any other account on
-        // this email (organiser or staff) means the email is taken.
+        // this email (organiser or staff) means the email is taken. The
+        // answer looks the same; the email's owner is told.
         if ($existing && ((int) $existing['guest'] !== 1 || account_type($existing) !== 'customer')) {
-            throw conflict('An account with this email already exists. Sign in, or use "Forgot password?" if you can\'t remember it.', 'email_taken', ['email' => 'Already has an account.']);
+            if ($existing['status'] === 'active') send_account_exists($existing);
+            return true;
         }
         if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0 AND id <> ?", [$b['phone'], $existing['id'] ?? ''])) {
             throw conflict('This mobile number is already on another TicketRoom account. Sign in to that account, or leave the number out.', 'phone_taken', ['phone' => 'Already on another account.']);
@@ -73,7 +88,9 @@ route('POST', '/api/auth/register', function () {
         }
         if ($b['marketingOptIn']) set_consent($u['id'], null, 'email', true, 'signup');
         audit('user.registered', ['actor' => ['id' => $u['id']], 'entityType' => 'user', 'entityId' => $u['id'], 'ip' => client_ip(), 'details' => ['fromGuest' => (bool) $existing]]);
+        return false;
     });
+    if ($taken) audit('user.signup_existing_email', ['actor' => null, 'actorRole' => 'system', 'entityType' => 'user', 'ip' => client_ip()]);
     return json_out(['needsVerification' => true, 'email' => $b['email'],
         'message' => "We've sent a confirmation link to {$b['email']}. Open it to finish creating your account."], 201);
 });
@@ -93,23 +110,25 @@ route('POST', '/api/auth/login', function () {
         ? new AppError(401, 'bad_credentials', 'Access denied. This sign-in is for TicketRoom staff only. Check your email and password, or ask the platform owner for a new password link.')
         : new AppError(401, 'bad_credentials', 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
     if (!$u || $u['status'] === 'deleted') throw $generic;
-    // 5 wrong passwords per email from one connection every 15 minutes, and a
-    // pause for the whole account only after 30 failures from anywhere, which
-    // then clears itself: nobody can keep someone else locked out for long.
+    // 5 wrong passwords per email from one connection every 15 minutes. After
+    // 30 wrong passwords from anywhere the account is "under attack" for 15
+    // minutes: each connection then gets one try in that time, so guessing
+    // slows right down, but the owner (whose own connection has not been
+    // guessing) can still sign in. Nobody can lock someone else out.
     // Signing in correctly never counts, so several devices are fine.
     $pair = $b['email'] . '|' . client_ip();
-    if (limit_reached('loginpair', 5, $pair)) throw too_many();
     $locked = $u['locked_until'] && to_unix($u['locked_until']) > microtime(true);
+    if (limit_reached('loginpair', $locked ? 1 : 5, $pair)) throw too_many();
     if ($u['locked_until'] && !$locked) { q('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [$u['id']]); $u['failed_logins'] = 0; }
-    if ($locked) throw $generic;
     if (!$ok) {
         limit_ok('loginpair', 5, 900, $pair);
         q('UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= 30 THEN ? END WHERE id = ?', [iso_in(900), $u['id']]);
         throw $generic;
     }
     if ($u['status'] === 'suspended') throw new AppError(403, 'suspended', 'This account is suspended. Use the contact form at /contact and include your account email.');
-    // Maintenance: only TicketRoom staff can sign in until it is over.
-    if (account_type($u) !== 'staff' && settings_all()['maintenance']['enabled']) {
+    // Maintenance: only TicketRoom staff can sign in until it is over, and
+    // gate staff on the scanner or till, so an event that is on keeps going.
+    if (account_type($u) !== 'staff' && !in_array($portal, ['scanner', 'pos'], true) && settings_all()['maintenance']['enabled']) {
         throw new AppError(503, 'maintenance', settings_all()['maintenance']['message']);
     }
     // One account, one portal. The admin sign-in never says what kind of
@@ -343,7 +362,9 @@ route('POST', '/api/auth/verify-email', function () {
 
 // "Didn't get the email?" Same answer whether or not the address has an account.
 route('POST', '/api/auth/verify-email/resend', function () {
-    limit('verifyresend', 5, 3600);
+    // Many phones share one address (mobile networks, venue Wi-Fi): a roomy
+    // limit per address, the tight one per account (verifysend below).
+    limit('verifyresend', 60, 3600);
     $b = check(body(), ['email' => R::email(['optional' => true]), 'context' => R::oneOf(['retail'], ['optional' => true])]);
     $u = user() ? row('SELECT * FROM users WHERE id = ?', [user()['id']]) : (isset($b['email']) ? user_by_email($b['email']) : null);
     if ($u && $u['status'] === 'active' && account_type($u) !== 'staff' && (!$u['email_verified_at'] || (int) $u['guest'] === 1) && limit_ok('verifysend', 3, 3600, $u['id'])) {
@@ -353,13 +374,15 @@ route('POST', '/api/auth/verify-email/resend', function () {
 });
 
 route('POST', '/api/auth/password/forgot', function () {
-    limit('forgot', 5, 3600);
+    // A roomy limit per connection (many phones share one address) and a
+    // quiet one per email, so nobody can flood one inbox.
+    limit('forgot', 60, 3600);
     $b = check(body(), ['email' => R::email()]);
     $u = user_by_email($b['email']);
     // Staff passwords are reset by the platform owner from the admin portal,
     // never by email from the public sign-in. The answer is the same, so it
     // reveals nothing about which emails are staff.
-    if ($u && $u['status'] === 'active' && account_type($u) !== 'staff') {
+    if ($u && $u['status'] === 'active' && account_type($u) !== 'staff' && limit_ok('forgotmail', 5, 3600, email_key($b['email']))) {
         $token = random_token(32);
         tx(function () use ($u, $token) {
             // A newly issued reset supersedes any older link for this account.

@@ -836,9 +836,9 @@ route('POST', '/api/admin/support/:id', function ($a) {
 
 route('GET', '/api/admin/outbox', function () {
     adm_any();
-    $list = rows('SELECT id, channel, kind, to_address, subject, status, provider, attempts, last_error, created_at, sent_at FROM message_outbox ORDER BY created_at DESC LIMIT 200');
+    $list = rows('SELECT id, channel, kind, to_address, subject, status, provider, attempts, last_error, created_at, sent_at, next_attempt_at FROM message_outbox ORDER BY created_at DESC LIMIT 200');
     foreach ($list as &$m) $m['to_address'] = adm_mask($m['to_address']);
-    return ['messages' => $list, 'adapters' => ['email' => mail_mode(), 'sms' => 'none']];
+    return ['messages' => $list, 'adapters' => ['email' => mail_mode(), 'sms' => 'none'], 'failed' => (int) val("SELECT count(*) FROM message_outbox WHERE status = 'failed' AND body <> '[redacted]'"), 'paused' => mail_paused()];
 });
 
 // ============================================================== subscribers (TicketRoom updates)

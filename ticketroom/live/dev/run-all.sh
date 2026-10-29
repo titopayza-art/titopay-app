@@ -1,32 +1,39 @@
 #!/usr/bin/env bash
-# Serves a fresh copy of the live package, runs the smoke test and every suite
-# in dev/tests/, then stops the server it started (by PID only).
+# Runs every live-package test on a fresh local instance:
+#   1. serve.sh builds, sets up and seeds a new copy (detached)
+#   2. smoke.js (known live issues reported, not failed, unless TR_STRICT=1)
+#   3. every suite in tests/*.js, in name order
+#   4. stops the server it started (by its PID) and exits non-zero if
+#      anything failed
 #
 #   TR_TEST_ADMIN_PASSWORD=... ticketroom/live/dev/run-all.sh [port] [dir]
+#   (or: cd ticketroom && npm run test:live)
 #
-# Defaults: port 8640, dir a new temporary folder. TR_STRICT is passed on to
-# smoke.js (0 unless set). Exits non-zero if anything failed.
+# Playwright comes from ticketroom/node_modules (set NODE_PATH if elsewhere).
 set -uo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${1:-8640}"
 DIR="${2:-$(mktemp -d "${TMPDIR:-/tmp}/tr-live-XXXXXX")}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${TR_TEST_ADMIN_PASSWORD:?set TR_TEST_ADMIN_PASSWORD (14+ characters) for the local owner account}"
 export NODE_PATH="${NODE_PATH:-$(cd "$HERE/../.." && pwd)/node_modules}"
 
-stop() { if [ -f "$DIR/php.pid" ]; then kill "$(cat "$DIR/php.pid")" 2>/dev/null || true; rm -f "$DIR/php.pid"; fi; }
-trap stop EXIT INT TERM
-
 TR_DETACH=1 "$HERE/serve.sh" "$PORT" "$DIR" || { echo "serve.sh failed" >&2; exit 1; }
+PID="$(cat "$DIR/php.pid")"
+stop() { kill "$PID" 2>/dev/null || true; rm -f "$DIR/php.pid"; }
+trap stop EXIT INT TERM
 
 failed=()
 echo "== smoke.js"
 TR_STRICT="${TR_STRICT:-0}" node "$HERE/smoke.js" "$DIR" "$PORT" || failed+=("smoke.js")
-for suite in "$HERE"/tests/*.js; do
-  [ -e "$suite" ] || continue
-  echo "== tests/$(basename "$suite")"
-  node "$suite" "$DIR" "$PORT" || failed+=("tests/$(basename "$suite")")
+for t in "$HERE"/tests/*.js; do
+  [ -e "$t" ] || continue
+  echo "== tests/$(basename "$t")"
+  node "$t" "$DIR" "$PORT" || failed+=("tests/$(basename "$t")")
 done
 
-if [ "${#failed[@]}" -gt 0 ]; then echo "FAILED: ${failed[*]}"; exit 1; fi
-echo "All suites passed."
+if [ "${#failed[@]}" -gt 0 ]; then
+  echo "FAILED: ${failed[*]}" >&2
+  exit 1
+fi
+echo "All live suites passed."

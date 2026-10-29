@@ -5,13 +5,25 @@
  * Locked: it only opens while a file called unlock-check exists in the
  * private data directory (ticketroom-data next to public_html), and only for
  * 30 minutes after that file was made. Delete it when you are done.
+ *
+ * It never shows server paths or account email addresses: folders are named
+ * as public_html and ticketroom-data, and the administrator is masked.
  */
 declare(strict_types=1);
 
 $root = __DIR__;
 require "$root/api/bootstrap.php";
 if (!is_https()) { http_response_code(404); exit; }
-tr_load();
+try {
+    tr_load();
+} catch (TrHalt $e) {
+    // The site has stopped itself (data folder or keys.php missing). The
+    // reason is in ticketroom-data/php-errors.log and the cron job's output.
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "TicketRoom has stopped itself to protect its data. The reason is in the cron job's output and in php-errors.log. See DEPLOY-AFRIHOST.md, \"If the site stops itself\".\n";
+    exit;
+}
 if (!cfg('security.diagnosticsEnabled', false)) { http_response_code(404); exit; }
 $privateData = data_dir();
 clearstatcache();
@@ -29,17 +41,28 @@ header('X-Robots-Tag: noindex, nofollow');
 header('Referrer-Policy: no-referrer');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
-header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+header('Strict-Transport-Security: max-age=31536000');
 
 $rows = [];
-$add = function (string $section, string $label, ?bool $ok, string $detail = '') use (&$rows) { $rows[] = [$section, $label, $ok, $detail]; };
+// Paths become their names, so nothing about the server's layout is shown.
+$hide = function (string $s) use ($root): string {
+    $pairs = [];
+    if (function_exists('data_dir') && isset($GLOBALS['TR_DATA_DIR'])) { $pairs[data_dir()] = 'ticketroom-data'; if (realpath(data_dir())) $pairs[(string) realpath(data_dir())] = 'ticketroom-data'; }
+    $pairs[$root] = 'public_html';
+    if (realpath($root)) $pairs[(string) realpath($root)] = 'public_html';
+    if (dirname($root) !== '/') $pairs[dirname($root)] = 'your home folder';
+    uksort($pairs, fn($a, $b) => strlen($b) - strlen($a));
+    return strtr($s, $pairs);
+};
+$add = function (string $section, string $label, ?bool $ok, string $detail = '') use (&$rows, $hide) { $rows[] = [$section, $label, $ok, $hide($detail)]; };
+$maskEmail = function (string $email): string { [$who, $dom] = array_pad(explode('@', $email, 2), 2, ''); return mb_substr($who, 0, 1) . '…@' . $dom; };
 
 // ---- The upload
 $build = is_file("$root/version.txt") ? trim((string) file_get_contents("$root/version.txt")) : '';
 $add('Upload', 'Build', $build !== '', $build ?: 'version.txt is missing: the upload is incomplete. Extract ticketroom.zip again.');
 $docroot = rtrim((string) realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? '')), '/');
-$add('Upload', 'Files are in the folder the domain shows', $docroot === $root, $docroot === $root ? $root
-    : "These files are in $root but the domain shows $docroot. Move them there (cPanel → Domains shows each domain's Document Root).");
+$add('Upload', 'Files are in the folder the domain shows', $docroot === $root, $docroot === $root ? 'Yes.'
+    : "These files are not in the folder the domain shows. Move them there (cPanel → Domains shows each domain's Document Root).");
 foreach (['index.html', 'event.html', 'admin.html', 'assets/core.js', 'api/index.php', 'api/config.php', 'api/schema.sql', 'api/lib/core.php'] as $f) {
     if (!is_file("$root/$f")) $add('Upload', "Missing file: $f", false, 'Extract ticketroom.zip again and overwrite everything.');
 }
@@ -71,10 +94,22 @@ if (version_compare(PHP_VERSION, '8.1.0', '>=') && extension_loaded('pdo_sqlite'
     }
 }
 if ($data) {
-    $add('Data', 'Data folder', is_writable($data), $data . (is_writable($data) ? '' : ': not writable. File Manager → right-click → Change Permissions → 755.'));
+    $add('Data', 'Data folder', is_writable($data), 'ticketroom-data' . (is_writable($data) ? '' : ': not writable. File Manager → right-click → Change Permissions → 755.'));
     $add('Data', 'Database', is_file("$data/ticketroom.sqlite"), is_file("$data/ticketroom.sqlite") ? number_format(filesize("$data/ticketroom.sqlite") / 1048576, 1) . ' MB · ' . $state['users'] . ($state['users'] === 1 ? ' account · ' : ' accounts · ') . $state['events'] . ($state['events'] === 1 ? ' event' : ' events') : '');
     $add('Data', 'Ticket signing keys', is_file("$data/keys.php") || !empty(cfg('keys.qr')), 'Back up the data folder: every ticket QR code depends on these keys.');
-    $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $state['admin']['email'] . ($state['temp'] ? ' · still on the temporary password: change it under Admin portal → My password' : '') : 'No administrator found.');
+    $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $maskEmail((string) $state['admin']['email']) . ($state['temp'] ? ' · still on the temporary password: change it under Admin portal → My password' : '') : 'No administrator found.');
+    $sqlite = (string) val('SELECT sqlite_version()');
+    $add('Data', 'SQLite ' . $sqlite, version_compare($sqlite, '3.27.0', '>='), version_compare($sqlite, '3.27.0', '>=') ? 'Backups work (they need 3.27 or newer).' : 'Backups need SQLite 3.27 or newer. cPanel → Select PHP Version → choose a newer PHP.');
+    $ops = ops_status();
+    $cronAt = $ops['jobs']['cron']['lastRunAt'];
+    $add('Data', 'Cron job', $ops['jobs']['cron']['fresh'], $cronAt ? 'Last ran ' . $cronAt . ' (UTC).' . ($ops['jobs']['cron']['fresh'] ? '' : ' That is too long ago: check cPanel → Cron Jobs.')
+        : 'Not set up. cPanel → Cron Jobs → every 5 minutes: /usr/local/bin/php /home/YOURUSER/public_html/api/cron.php >/dev/null 2>&1 (DEPLOY-AFRIHOST.md, step "Cron").');
+    $add('Data', 'Background jobs', $ops['jobs']['fresh'], $ops['jobs']['fresh'] ? 'All ran on time.' : 'Late: ' . implode(', ', $ops['jobs']['stale']) . '. Usually the cron job is missing.');
+    $last = $ops['backups']['lastAt'];
+    $fresh = $last && (to_unix($last) ?? 0) > time() - OPS_BACKUP_MAX_HOURS * 3600;
+    $add('Data', 'Backups', $fresh ? true : ($ops['backups']['count'] ? false : null), $last ? $ops['backups']['count'] . ' kept in ticketroom-data/backups, newest ' . $last . ' (UTC). Download one now and then: Admin portal → Backups.'
+        : 'None yet. The first is made within a day, or press "Back up now" under Admin portal → Backups.');
+    $add('Email', 'Messages waiting', $ops['outbox']['queued'] < OPS_BACKLOG_MESSAGES ? true : null, $ops['outbox']['queued'] . ' waiting, ' . $ops['outbox']['failed24h'] . ' failed in the last day' . ($ops['outbox']['paused'] ? ', email paused because the mail server is busy or unreachable' : '') . '.');
     $dataReal = realpath($data);
     $rootReal = realpath($root);
     $outsideWeb = $dataReal !== false && $rootReal !== false
@@ -123,8 +158,8 @@ $add('Web', 'https', str_starts_with($base, 'https'), str_starts_with($base, 'ht
 // ---- Email
 if ($data) {
     $mode = mail_mode();
-    $add('Email', 'How email is sent', $mode === 'smtp' ? true : null, $mode === 'smtp' ? 'Through the mailbox ' . cfg('mail.smtpUser') . ' at ' . cfg('mail.smtpHost')
-        : "The hosting server's built-in mail. It works, but often lands in spam. Put the hello@ mailbox password in " . $data . "/config.php.");
+    $add('Email', 'How email is sent', $mode === 'smtp' ? true : null, $mode === 'smtp' ? 'Through the mailbox ' . $maskEmail((string) cfg('mail.smtpUser')) . ' at ' . cfg('mail.smtpHost')
+        : "The hosting server's built-in mail. It works, but often lands in spam. Put the hello@ mailbox password in ticketroom-data/config.php, or set it under Admin portal → Integrations.");
     if ($mode === 'smtp') { $h = smtp_health(); $add('Email', 'Mail server reachable', $h['ok'], $h['detail']); }
     else $add('Email', 'PHP mail() available', function_exists('mail') && !in_array('mail', array_map('trim', explode(',', (string) ini_get('disable_functions'))), true), '');
 }

@@ -6,6 +6,11 @@ declare(strict_types=1);
 define('TR_APP', __DIR__);            // public_html/api
 define('TR_ROOT', dirname(__DIR__));  // public_html
 define('TR_VERSION', '1.1.45-event-edits-footer-v6');
+// Errors never reach a visitor's screen. They are written to php-errors.log in
+// the private data folder (set in tr_load once that folder is known), never
+// to an error_log file inside public_html.
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
 require TR_APP . '/lib/core.php';
 require TR_APP . '/lib/site.php';
 require TR_APP . '/lib/places.php';
@@ -21,12 +26,42 @@ require TR_APP . '/lib/boxoffice.php';
 require TR_APP . '/lib/verification.php';
 require TR_APP . '/lib/promote.php';
 require TR_APP . '/lib/exchange.php';
+require TR_APP . '/lib/ops.php';
+
+// The API's route files, loaded by name. A file left behind by an older
+// upload (one no longer in this list) is never run. A new route file must be
+// added here.
+const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'verification'];
+function tr_load_routes(): void
+{
+    foreach (TR_ROUTE_FILES as $f) require_once TR_APP . "/routes/$f.php";
+}
+
+// The site stops rather than guess: its data folder or its signing keys are
+// missing on a site that was already installed. Visitors see a short notice;
+// the reason goes to the error log and to the cron job's output.
+final class TrHalt extends RuntimeException {}
+function tr_halt(string $why): never
+{
+    error_log('[ticketroom] STOPPED: ' . $why);
+    throw new TrHalt($why);
+}
 
 // The data folder holds everything the site creates for itself: the
 // database, uploaded posters, the signing keys and your own settings. New
 // installs use a directory next to public_html, where the web server cannot
 // reach it at all. Existing legacy installs are retained in place so an
 // upgrade never silently moves or loses their data; migrate them explicitly.
+//
+// Once installed, public_html/data/.data-home records where the data lives.
+// If that folder later cannot be found (moved, renamed, unreadable), the site
+// stops instead of quietly starting a new, empty one.
+function tr_home_marker(): string { return TR_ROOT . '/data/.data-home'; }
+function tr_installed_in(string $d): bool
+{
+    clearstatcache();
+    return is_file("$d/.installed") || (is_file("$d/ticketroom.sqlite") && (int) @filesize("$d/ticketroom.sqlite") > 0);
+}
 function tr_data_dir(): string
 {
     static $dir = null;
@@ -35,6 +70,9 @@ function tr_data_dir(): string
     $inside = TR_ROOT . '/data';
     foreach ([$outside, TR_ROOT . '/tr-data', $inside] as $d) {
         if (is_file("$d/.installed") || (is_file("$d/config.php") && is_file("$d/ticketroom.sqlite"))) return $dir = $d;
+    }
+    if (is_file(tr_home_marker())) {
+        tr_halt('TicketRoom is installed, but its data folder (' . trim((string) @file_get_contents(tr_home_marker())) . ') cannot be found or read. Put the folder back, or fix its permissions (750 or 755). Restore it from a backup if it is lost. Only if the site was deliberately moved, delete public_html/data/.data-home.');
     }
     if ((is_dir($outside) || @mkdir($outside, 0750, true)) && is_writable($outside)) return $dir = $outside;
     throw new RuntimeException('TicketRoom requires ticketroom-data next to public_html. Do not create a new install inside the web root.');
@@ -46,14 +84,17 @@ function tr_load(bool $install = true): void
     $dir = tr_data_dir();
     $GLOBALS['TR_DATA_DIR'] = $dir;
     if (!is_dir($dir) && !@mkdir($dir, 0750, true)) throw new RuntimeException("Cannot create the private data folder $dir. Set its parent to permission 755.");
+    if (is_writable($dir)) ini_set('error_log', "$dir/php-errors.log");
+    $installed = tr_installed_in($dir);
     tr_lock_folder($dir);
     $cfg = require TR_APP . '/config.php';
     if (!is_file("$dir/config.php")) tr_write_local_config($dir);
     $mine = require "$dir/config.php";
     if (is_array($mine)) $cfg = array_replace_recursive($cfg, $mine);
-    if (empty($cfg['keys']['qr'])) $cfg['keys'] = tr_keys($dir);
+    if (empty($cfg['keys']['qr'])) $cfg['keys'] = tr_keys($dir, $installed);
     $GLOBALS['TR_CONFIG'] = $cfg;
     if ($install && !is_file("$dir/.installed")) tr_install($dir);
+    if (is_file("$dir/.installed") && !is_file(tr_home_marker()) && is_dir(TR_ROOT . '/data') && is_writable(TR_ROOT . '/data')) @file_put_contents(tr_home_marker(), $dir . "\n");
     if ($install && is_file("$dir/.installed")) tr_upgrade();
 }
 
@@ -67,11 +108,14 @@ function tr_lock_folder(string $dir): void
 }
 
 // The keys that sign ticket QR codes and email links. Made once; losing them
-// makes every ticket already issued unreadable at the gate.
-function tr_keys(string $dir): array
+// makes every ticket already issued unreadable at the gate. New keys are made
+// only for a brand-new site: on an installed site a missing keys.php means a
+// lost or half-restored data folder, so the site stops instead.
+function tr_keys(string $dir, bool $installed = false): array
 {
     $file = "$dir/keys.php";
     if (is_file($file)) return require $file;
+    if ($installed) tr_halt('The signing keys file keys.php is missing from the data folder of an installed site. Restore keys.php from your backup of ticketroom-data. New keys were not made, because every ticket and link already issued depends on the old ones.');
     $keys = ['qr' => bin2hex(random_bytes(32)), 'links' => bin2hex(random_bytes(32)), 'data' => bin2hex(random_bytes(32))];
     $php = "<?php\n// TicketRoom signing keys, made when the site was first opened.\n// Never edit or delete: every ticket QR code depends on them. Back up the data folder.\nreturn " . var_export($keys, true) . ";\n";
     $tmp = "$file." . bin2hex(random_bytes(4));
@@ -170,7 +214,7 @@ function tr_install_db(string $hash, ?string $adminEmail = null, ?string $adminN
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 46;
+const SCHEMA_VERSION = 49;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -471,6 +515,10 @@ const UPGRADES = [
     46 => [
         'ALTER TABLE ticket_types ADD COLUMN release_after TEXT',
     ],
+    // (47 and 48 belong to other work.) Email retries: a lease on each
+    // message being sent and the time of its next try. Only its own columns,
+    // each added if missing (see tr_upgrade_ops).
+    49 => ['@ops'],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -527,6 +575,22 @@ function tr_upgrade(): void
     $m = [];
     foreach (rows("SELECT key, value FROM meta WHERE key IN ('schema_version', 'upgrades_done')") as $r) $m[$r['key']] = (string) $r['value'];
     if (($m['upgrades_done'] ?? null) === $want) return;
+    // One request upgrades while the others wait. A copy of the database is
+    // made first (Admin portal, Backups), so a failed upgrade can be undone.
+    $lock = fopen(data_dir() . '/.upgrade-lock', 'c');
+    flock($lock, LOCK_EX);
+    try {
+        if ((string) val("SELECT value FROM meta WHERE key = 'upgrades_done'") === $want) return;
+        try { backup_take('before-upgrade'); }
+        catch (Throwable $e) { error_log('[ticketroom] backup before upgrade failed: ' . $e->getMessage()); }
+        tr_upgrade_run($want);
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+}
+function tr_upgrade_run(string $want): void
+{
     tx(function () use ($want) {
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         $doneRaw = val("SELECT value FROM meta WHERE key = 'upgrades_done'");
@@ -536,7 +600,7 @@ function tr_upgrade(): void
             if (in_array($v, $done, true)) continue;
             foreach ($steps as $sql) {
                 try {
-                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), default => db()->exec($sql) };
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), default => db()->exec($sql) };
                 } catch (PDOException $e) {
                     if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
                 }
@@ -552,6 +616,7 @@ function tr_upgrade(): void
 
 function tr_error_response(Throwable $e): Response
 {
+    if ($e instanceof TrHalt) return json_out(['error' => ['code' => 'site_stopped', 'message' => 'TicketRoom is paused while we check something on the server. Please try again a little later.']], 503);
     if ($e instanceof AppError) return json_out(['error' => ['code' => $e->errCode, 'message' => $e->getMessage(), 'details' => $e->details]], $e->status);
     if ($e instanceof PDOException) {
         $m = $e->getMessage();
@@ -571,7 +636,9 @@ function tr_error_response(Throwable $e): Response
 // Preserve the complete staff path so they can sign in with email OTP, inspect
 // the admin portal, and turn maintenance off. Customer sign-in still rejects
 // non-staff accounts in auth.php; these exemptions do not grant permissions.
-const MAINT_EXEMPT = '#^/api/(?:health|config|auth/(?:login|logout|me|password/reset|staff-code/verify)|admin(?:/.*)?|webhooks(?:/.*)?|site/(?:contact|callback))$#';
+// The gate keeps going too: an organiser's scanners, the top-up desk and the
+// vendor tills keep working, so an update never stops an event that is on.
+const MAINT_EXEMPT = '#^/api/(?:health|config|auth/(?:login|logout|me|password/reset|staff-code/verify)|admin(?:/.*)?|webhooks(?:/.*)?|site/(?:contact|callback)|staff/.+|cashdesk/.+|pos/.+)$#';
 
 // ---------------------------------------------------------------- jobs
 // Shared hosting has no always-on worker: due jobs run right after a response
@@ -596,8 +663,15 @@ function jobs(): array
             q('DELETE FROM password_resets WHERE created_at < ?', [iso_in(-7 * 86400)]);
             q('DELETE FROM rate_limits WHERE reset_at < ?', [time() - 3600]);
             q('DELETE FROM chat_messages WHERE created_at < ?', [iso_in(-90 * 86400)]);
-            q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND body <> '[redacted]'", [iso_in(-180 * 86400)]);
+            outbox_redact();
+            limit_light_prune();
         }],
+        // A copy of the database every day, the newest 14 kept (Admin portal, Backups).
+        ['backup', 86400, fn() => backup_take('daily')],
+        // Images that ended up on nothing (uploaded but never saved to an event).
+        ['upload-cleanup', 21600, fn() => uploads_cleanup()],
+        // One email to the owner when email or the background jobs get stuck.
+        ['ops-alerts', 900, fn() => ops_alert_check()],
         // Organiser campaigns booked for later go out when their time comes.
         // Verification documents past their keeping time are deleted (POPIA).
         ['verification-retention', 21600, fn() => kyc_retention()],
@@ -607,8 +681,9 @@ function jobs(): array
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];
 }
-function run_due_jobs(bool $force = false): array
+function run_due_jobs(bool $force = false, bool $cron = false): array
 {
+    if ($cron) q("INSERT INTO meta (key, value) VALUES ('cron_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) time()]);
     $ran = [];
     $last = [];
     foreach (rows('SELECT name, last_run FROM job_runs') as $r) $last[$r['name']] = (int) $r['last_run'];
@@ -702,7 +777,7 @@ function tr_handle(): void
             if (!is_array($body)) throw new AppError(400, 'bad_json', 'Malformed JSON.');
         }
         $GLOBALS['TR_REQ'] = ['method' => $method, 'path' => $path, 'body' => $body, 'raw' => $raw];
-        foreach (glob(TR_APP . '/routes/*.php') as $f) require_once $f;
+        tr_load_routes();
         // The customer portal's API is for customer accounts. Organisers and
         // staff have their own portals (liking an event is open to anyone signed in).
         if (str_starts_with($path, '/api/me/') && $path !== '/api/me/likes' && user() && account_type(user()) !== 'customer') {
@@ -717,6 +792,14 @@ function tr_handle(): void
     // CGI) the reply is sent whole with its length and the connection closed,
     // so the visitor never waits for email to go out.
     $early = function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    if ($res->file !== null) {
+        // A download goes straight out, never through the memory buffer below.
+        while (ob_get_level() > 0) ob_end_clean();
+        emit($res);
+        flush();
+        try { run_due_jobs(); } catch (Throwable $e) { error_log('[ticketroom] jobs: ' . $e->getMessage()); }
+        return;
+    }
     if (!$early) {
         ignore_user_abort(true);
         while (ob_get_level() > 0) ob_end_clean();

@@ -706,6 +706,7 @@ function store_upload(string $ownerId, ?string $orgId, string $buf): string
     if ($buf === '' || strlen($buf) > 2097152) throw new AppError(413, 'too_large', 'Images must be 2 MB or smaller.');
     $mime = sniff_image($buf);
     if (!$mime) throw new AppError(415, 'unsupported_media_type', 'Upload a PNG, JPEG or WebP image.');
+    upload_quota_check($orgId, strlen($buf));
     $id = uuid();
     $dir = data_dir() . '/uploads';
     if (!is_dir($dir)) mkdir($dir, 0750, true);

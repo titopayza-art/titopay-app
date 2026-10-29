@@ -32,10 +32,11 @@ RewriteRule ^media/ /api/index.php [L,QSA]
 
 # Maintenance mode (admin portal, Site settings): while maintenance.on exists,
 # every page goes through index.php, which shows visitors the notice and
-# TicketRoom staff the site. The admin portal and contact form stay open.
+# TicketRoom staff the site. The admin portal and contact form stay open, and
+# so do the scanner and the till, so an event that is on keeps going.
 RewriteRule ^maintenance\.on$ - [F,L]
 RewriteCond %{DOCUMENT_ROOT}/maintenance.on -f
-RewriteCond %{REQUEST_URI} !^/(admin|admin\.html|contact|contact\.html)$
+RewriteCond %{REQUEST_URI} !^/(admin|admin\.html|contact|contact\.html|scan|scan\.html|pos|pos\.html)$
 RewriteRule ^([^.]*|.*\.html)$ /index.php [L]
 
 # --- Addresses that moved ---------------------------------------------------
@@ -72,7 +73,8 @@ ErrorDocument 404 /404.html
 # --- Never served -----------------------------------------------------------
 # Hidden files, notes, archives and databases. .zip matters: an archive left in
 # public_html would let anyone who guesses its name download the site.
-<FilesMatch "^\.|\.(md|sql|sqlite|sqlite-wal|sqlite-shm|zip|tar|gz|bak|log|ini)$|^START-HERE\.txt$">
+# error_log is the file some hosts write PHP errors to, next to the script.
+<FilesMatch "^\.|\.(md|sql|sqlite|sqlite-wal|sqlite-shm|zip|tar|gz|bak|log|ini)$|^START-HERE\.txt$|^error_log$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -83,14 +85,15 @@ ErrorDocument 404 /404.html
 </FilesMatch>
 
 # --- Caching ----------------------------------------------------------------
-# Pages, styles and scripts are re-checked on every visit (a quick "not
-# changed" when nothing is new), so a new upload shows straight away.
+# Pages, styles, scripts and images are re-checked on every visit (a quick
+# "not changed" when nothing is new), so a new upload shows straight away.
+# Uploaded posters (/media/) never change and are cached by the API itself.
 <IfModule mod_headers.c>
   <FilesMatch "\.(html|css|js|webmanifest)$">
     Header set Cache-Control "no-cache, must-revalidate"
   </FilesMatch>
   <FilesMatch "\.(png|jpg|jpeg|webp|svg|ico)$">
-    Header set Cache-Control "public, max-age=86400"
+    Header set Cache-Control "public, no-cache"
   </FilesMatch>
   # Pages may only run TicketRoom's own scripts and talk to TicketRoom itself,
   # so injected code could not run or send data anywhere else.
@@ -98,7 +101,9 @@ ErrorDocument 404 /404.html
     Header set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://www.payfast.co.za https://sandbox.payfast.co.za; frame-ancestors 'none'"
     Header set Permissions-Policy "camera=(self), microphone=(), geolocation=(self), payment=()"
   </FilesMatch>
-  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  # This domain only. Add includeSubDomains only once every subdomain (mail.,
+  # cpanel., webmail.) has its own certificate: see SECURITY-OPERATIONS.md.
+  Header always set Strict-Transport-Security "max-age=31536000"
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set X-Frame-Options "DENY"

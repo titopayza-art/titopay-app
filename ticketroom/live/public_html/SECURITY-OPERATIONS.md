@@ -109,8 +109,25 @@ are protected, secrets are isolated, or administrator access is secure.
   private data directory, never application code.
 - Keep an encrypted off-host backup of the database, keys, and uploads; test a
   complete restore at least quarterly. Preserve the QR/link keys with backups.
-- Run `api/cron.php` at least every five minutes under the site account; do not
-  rely on visitor traffic for payment expiry, mail, retention, or campaigns.
+  The site makes a consistent database copy (`VACUUM INTO`) daily, before every
+  upgrade and on demand, in `ticketroom-data/backups` (newest 14 kept; Admin
+  portal, Backups; downloads are audited). These are on the same server, so
+  they do not replace the off-host copy.
+- Run `api/cron.php` at least every five minutes under the site account, with
+  the full PHP path (`/usr/local/bin/php /home/USER/public_html/api/cron.php
+  >/dev/null 2>&1`); do not rely on visitor traffic for payment expiry, mail,
+  retention, backups or campaigns. It prints only on failure and exits 1.
+- Monitor `/api/health` for `"healthy":true` (job freshness, cron, email
+  backlog and backup age). The owner also gets one alert email at most every
+  six hours while something is stuck.
+- PHP errors are never displayed; they go to `ticketroom-data/php-errors.log`.
+  A stray `error_log` file in `public_html` is blocked by `.htaccess`.
+- HSTS is sent for `ticketroom.co.za` only. Add `includeSubDomains` (in
+  `.htaccess` and `api/lib/core.php`) only once every subdomain (mail.,
+  cpanel., webmail. and any others) has a valid certificate.
+- If `ticketroom-data` or `keys.php` disappears on an installed site, the site
+  stops (503) and logs why rather than starting an empty site or making new
+  keys. Restore from backup; see DEPLOY-AFRIHOST.md, "If the site stops itself".
 - Send PHP/web-server logs to monitored storage and alert on repeated login
   failures, webhook rejection/failure, database-lock errors, error-rate spikes,
   changes to integration settings, and any request for private files.

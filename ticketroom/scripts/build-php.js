@@ -1,5 +1,7 @@
 // Builds the Afrihost (PHP) package: var/php-build/public_html, which is
-// exactly what goes inside public_html, and with --zip, ticketroom.zip.
+// exactly what goes inside public_html, and with --zip, ticketroom-old-php.zip.
+// OBSOLETE: the live site is built from live/public_html with
+// scripts/build-live.js, which alone writes ticketroom.zip.
 //
 //   public_html/
 //     index.html, sell.html, help.html, …   the pages (plain files, clean URLs)
@@ -106,7 +108,7 @@ fs.writeFileSync(path.join(API, "kb-defaults.json"), JSON.stringify(kb, null, 1)
 })(OUT);
 
 if (zipIdx >= 0) {
-  const out = path.resolve(args[zipIdx + 1] && !args[zipIdx + 1].startsWith("--") ? args[zipIdx + 1] : path.join(ROOT, "..", "ticketroom.zip"));
+  const out = path.resolve(args[zipIdx + 1] && !args[zipIdx + 1].startsWith("--") ? args[zipIdx + 1] : path.join(ROOT, "..", "ticketroom-old-php.zip"));
   fs.rmSync(out, { force: true });
   execFileSync("python3", ["-c", `
 import os, sys, time, zipfile

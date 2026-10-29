@@ -606,9 +606,13 @@ CREATE TABLE message_outbox (
   attempts            INTEGER NOT NULL DEFAULT 0,
   last_error          TEXT,
   created_at          TEXT NOT NULL,
-  sent_at             TEXT
+  sent_at             TEXT,
+  -- Upgrade 49: a lease while one worker sends it, and when to try again.
+  claimed_until       TEXT,
+  next_attempt_at     TEXT
 );
 CREATE INDEX message_outbox_status_idx ON message_outbox (status, created_at);
+CREATE INDEX message_outbox_due_idx ON message_outbox (status, next_attempt_at);
 CREATE UNIQUE INDEX message_outbox_campaign_user_uq ON message_outbox (campaign_id, user_id) WHERE campaign_id IS NOT NULL;
 
 CREATE TABLE site_settings (

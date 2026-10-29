@@ -188,7 +188,10 @@ function send_security_headers(): void
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('Cross-Origin-Opener-Policy: same-origin');
     header('Permissions-Policy: camera=(self), microphone=(), geolocation=(self), payment=()');
-    if (is_https()) header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    // This domain only: mail., cpanel. and other subdomains may not have a
+    // certificate of their own (see SECURITY-OPERATIONS.md before adding
+    // includeSubDomains).
+    if (is_https()) header('Strict-Transport-Security: max-age=31536000');
 }
 function is_https(): bool
 {
@@ -201,9 +204,15 @@ function is_https(): bool
 
 final class Response
 {
-    public function __construct(public $data, public int $status = 200, public array $headers = [], public bool $raw = false) {}
+    public function __construct(public $data, public int $status = 200, public array $headers = [], public bool $raw = false, public ?string $file = null) {}
 }
 function json_out($data, int $status = 200): Response { return new Response($data, $status); }
+// A file sent as a download, straight from disk (database backups).
+function file_out(string $path, string $type, string $name): Response
+{
+    return new Response(null, 200, ['Content-Type' => $type, 'Content-Disposition' => 'attachment; filename="' . str_replace(['"', "\r", "\n"], '', $name) . '"',
+        'Content-Length' => (string) filesize($path), 'Cache-Control' => 'no-store', 'X-Content-Type-Options' => 'nosniff'], true, $path);
+}
 function raw_out(string $body, string $type, int $status = 200, array $headers = []): Response
 {
     return new Response($body, $status, ['Content-Type' => $type] + $headers, true);
@@ -212,13 +221,29 @@ function json_encode_out($data): string
 {
     return json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_INVALID_UTF8_SUBSTITUTE);
 }
+// Large JSON (the scanner's offline ticket list for a full stadium, long
+// admin lists) is gzipped here when the browser accepts it, so it is small
+// even on hosts where the web server does not compress PHP's answers.
+const GZIP_MIN_BYTES = 16384;
 function emit(Response $r): void
 {
     http_response_code($r->status);
     foreach ($r->headers as $k => $v) header("$k: $v");
+    if ($r->file !== null) { readfile($r->file); return; }
     if ($r->raw) { echo $r->data; return; }
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode_out($r->data);
+    $json = json_encode_out($r->data);
+    if (strlen($json) >= GZIP_MIN_BYTES && function_exists('gzencode') && !filter_var(ini_get('zlib.output_compression'), FILTER_VALIDATE_BOOLEAN)
+        && preg_match('/\bgzip\b/i', (string) ($_SERVER['HTTP_ACCEPT_ENCODING'] ?? ''))) {
+        $gz = gzencode($json, 6);
+        if ($gz !== false) {
+            header('Content-Encoding: gzip');
+            header('Vary: Accept-Encoding');
+            echo $gz;
+            return;
+        }
+    }
+    echo $json;
 }
 
 // ---- router

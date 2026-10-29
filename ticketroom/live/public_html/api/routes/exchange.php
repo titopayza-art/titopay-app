@@ -120,8 +120,10 @@ route('POST', '/api/me/wallets/:eventId/invite', function ($a) {
     $ev = row('SELECT id, title, slug, organiser_id FROM events WHERE id = ?', [$a['eventId']]);
     if (!$ev) throw not_found('Event not found.');
     $f = user_by_email($b['email']);
-    if ($f && (int) $f['guest'] === 0 && $f['status'] === 'active') throw conflict('They already have a TicketRoom account, so you can top them up now.', 'has_account');
-    outbox_enqueue(['to' => $b['email']] + tpl('friendInvite', ['fromName' => $u['fullName'], 'event' => $ev, 'url' => base_url() . '/account', 'eventUrl' => base_url() . "/events/{$ev['slug']}"]));
+    // The same answer whether or not they have an account (so it never says
+    // who has one). Someone who has one is told they can be topped up now.
+    $member = $f && (int) $f['guest'] === 0 && $f['status'] === 'active';
+    outbox_enqueue(['to' => $b['email'], 'userId' => $member ? $f['id'] : null] + tpl($member ? 'friendInviteMember' : 'friendInvite', ['fromName' => $u['fullName'], 'event' => $ev, 'url' => base_url() . '/account', 'eventUrl' => base_url() . "/events/{$ev['slug']}"]));
     audit('wallet.friend_invited', ['actor' => $u, 'entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['to' => $b['email']]]);
     return ['ok' => true];
 });

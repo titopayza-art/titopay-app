@@ -15,6 +15,7 @@
     "seed": "node src/db/seed.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js",
     "test:ui": "node tests-ui/smoke.js",
+    "test:live": "bash live/dev/run-all.sh",
     "check": "node scripts/check-syntax.js"
   },
   "dependencies": {

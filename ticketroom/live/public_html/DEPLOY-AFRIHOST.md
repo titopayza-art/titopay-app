@@ -24,6 +24,17 @@ it still resolves somewhere else.
 This package is build **2026-10-22-phases**. Updating takes five minutes and keeps
 every account, event, order and setting.
 
+Before you start:
+
+- Admin portal → **Backups** → **Back up now**, then **Download** that copy
+  to your computer. (The site also makes its own copy just before it
+  upgrades the database, but a copy off the server is the one that counts.)
+- Admin portal → **Site settings** → turn **Maintenance mode** on. Gate
+  scanners, the top-up desk and the tills keep working, so it is safe even
+  on an event day. Turn it off again after step 7.
+
+Then:
+
 1. cPanel → **File Manager** → `public_html`. **Settings** (top right) →
    tick **Show Hidden Files (dotfiles)**.
 2. **Delete the old `ticketroom.zip` from `public_html`** if it is still
@@ -52,6 +63,10 @@ they already do. From this version, staff sign in at
 organisers).
 Accounts made before email confirmation was required are asked to confirm
 their email once, the next time they sign in; the link is sent for them.
+
+If the update went wrong, put the backup you made back: see
+**Restoring a backup** below. From this version the cron job is required:
+if you have not set it up yet, do step 12 now.
 
 ## 1. Set the PHP version
 
@@ -185,6 +200,20 @@ your own admin password when asked. Press **Send a test email** and type any
 address: it is sent straight away and the page says what happened. If it
 fails, **Check connection** says why. Admin portal → **Email templates**
 lets you preview every email and send a test of any of them.
+
+If you use port 587 (or 25), the mail server must offer a secure
+connection (STARTTLS): TicketRoom never sends the mailbox password without
+one, and says so on the Messages page. Port 465 is always secure.
+
+### Email authentication (SPF, DKIM and DMARC)
+
+Without these, Gmail and Outlook send many tickets to spam. In cPanel →
+**Email Deliverability**, press **Repair** (or **Install the suggested
+record**) next to SPF and DKIM for `ticketroom.co.za`, until both show a
+green tick. Then add a DMARC record in cPanel → **Zone Editor** → **Add
+Record** → TXT, name `_dmarc`, value `v=DMARC1; p=none; rua=mailto:hello@ticketroom.co.za`.
+If you use an email relay (Amazon SES, Mailgun, Brevo), add the records it
+gives you instead. SECURITY-OPERATIONS.md has the details.
 
 ## 9. Switch on card payments
 
@@ -379,8 +408,94 @@ Admin portal → **Site settings** → **Maintenance mode**. While it is on,
 the server answers every visitor with the maintenance page: nobody can
 browse, book, sign up or sign in, except TicketRoom staff, who see the
 site as normal with a yellow "Maintenance mode is on" bar. Payment
-notifications from Yoco and PayFast keep arriving. **See what visitors see**
+notifications from Yoco and PayFast keep arriving. Gate staff keep going:
+the scanner (`/scan`), the top-up desk and the vendor tills (`/pos`) still
+work, and gate staff can still sign in there. **See what visitors see**
 previews the page. Turn it off on the same card.
+
+## 12. Cron job (required)
+
+Email, reminders, expiring holds, the daily backup and the alert email run
+from a cron job. Without it they only run when someone happens to visit the
+site, and on a quiet night nothing goes out.
+
+1. cPanel → **Cron Jobs**. Under **Cron Email**, leave your own address:
+   the job prints nothing when all is well, so you only hear about problems.
+2. **Add New Cron Job** → Common Settings: **Once Per Five Minutes**
+   (`*/5 * * * *`).
+3. Command (put your cPanel username in place of `YOURUSER`; cPanel shows
+   it top right, and the folder in File Manager's address bar):
+
+       /usr/local/bin/php /home/YOURUSER/public_html/api/cron.php >/dev/null 2>&1
+
+   Use the full path to PHP. A bare `php` can run an older PHP than the
+   website uses, and the job then fails. If `/usr/local/bin/php` is not
+   there, cPanel → **Select PHP Version** names the right one (often
+   `/opt/alt/php83/usr/bin/php`).
+4. Ten minutes later, Admin portal → **Backups** says "Cron job: last ran …".
+   `/api/health` shows the same under `jobs.cron`.
+
+If the job reports an error, it is printed to the cron email (and kept in
+`ticketroom-data/php-errors.log`).
+
+## 13. Backups
+
+The site makes its own copy of the database every day (the newest 14 are
+kept), and another just before every database upgrade (the newest 5). They
+are in `ticketroom-data/backups`, outside the website, and only admins can
+see them: Admin portal → **Backups**. **Back up now** makes one on the
+spot. Every download is written to the audit log.
+
+A copy on the same server does not help if the server is lost. Once a week,
+download the newest copy to a safe place (a company drive), and keep a
+cPanel → **Backup** → **Download a Home Directory Backup** now and then,
+which includes `ticketroom-data` (the keys, uploads and settings as well as
+the database).
+
+### Restoring a backup
+
+Restoring replaces everything on the site with the copy: orders and
+accounts made since it was taken are lost. Do it only when you must.
+
+1. Admin portal → **Site settings** → **Maintenance mode** on.
+2. Admin portal → **Backups** → **Back up now** (so the current state is
+   kept too).
+3. cPanel → **File Manager** → `ticketroom-data`. Rename `ticketroom.sqlite`
+   to `ticketroom.sqlite.old`. Delete `ticketroom.sqlite-wal` and
+   `ticketroom.sqlite-shm` if they are there.
+4. Copy the backup you want (from `ticketroom-data/backups`, or upload one
+   you downloaded) into `ticketroom-data` and rename it to
+   `ticketroom.sqlite`. Set its permission to 600.
+5. Open https://ticketroom.co.za/api/health: it must say `"ok":true`. Sign
+   in to the admin portal and check recent orders, then turn maintenance off.
+
+Keep `keys.php` with the database: tickets and links made with one set of
+keys only work with that set.
+
+## If the site stops itself
+
+If `ticketroom-data` or its `keys.php` goes missing on a site that is
+already set up (a half-finished restore, a renamed folder, wrong
+permissions), TicketRoom stops and shows visitors a short notice instead of
+starting a new, empty site. It never makes new keys on an installed site:
+new keys would make every ticket already sold unreadable at the gate. The
+reason is in the cron email and in `ticketroom-data/php-errors.log`.
+
+Put the folder or `keys.php` back from your backup (or fix the folder's
+permission to 750 or 755), and the site carries on by itself. Only if the
+site was deliberately moved to another data folder, delete
+`public_html/data/.data-home`.
+
+## Monitoring
+
+https://ticketroom.co.za/api/health answers `"ok":true` while the site and its
+database work, and `"healthy":true` when, in addition, the background jobs
+ran on time, email is not backing up and there is a recent backup. Point an
+uptime monitor (UptimeRobot or similar, free) at it with the keyword
+`"healthy":true`. The owner also gets one email ("TicketRoom needs a
+look") when email or the jobs get stuck, at most every 6 hours.
+Admin portal → **Messages** shows each message, when it will be tried next,
+and **Retry failed** puts failed ones back in the queue.
 
 ## Going-live checklist
 
@@ -398,6 +513,9 @@ previews the page. Turn it off on the same card.
 - [ ] Maintenance is turned off only after staff OTP, backups, and free-only provider configuration are verified
 - [ ] Card payments: a test purchase and a test refund worked, then switched to Live
 - [ ] Integrations → Identity verification is **not** on Sandbox
+- [ ] The cron job runs (step 12): Admin portal → **Backups** shows when it last ran
+- [ ] Admin portal → **Backups** has a copy, and you downloaded one to a safe place
+- [ ] SPF and DKIM show a green tick in cPanel → **Email Deliverability**
 - [ ] cPanel → **Backup** includes `ticketroom-data` (keep a copy off the server)
 
 ## Big matches (up to 100,000 fans)
@@ -461,10 +579,7 @@ Either one can be added on its own. A wallet pass carries the same signed QR
 code as the ticket, so it is checked at the gate exactly the same way, and it
 stops working if the ticket is transferred.
 
-## Optional: background jobs on a timer
+## Background jobs
 
-Reminder emails and clean-up run after visitors' requests, which is enough for
-most sites. For punctual reminders on a quiet site: cPanel → **Cron Jobs** →
-every 5 minutes:
-
-    php /home/YOURUSER/public_html/api/cron.php
+The cron job in step 12 is required. The jobs also run after visitors'
+requests, but that is only a fallback.

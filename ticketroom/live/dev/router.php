@@ -9,11 +9,11 @@
  * built-in server allows:
  *   - /data, /tr-app, /tr-data and /maintenance.on are 403
  *   - /api/* and /media/* run api/index.php; nothing else in api/ is served
- *   - maintenance mode sends pages through index.php
+ *   - maintenance mode sends pages (except admin, contact, scan, pos) through index.php
  *   - moved addresses, /x.html, /index and trailing slashes redirect (301)
  *   - /events/<slug>[/tickets] -> event.html, /orders/<ref> -> order.html
  *   - clean addresses serve the matching .html file
- *   - hidden files, .md/.sql/.sqlite/.zip/... and START-HERE.txt are 403
+ *   - hidden files, .md/.sql/.sqlite/.zip/..., START-HERE.txt and error_log are 403
  *   - the .htaccess response headers (CSP, nosniff, no-store pages, ...)
  *
  * TLS is assumed to be terminated in front of the app, so HTTPS=on is set
@@ -33,7 +33,7 @@ $qs = (string) ($_SERVER['QUERY_STRING'] ?? '');
 $rel = ltrim($path, '/');
 
 $always = function (): void {
-    header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    header('Strict-Transport-Security: max-age=31536000');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('X-Frame-Options: DENY');
@@ -71,7 +71,7 @@ $serve = function (string $file, int $status = 200) use ($root, $types, $always)
     $always();
     header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
     if (in_array($ext, ['html', 'css', 'js', 'webmanifest'], true)) header('Cache-Control: no-cache, must-revalidate');
-    if (in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'svg', 'ico'], true)) header('Cache-Control: public, max-age=86400');
+    if (in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'svg', 'ico'], true)) header('Cache-Control: public, no-cache');
     if ($ext === 'html') {
         header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://www.payfast.co.za https://sandbox.payfast.co.za; frame-ancestors 'none'");
         header('Permissions-Policy: camera=(self), microphone=(), geolocation=(self), payment=()');
@@ -93,7 +93,7 @@ if (preg_match('#^(data|tr-app|tr-data)(/|$)#', $rel)) return $deny();
 
 // --- Never served (FilesMatch): hidden files, notes, archives, databases.
 foreach (explode('/', $rel) as $seg) if ($seg !== '' && $seg[0] === '.') return $deny();
-if (preg_match('/\.(md|sql|sqlite|sqlite-wal|sqlite-shm|zip|tar|gz|bak|log|ini)$/i', $rel) || basename($rel) === 'START-HERE.txt') return $deny();
+if (preg_match('/\.(md|sql|sqlite|sqlite-wal|sqlite-shm|zip|tar|gz|bak|log|ini)$/i', $rel) || basename($rel) === 'START-HERE.txt' || basename($rel) === 'error_log') return $deny();
 
 // --- The API (api/.htaccess sends everything in api/ to index.php).
 if (preg_match('#^api(/|$)#', $rel) || str_starts_with($rel, 'media/')) {
@@ -103,7 +103,7 @@ if (preg_match('#^api(/|$)#', $rel) || str_starts_with($rel, 'media/')) {
 
 // --- Maintenance mode
 if ($rel === 'maintenance.on') return $deny();
-if (is_file("$root/maintenance.on") && !preg_match('#^(admin|admin\.html|contact|contact\.html)$#', $rel)
+if (is_file("$root/maintenance.on") && !preg_match('#^(admin|admin\.html|contact|contact\.html|scan|scan\.html|pos|pos\.html)$#', $rel)
     && preg_match('#^([^.]*|.*\.html)$#', $rel)) {
     return $runPhp('index.php', '/index.php');
 }
