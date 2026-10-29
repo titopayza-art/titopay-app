@@ -54,6 +54,11 @@ function cashout_open(array $ev): bool
     return to_unix($ev['ends_at']) <= microtime(true) || $ev['status'] === 'cancelled' || cashless_event_settings($ev['id'])['cashoutDeskOpen'];
 }
 function desk_account(array $ev, string $method): string { return "organiser:{$ev['organiser_id']}:event:{$ev['id']}:desk_$method"; }
+// Practice (TEST) money is never paid out for real once payments are live.
+function cashout_test_refused(array $c): void
+{
+    if ((int) $c['test'] === 1 && !pay_test()) throw conflict('This cash-out is practice (TEST) money from before payments went live. It cannot be paid out.', 'test_money');
+}
 
 // ============================================================== who may run a desk
 // TicketRoom staff (admin, finance, support), the organiser's owners,
@@ -360,8 +365,16 @@ function cashout_desk_pay(array $u, array $acc, string $code): array
         $c = cashout_desk_find($acc, $code);
         if ($c['status'] === 'paid') throw conflict('This cash-out was already paid at ' . time_str($c['paid_at']) . '.', 'already_paid');
         if ($c['status'] !== 'requested' || $c['method'] !== 'cash') throw conflict('This cash-out cannot be paid at the desk.', 'bad_transition');
+        cashout_test_refused($c);
+        $amount = (int) $c['amount_cents'];
+        // Large amounts need two people, which a desk cannot give: they go by EFT.
+        if ($amount >= cashout_dual_cents()) throw conflict('This cash-out is ' . rand_short($amount) . ', more than a desk pays in cash. Ask the guest to cancel it in their wallet and choose EFT: two people in finance approve it.', 'cashout_too_large');
+        // Each desk pays out at most its daily limit in cash.
+        $cap = cashless_event_settings($ev['id'])['deskDailyCapCents'];
+        $paid = (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM wallet_cashouts WHERE paid_by = ? AND event_id = ? AND method = 'cash' AND status = 'paid' AND paid_at >= ?", [$u['id'], $ev['id'], desk_day_start()]);
+        if ($paid + $amount > $cap) throw conflict('That is over your cash-out limit for today (' . rand_short($cap) . '). Ask another desk to pay it, or the guest can choose EFT.', 'desk_cashout_cap');
         $now = now_iso();
-        q("UPDATE wallet_cashouts SET status = 'paid', paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ?", [$u['id'], $now, $now, $c['id']]);
+        if (affected("UPDATE wallet_cashouts SET status = 'paid', paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ? AND status = 'requested'", [$u['id'], $now, $now, $c['id']]) !== 1) throw conflict('This cash-out cannot be paid at the desk.', 'bad_transition');
         cashout_book_paid($c, desk_account($ev, 'cash'));
         audit('wallet.cashout_paid', ['actor' => $u, 'entityType' => 'wallet_cashout', 'entityId' => $c['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['method' => 'cash', 'amount' => (int) $c['amount_cents']]]);
         return cashout_view(row('SELECT * FROM wallet_cashouts WHERE id = ?', [$c['id']])) + ['name' => $c['full_name']];
@@ -374,6 +387,7 @@ function cashout_decide(array $u, string $id, bool $approve, ?string $note): arr
         $c = row("SELECT * FROM wallet_cashouts WHERE id = ? AND method = 'eft'", [$id]);
         if (!$c) throw not_found('Cash-out not found.');
         if (!in_array($c['status'], ['requested', 'approved_once'], true)) throw conflict('This cash-out has already been decided.', 'bad_transition');
+        if ($approve) cashout_test_refused($c);
         $now = now_iso();
         if (!$approve) {
             q("UPDATE wallet_cashouts SET status = 'rejected', note = ?, approved_by = ?, updated_at = ? WHERE id = ?", [$note, $u['id'], $now, $c['id']]);
@@ -397,6 +411,7 @@ function cashout_mark_paid(array $u, string $id, string $bankRef): array
     return tx(function () use ($u, $id, $bankRef) {
         $c = row("SELECT * FROM wallet_cashouts WHERE id = ? AND method = 'eft' AND status = 'approved'", [$id]);
         if (!$c) throw conflict('Only approved EFT cash-outs can be recorded as paid.', 'bad_transition');
+        cashout_test_refused($c);
         $now = now_iso();
         q("UPDATE wallet_cashouts SET status = 'paid', bank_reference = ?, paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ?", [$bankRef, $u['id'], $now, $now, $c['id']]);
         cashout_book_paid($c, 'bank:payouts');

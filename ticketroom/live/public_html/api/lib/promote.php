@@ -36,7 +36,10 @@ function promo_sms_segments(string $text): int
 function promo_active(string $eventId): ?array
 {
     // The event's own end counts (it may have been moved since the purchase).
-    return row("SELECT p.* FROM event_promotions p JOIN events e ON e.id = p.event_id WHERE p.event_id = ? AND p.status = 'active' AND e.ends_at > ? LIMIT 1", [$eventId, now_iso()]);
+    // A TEST package counts only while payments are in test mode: once real
+    // money is on it unlocks nothing (no real SMS on practice money).
+    return row("SELECT p.* FROM event_promotions p JOIN events e ON e.id = p.event_id WHERE p.event_id = ? AND p.status = 'active' AND e.ends_at > ? AND (p.test = 0 OR ? = 1) LIMIT 1",
+        [$eventId, now_iso(), pay_test() ? 1 : 0]);
 }
 // The single-event campaign this promotion covers, if any.
 function promo_for_campaign(array $camp): ?array
@@ -259,7 +262,9 @@ function promo_refund(array $promo, array $actor, string $reason): array
         if ($event['status'] !== 'cancelled' && !$event['cancellation_requested_at']) throw conflict('Promotions are refunded when their event is cancelled.', 'event_not_cancelled');
         $pp = row("SELECT * FROM promotion_payments WHERE promotion_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 1", [$promo['id']]);
         if (!$pp) throw conflict('This promotion has no payment to refund.', 'promotion_not_refundable');
-        $ref = reference('RF');
+        // A retry after a failure keeps its reference: the provider sees the same
+        // idempotency key, so the refund can never be paid twice.
+        $ref = $promo['refund_status'] === 'failed' && $promo['refund_reference'] ? (string) $promo['refund_reference'] : reference('RF');
         q("UPDATE event_promotions SET refund_status = 'processing', refund_reference = ?, refund_reason = ?, refund_failure = NULL, refunded_by = ?, updated_at = ? WHERE id = ?",
             [$ref, $reason, $actor['id'], now_iso(), $promo['id']]);
         audit('promotion.refund_requested', ['actor' => $actor, 'entityType' => 'promotion', 'entityId' => $promo['id'], 'organiserId' => $promo['organiser_id'],

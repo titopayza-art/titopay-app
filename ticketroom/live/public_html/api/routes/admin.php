@@ -345,8 +345,11 @@ route('POST', '/api/admin/events/:id/status', function ($a) {
     return ['ok' => true];
 });
 
-// Cancelling an event stops sales. Every order in this edition is free, so no
-// refunds are raised: holders are emailed and their free tickets revoked.
+// Cancelling an event stops sales. Every paid order gets a full refund raised
+// for finance; an order that already has a refund on its way is listed, and
+// the rest of it is raised once that refund is settled. Orders still waiting
+// for payment are cancelled (a payment that still arrives is refunded in
+// full), resale listings close, holders are emailed and free tickets revoked.
 route('POST', '/api/admin/events/:id/cancel', function ($a) {
     $u = adm_admin();
     $b = check(body(), ['reason' => R::str(['min' => 5, 'max' => 400])]);
@@ -358,17 +361,31 @@ route('POST', '/api/admin/events/:id/cancel', function ($a) {
         q("UPDATE events SET status = 'cancelled', status_reason = ?, updated_at = ? WHERE id = ?", [$b['reason'], $now, $ev['id']]);
         // Every paid order gets a full refund, booking fee included, for finance to approve.
         $raised = 0;
+        $skipped = [];
         foreach (rows("SELECT * FROM orders WHERE event_id = ? AND status IN ('paid','partially_refunded') AND total_cents > refunded_cents", [$ev['id']]) as $o) {
-            try { refund_create($o, $u, [], true, 'event_cancelled', 'Event cancelled: ' . $b['reason']); $raised++; } catch (AppError $e) { /* nothing left to refund */ }
+            try { refund_create($o, $u, [], true, 'event_cancelled', 'Event cancelled: ' . $b['reason']); $raised++; }
+            catch (AppError $e) {
+                if ($e->errCode === 'order_not_refundable') continue; // nothing left to refund
+                $skipped[] = ['reference' => $o['reference'], 'reason' => $e->errCode === 'refund_in_progress'
+                    ? 'A refund for this order is already on its way. The rest is raised for refund once that one is settled.' : $e->getMessage()];
+            }
         }
+        // Unpaid orders: cancelled, and their places let go.
+        $unpaid = 0;
+        foreach (rows("SELECT * FROM orders WHERE event_id = ? AND status = 'pending_payment'", [$ev['id']]) as $o) {
+            release_holds($o);
+            q("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ?", [$now, $o['id']]);
+            $unpaid++;
+        }
+        resale_close_event($u, $ev['id'], 'event_cancelled');
         $holders = rows("SELECT DISTINCT u.id, u.email, u.full_name, MAX(t.price_cents) AS paid FROM tickets t JOIN users u ON u.id = t.owner_user_id
                           WHERE t.event_id = ? AND t.status IN ('valid','refunded') GROUP BY u.id", [$ev['id']]);
         foreach ($holders as $h) {
             outbox_enqueue(['to' => $h['email'], 'userId' => $h['id']] + tpl('eventCancelled', ['name' => $h['full_name'], 'event' => $ev, 'reason' => $b['reason'], 'paid' => (int) $h['paid'] > 0]));
         }
         q("UPDATE tickets SET status = 'revoked', revoked_reason = 'event cancelled', updated_at = ? WHERE event_id = ? AND status = 'valid' AND price_cents = 0", [$now, $ev['id']]);
-        audit('event.cancelled', ['actor' => $u, 'entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['reason' => $b['reason'], 'refundsRaised' => $raised]]);
-        return ['refundsRaised' => $raised];
+        audit('event.cancelled', ['actor' => $u, 'entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['reason' => $b['reason'], 'refundsRaised' => $raised, 'skipped' => array_column($skipped, 'reference'), 'unpaidCancelled' => $unpaid]]);
+        return ['refundsRaised' => $raised, 'skipped' => $skipped, 'unpaidCancelled' => $unpaid];
     });
 });
 

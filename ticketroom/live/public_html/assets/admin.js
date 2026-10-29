@@ -228,7 +228,8 @@ async function overview() {
       ${alert(d.ops.support_open, ["open support case", "open support cases"], "#/support")}
       ${Object.values(d.ops).every((x) => !x) && !d.organisers.pending && !d.events.pending ? html`<p class="callout good mb-0">All clear.</p>` : ""}</div></section>
     <section class="card mt"><h2>Ledger integrity</h2><p class="${d.ledger.balanced ? "callout good" : "callout bad"}">${d.ledger.balanced ? `Balanced: ${d.ledger.entries} entries sum to R0.00.` : `UNBALANCED. Investigate journals ${d.ledger.unbalancedJournals.join(", ")}`}</p>
-      ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td class="mono">${c.account}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}</section>`);
+      ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td class="mono">${c.account}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}
+      ${moneyFindings(d.ledger.exceptions)}</section>`);
 }
 
 // A search box for the organiser and event lists, remembered for the session.
@@ -294,7 +295,7 @@ async function events() {
   $$("[data-cancel]").forEach((b) => b.addEventListener("click", async () => {
     const why = await confirmDialog("Cancel event and refund everyone?", "Sales stop immediately. A full refund (including fees) is raised for every paid order; finance must approve them. This cannot be undone.", { confirm: "Cancel event", danger: true, input: { label: "Reason shown to buyers", required: true } });
     if (!why) return;
-    try { const r = await post(`/api/admin/events/${b.dataset.cancel}/cancel`, { reason: why }); toast(`Event cancelled. ${r.refundsRaised} refunds raised for finance.`, "good"); events(); } catch (err) { toast(err.message, "bad"); }
+    try { const r = await post(`/api/admin/events/${b.dataset.cancel}/cancel`, { reason: why }); toast(`Event cancelled. ${r.refundsRaised} refunds raised for finance.${r.unpaidCancelled ? ` ${r.unpaidCancelled} unpaid order${r.unpaidCancelled === 1 ? "" : "s"} cancelled.` : ""}${r.skipped?.length ? ` Not raised yet: ${r.skipped.map((x) => `${x.reference} (${x.reason})`).join("; ")}` : ""}`, r.skipped?.length ? "bad" : "good"); events(); } catch (err) { toast(err.message, "bad"); }
   }));
 }
 
@@ -500,7 +501,7 @@ async function promotions() {
       <td>${p.social_status ? badge(p.social_status) : html`<span class="tiny muted">no request</span>`}</td>
       <td><div class="row">${p.social_request ? html`<button class="btn btn-ghost btn-sm" data-soc="${p.id}">${canSocial && p.social_status !== "posted" ? "Social post" : "View request"}</button>` : ""}
         ${isF() && ["active", "ended"].includes(p.status) && (p.event_status === "cancelled" || p.cancellation_requested_at) && (!p.refund_status || p.refund_status === "failed") ? html`<button class="btn btn-ghost btn-sm" data-refund="${p.id}">Refund</button>` : ""}
-        ${isF() && p.refund_status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-manual="${p.id}">Record refund</button>` : ""}</div></td></tr>`),
+        ${isF() && ["manual_pending", "failed"].includes(p.refund_status) ? html`<button class="btn btn-dark btn-sm" data-manual="${p.id}">Record refund</button>` : ""}</div></td></tr>`),
       filter === "social" ? "No social posts waiting." : "No promotions here.")}</div>`);
   $$("[data-f]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_pm", b.dataset.f); promotions(); }));
   $$("[data-refund]").forEach((b) => b.addEventListener("click", async () => {
@@ -508,7 +509,7 @@ async function promotions() {
     if (why && await act(() => post(`/api/admin/promotions/${b.dataset.refund}/refund`, { reason: why }), "Refund sent.")) promotions();
   }));
   $$("[data-manual]").forEach((b) => b.addEventListener("click", async () => {
-    const ref = await reason("Record the refund", "Refund it in the PayFast dashboard first, then enter its reference here.", "PayFast reference");
+    const ref = await reason("Record the refund", "Refund it in the provider's dashboard (PayFast or Yoco) first, then enter its reference here.", "Provider reference");
     if (ref && await act(() => post(`/api/admin/promotions/${b.dataset.manual}/refund/complete`, { providerReference: ref }), "Refund recorded.")) promotions();
   }));
   $$("[data-soc]").forEach((b) => b.addEventListener("click", () => {
@@ -555,12 +556,21 @@ async function payouts() {
 }
 
 async function payments() {
-  const [{ payments: list }, { webhooks }] = await Promise.all([get("/api/admin/payments"), get("/api/admin/webhooks")]);
+  const [{ payments: list, stale = [] }, { webhooks }] = await Promise.all([get("/api/admin/payments"), get("/api/admin/webhooks")]);
   render(main, html`${head("Payments & webhooks", "A payment is confirmed only by a verified provider webhook or a direct status check, never by the buyer's browser.")}
+    ${stale.length ? html`<section class="card mb"><h2>Waiting for the provider</h2><p class="muted small">Pending for more than 30 minutes.</p>${tbl(["Since", "Order", "Provider", "#Amount", "What to do"], stale.map((p) => html`<tr><td class="small">${fmtDateTime(p.created_at)}</td><td class="mono small">${p.order_reference || "–"}</td><td>${p.provider}${p.environment !== "live" ? html` <span class="badge amber">TEST</span>` : ""}</td><td class="num">${moneyExact(p.amount_cents)}</td><td class="small">${p.what_to_do}</td></tr>`))}</section>` : ""}
     <h2>Payments</h2>${tbl(["When", "Purpose", "User", "Provider ref", "#Amount", "Status", ""], list.map((p) => html`<tr><td class="small">${fmtDateTime(p.created_at)}</td><td>${p.purpose}</td><td class="small">${p.email}</td><td class="mono small">${p.provider_reference || "–"}</td><td class="num">${moneyExact(p.amount_cents)}${p.refunded_cents ? html`<div class="tiny">−${moneyExact(p.refunded_cents)}</div>` : ""}</td><td>${badge(p.status)}${p.failure_reason ? html`<div class="tiny muted">${p.failure_reason}</div>` : ""}</td>
       <td>${["pending", "cancelled", "failed"].includes(p.status) && p.provider_reference ? html`<button class="btn btn-ghost btn-sm" data-re="${p.id}">Re-check</button>` : ""}</td></tr>`))}
     <h2 class="mt-lg">Webhook deliveries</h2>${tbl(["Received", "Event id", "Signature", "Attempts", "Status", "Error"], webhooks.map((w) => html`<tr><td class="small">${fmtDateTime(w.received_at)}</td><td class="mono small">${w.provider_event_id}</td><td>${w.signature_valid ? "valid" : html`<span class="badge bad">invalid</span>`}</td><td>${w.attempts}</td><td>${badge(w.status)}</td><td class="small">${w.error || ""}</td></tr>`))}`);
   $$("[data-re]").forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/payments/${b.dataset.re}/recheck`); toast(`Provider says: ${r.result}`, "good"); payments(); } catch (err) { toast(err.message, "bad"); } }));
+}
+
+// Money problems the ledger check found (paid twice, over-refunded, money an
+// organiser owes, desk money not netted, refunds made in the provider's portal).
+const FINDING = { paid_twice: "Paid twice", over_refunded: "Over-refunded", organiser_negative: "Organiser owes", desk_not_netted: "Desk money not netted", provider_refund: "Refund outside TicketRoom" };
+function moneyFindings(list = []) {
+  if (!list.length) return "";
+  return html`<h3 class="mt">Needs a look</h3>${tbl(["What", "Reference", "#Amount", "Detail"], list.map((x) => html`<tr><td><span class="badge ${x.severity === "error" ? "bad" : "amber"}">${FINDING[x.kind] || x.kind}</span></td><td class="mono small">${x.reference}</td><td class="num">${x.cents ? moneyExact(x.cents) : "–"}</td><td class="small">${x.text}</td></tr>`))}`;
 }
 
 async function reconciliation() {
@@ -570,7 +580,7 @@ async function reconciliation() {
     ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider" ${raw(providers.length ? "" : "disabled")}>${providers.length ? providers.map((x) => html`<option value="${x}">${x === "yoco" ? "Yoco" : x === "payfast" ? "PayFast" : x}</option>`) : html`<option value="">No payment provider set up yet</option>`}</select></div>
       <div class="field"><label for="rfr">From</label><input id="rfr" name="from" type="date" value="${from.toISOString().slice(0, 10)}"></div><div class="field"><label for="rto">To (exclusive)</label><input id="rto" name="to" type="date" value="${new Date(today.getTime() + 864e5).toISOString().slice(0, 10)}"></div></div>
       <div class="field"><label for="rc">Provider report (CSV) <span class="muted">${providers.length ? "(export it from the provider's portal)" : "(optional, otherwise fetched from the provider)"}</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
-    <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${c.account}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p></section>
+    <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${c.account}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p>${moneyFindings(ledger.exceptions)}</section>
     <h2 class="mt-lg">Runs</h2>${tbl(["When", "Period", "Source", "Matched", "Exceptions", "#Provider total", "#Internal total", ""], runs.map((r) => html`<tr><td class="small">${fmtDateTime(r.created_at)}<div class="tiny muted">${r.created_by_name || ""}</div></td><td class="small">${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}</td><td>${r.source}</td><td>${r.summary.matched || 0}</td><td>${r.summary.exceptions ? html`<span class="badge bad">${r.summary.exceptions}</span>` : "0"}</td><td class="num">${moneyExact(r.summary.providerTotalCents)}</td><td class="num">${moneyExact(r.summary.internalTotalCents)}</td><td><button class="btn btn-ghost btn-sm" data-run="${r.id}">Open</button></td></tr>`))}`);
   if ($("#rf")) onSubmit($("#rf"), async (v) => { await post("/api/admin/reconciliation", { provider: v.provider, from: new Date(v.from).toISOString(), to: new Date(v.to).toISOString(), csv: v.csv }); toast("Reconciliation complete.", "good"); reconciliation(); });
   $$("[data-run]").forEach((b) => b.addEventListener("click", async () => {
@@ -1194,7 +1204,7 @@ async function integrations() {
       const pw = await askPassword(`${card.label.toLowerCase()} settings`);
       if (!pw) return;
       const r = await put(`/api/admin/integrations/${f.dataset.form}`, { currentPassword: pw, values });
-      toast(r.warning || (r.changed.length ? "Saved." : "Nothing changed."), r.warning ? "bad" : "good");
+      toast([r.warning, r.notice].filter(Boolean).join(" ") || (r.changed.length ? "Saved." : "Nothing changed."), r.warning ? "bad" : "good");
       integrations();
     });
   });

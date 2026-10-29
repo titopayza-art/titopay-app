@@ -102,8 +102,26 @@ route('GET', '/api/admin/payments', function () {
                     LEFT JOIN users u ON u.id = p.created_by WHERE p.provider <> 'balance' AND (? = '' OR e.reference = upper(?) OR p.provider_reference = ?) ORDER BY p.created_at DESC LIMIT 200", [$q, $q, $q]);
     $list = array_merge($list, $promo);
     usort($list, fn($x, $y) => strcmp($y['created_at'], $x['created_at']));
-    return ['payments' => array_slice($list, 0, 200)];
+    return ['payments' => array_slice($list, 0, 200), 'stale' => fin_stale_payments()];
 });
+// Payments still waiting for the provider after 30 minutes, with what to do.
+// Yoco and Peach can be asked again (Re-check). PayFast has no way to ask, so
+// a lost notification (ITN) is looked up in the PayFast dashboard.
+function fin_stale_payments(): array
+{
+    $old = iso_in(-1800);
+    $list = array_merge(
+        rows("SELECT p.id, p.provider, p.environment, p.amount_cents, p.created_at, COALESCE(o.reference, t.reference) AS order_reference FROM payments p
+               LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN wallet_topups t ON t.id = p.topup_id WHERE p.status = 'pending' AND p.created_at < ? ORDER BY p.created_at LIMIT 100", [$old]),
+        rows("SELECT p.id, p.provider, p.environment, p.amount_cents, p.created_at, e.reference AS order_reference FROM promotion_payments p JOIN event_promotions e ON e.id = p.promotion_id
+               WHERE p.status = 'pending' AND p.provider <> 'balance' AND p.created_at < ? ORDER BY p.created_at LIMIT 100", [$old]));
+    return array_map(fn($p) => ['id' => $p['id'], 'provider' => $p['provider'], 'environment' => $p['environment'], 'amount_cents' => (int) $p['amount_cents'], 'created_at' => $p['created_at'],
+        'order_reference' => $p['order_reference'], 'what_to_do' => match ($p['provider']) {
+            'yoco', 'peach' => 'Press Re-check: TicketRoom asks the provider for the answer.',
+            'payfast' => "PayFast has not sent its notification. Look up payment {$p['id']} (m_payment_id) in the PayFast dashboard. If it was paid, ask PayFast to send the notification again; if not, nothing is owed.",
+            default => 'Nobody finished this practice payment. Nothing is owed.',
+        }], $list);
+}
 route('POST', '/api/admin/payments/:id/recheck', function ($a) {
     $u = adm_finance();
     limit('recheck', 30, 600, $u['id']);
@@ -155,11 +173,16 @@ function fin_decide_refund(array $u, string $id, bool $approve, ?string $note): 
             // Unused cashless balance that was waiting to be refunded goes back on the balance.
             if ($r['kind'] === 'wallet_balance') wallet_refund_rejected($r);
             audit('refund.rejected', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $r['id'], 'details' => ['note' => $note]]);
+            // A cancelled event: the whole order is now raised for refund.
+            if ($r['order_id'] && $r['kind'] !== 'event_cancelled') refund_cancelled_event_rest($r['order_id'], $u);
             return row('SELECT * FROM refunds WHERE id = ?', [$r['id']]);
         });
     }
-    q('UPDATE refunds SET decided_by = ?, updated_at = ? WHERE id = ?', [$u['id'], now_iso(), $r['id']]);
-    audit('refund.approved', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $r['id']]);
+    // Taken in one step: a rejection (or a second approval) at the same moment finds it already decided.
+    tx(function () use ($u, $r) {
+        if (affected("UPDATE refunds SET status = 'processing', decided_by = ?, updated_at = ? WHERE id = ? AND status = 'requested'", [$u['id'], now_iso(), $r['id']]) !== 1) throw conflict('This refund has already been decided.', 'bad_transition');
+        audit('refund.approved', ['actor' => $u, 'entityType' => 'refund', 'entityId' => $r['id']]);
+    });
     return refund_process($r['id'], $u);
 }
 
@@ -295,17 +318,35 @@ route('GET', '/api/admin/payouts', function () {
     adm_any();
     return ['payouts' => fin_payout_rows('1 = 1', []), 'peach' => ['enabled' => cfg('payouts.payoutProvider', 'manual') === 'peach', 'environment' => peach_payout_environment()]];
 });
+// The money for this payout is still there: the organiser's available
+// balance (leaving this payout itself out), or what is still owed for the
+// vendor. Checked when it is approved and again when it is paid.
+function fin_payout_funds(array $po): void
+{
+    if ($po['vendor_id']) {
+        $v = row('SELECT id, event_id FROM vendors WHERE id = ?', [$po['vendor_id']]);
+        $owed = -ledger_balance(vendor_account($v)) - (int) val("SELECT COALESCE(SUM(amount_cents),0) FROM payouts WHERE vendor_id = ? AND status IN ('requested','approved') AND id <> ?", [$v['id'], $po['id']]);
+        if ((int) $po['amount_cents'] > $owed) throw conflict('Only ' . format_zar(max(0, $owed)) . ' is still owed for this vendor. Reject this settlement and ask the organiser to request it again.', 'insufficient_balance');
+        return;
+    }
+    $m = organiser_money(row('SELECT * FROM organisers WHERE id = ?', [$po['organiser_id']]), $po['id']);
+    if ((int) $po['amount_cents'] > $m['availableCents']) throw conflict("The organiser's available balance is now " . format_zar($m['availableCents']) . ', less than this payout. Reject it and ask them to request a new one.', 'insufficient_balance');
+}
 route('POST', '/api/admin/payouts/:id/decide', function ($a) {
     $u = adm_finance();
     $b = check(body(), ['approve' => R::bool(), 'note' => R::str(['optional' => true, 'max' => 400])]);
-    $po = row("SELECT * FROM payouts WHERE id = ? AND status = 'requested'", [$a['id']]);
-    if (!$po) throw conflict('This payout has already been decided.', 'bad_transition');
     if (!$b['approve'] && empty($b['note'])) throw bad('Tell the organiser why.', ['note' => 'Required when rejecting.']);
-    if ($b['approve']) kyc_require_for_payout($po['organiser_id']);
-    q('UPDATE payouts SET status = ?, note = ?, approved_by = ?, updated_at = ? WHERE id = ?', [$b['approve'] ? 'approved' : 'rejected', $b['note'] ?? null, $u['id'], now_iso(), $po['id']]);
-    if (!$b['approve']) fin_payout_mail($po, 'payoutRejected', ['note' => $b['note']]);
-    audit($b['approve'] ? 'payout.approved' : 'payout.rejected', ['actor' => $u, 'entityType' => 'payout', 'entityId' => $po['id'], 'organiserId' => $po['organiser_id']]);
-    return ['payout' => row('SELECT * FROM payouts WHERE id = ?', [$po['id']])];
+    return tx(function () use ($u, $a, $b) {
+        $po = row("SELECT * FROM payouts WHERE id = ? AND status = 'requested'", [$a['id']]);
+        if (!$po) throw conflict('This payout has already been decided.', 'bad_transition');
+        if ($b['approve']) { kyc_require_for_payout($po['organiser_id']); fin_payout_funds($po); }
+        if (affected('UPDATE payouts SET status = ?, note = ?, approved_by = ?, updated_at = ? WHERE id = ? AND status = ?', [$b['approve'] ? 'approved' : 'rejected', $b['note'] ?? null, $u['id'], now_iso(), $po['id'], 'requested']) !== 1) {
+            throw conflict('This payout has already been decided.', 'bad_transition');
+        }
+        if (!$b['approve']) fin_payout_mail($po, 'payoutRejected', ['note' => $b['note']]);
+        audit($b['approve'] ? 'payout.approved' : 'payout.rejected', ['actor' => $u, 'entityType' => 'payout', 'entityId' => $po['id'], 'organiserId' => $po['organiser_id']]);
+        return ['payout' => row('SELECT * FROM payouts WHERE id = ?', [$po['id']])];
+    });
 });
 // The full account number, for making the EFT. Every view is in the audit log.
 route('POST', '/api/admin/payouts/:id/reveal-account', function ($a) {
@@ -325,8 +366,11 @@ route('POST', '/api/admin/payouts/:id/mark-paid', function ($a) {
         $po = row("SELECT * FROM payouts WHERE id = ? AND status = 'approved'", [$a['id']]);
         if (!$po) throw conflict('Only approved payouts can be recorded as paid.', 'bad_transition');
         kyc_require_for_payout($po['organiser_id']);
+        fin_payout_funds($po);
         $now = now_iso();
-        q("UPDATE payouts SET status = 'paid', bank_reference = ?, paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ?", [$b['bankReference'], $u['id'], $now, $now, $po['id']]);
+        if (affected("UPDATE payouts SET status = 'paid', bank_reference = ?, paid_by = ?, paid_at = ?, updated_at = ? WHERE id = ? AND status = 'approved'", [$b['bankReference'], $u['id'], $now, $now, $po['id']]) !== 1) {
+            throw conflict('Only approved payouts can be recorded as paid.', 'bad_transition');
+        }
         // A vendor settlement pays out what was owed for that vendor's cashless sales.
         $from = $po['vendor_id'] ? vendor_account(row('SELECT id, event_id FROM vendors WHERE id = ?', [$po['vendor_id']])) : "organiser:{$po['organiser_id']}:payouts";
         ledger_post('payout', $po['reference'], [[$from, (int) $po['amount_cents']], ['bank:payouts', -(int) $po['amount_cents']]]);
@@ -345,6 +389,7 @@ route('POST', '/api/admin/payouts/:id/send-peach', function ($a) {
     $po = row("SELECT * FROM payouts WHERE id = ? AND status = 'approved'", [$a['id']]);
     if (!$po) throw conflict('Only approved payouts can be sent.', 'bad_transition');
     kyc_require_for_payout($po['organiser_id']);
+    if ($env === 'live') fin_payout_funds($po);
     $prior = row("SELECT * FROM peach_payout_submissions WHERE payout_id = ? AND status IN ('submitting','pending','processing') ORDER BY created_at DESC LIMIT 1", [$po['id']]);
     if ($prior) throw conflict('A Peach transfer is already open. Re-check its status instead of sending again.', 'peach_payout_in_progress', ['status' => $prior['status']]);
     $enc = val('SELECT bank_account_enc FROM organisers WHERE id = ?', [$po['organiser_id']]);
@@ -622,7 +667,15 @@ route('PUT', '/api/admin/integrations/:key', function ($a) {
     $values = is_array(body()['values'] ?? null) ? body()['values'] : [];
     // The sandbox is practice only: it can never be put in live mode.
     if ($group === 'payments' && ($values['provider'] ?? pay_provider()) === 'sandbox') $values['mode'] = 'test';
+    $wasLive = $group === 'payments' && pay_provider() !== 'none' && pay_mode() === 'live';
     $changed = tx(fn() => integration_save($group, $values, $b['clear'] ?? [], $u['id']));
+    // Going live: test orders and practice money are cleared first, so nothing
+    // from testing keeps a value once real money is on.
+    $wentLive = null;
+    if ($group === 'payments' && !$wasLive && pay_provider() !== 'none' && pay_mode() === 'live') {
+        $wentLive = clear_test_orders($u);
+        audit('payments.went_live', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'payments', 'ip' => client_ip(), 'details' => $wentLive]);
+    }
     // New mail settings: try them straight away rather than after a pause.
     if ($group === 'mail') q("DELETE FROM meta WHERE key = 'mail_paused_until'");
     $warning = null;
@@ -649,7 +702,12 @@ route('PUT', '/api/admin/integrations/:key', function ($a) {
         if ($notes) $warning = 'Saved. ' . implode(' ', $notes);
     }
     audit('integration.updated', ['actor' => $u, 'entityType' => 'integration', 'entityId' => $group, 'ip' => client_ip(), 'details' => ['fields' => $changed]]);
-    return ['integration' => fin_integration($group), 'changed' => $changed, 'warning' => $warning];
+    $notice = null;
+    if ($wentLive) {
+        $notice = 'Live payments are on. Test orders were cleared first: ' . plural($wentLive['orders'], 'test order') . ' cancelled and practice wristband money removed.';
+        foreach ($wentLive['deskTopups'] as $d) $notice .= " At {$d['event']}, " . format_zar($d['cents']) . ' was topped up at the desk in test mode: if real cash or card money was taken, the organiser must give it back to those guests.';
+    }
+    return ['integration' => fin_integration($group), 'changed' => $changed, 'warning' => $warning, 'wentLive' => $wentLive, 'notice' => $notice];
 });
 // Proves, from this server, that Yoco opens a payment page with one mode's key: a
 // R5 checkout that belongs to no order, so nothing is sold. Live charges real money

@@ -780,10 +780,12 @@ function pos_charge(array $u, array $t, array $b, ?array $qrIntent = null): arra
             }
             if ((int) $who['pin_failed_attempts'] > 0) q('UPDATE users SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE id = ?', [$who['id']]);
         }
-        // Real money first; a band that only has test money pays a test sale.
+        // Real money first; a band that only has test money pays a test sale,
+        // but only while payments are in test mode: practice money never buys
+        // anything at a stall once real money is on.
         $test = false;
         if (!wallet_debit($tag['user_id'], $t['event_id'], $total, false)) {
-            if (!wallet_debit($tag['user_id'], $t['event_id'], $total, true)) return $decline('insufficient_funds', $tag);
+            if (!pay_test() || !wallet_debit($tag['user_id'], $t['event_id'], $total, true)) return $decline('insufficient_funds', $tag);
             $test = true;
         }
         $commission = bps_of($total, (int) $t['commission_bps']);

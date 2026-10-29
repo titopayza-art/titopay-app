@@ -139,13 +139,14 @@ route('POST', '/api/admin/promotions/:id/refund', function ($a) {
     return ['promotion' => promo_admin_row(promo_refund($p, $u, $b['reason']))];
 });
 
-// PayFast refunds are made in the PayFast dashboard, then recorded here.
+// PayFast refunds are made in the PayFast dashboard, then recorded here; so is
+// a card refund that failed and was then paid in the provider's own dashboard.
 route('POST', '/api/admin/promotions/:id/refund/complete', function ($a) {
     $u = adm_finance();
     $b = check(body(), ['providerReference' => R::str(['min' => 3, 'max' => 120])]);
     $p = row('SELECT * FROM event_promotions WHERE id = ?', [$a['id']]);
     if (!$p) throw not_found('Promotion not found.');
-    if ($p['refund_status'] !== 'manual_pending') throw conflict('This refund is not waiting to be recorded.', 'bad_transition');
+    if (!in_array($p['refund_status'], ['manual_pending', 'failed'], true)) throw conflict('This refund is not waiting to be recorded.', 'bad_transition');
     tx(fn() => promo_refund_complete($p['id'], $b['providerReference'], $u));
     return ['promotion' => promo_admin_row(row('SELECT * FROM event_promotions WHERE id = ?', [$p['id']]))];
 });

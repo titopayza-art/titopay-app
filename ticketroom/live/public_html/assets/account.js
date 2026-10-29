@@ -51,7 +51,7 @@ function ticketCard(t, offline = false) {
       ${t.resale?.open && t.resale.faceValueCents > 0 && !t.resale.listing && !t.pending_transfer ? html`<button class="btn btn-ghost btn-sm" data-sell="${t.id}">Sell</button>` : ""}
       <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
     <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
-      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}"></div></div>` : ""}
+      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}" data-test="${Number(t.test) === 1 ? "1" : ""}"></div></div>` : ""}
   </div>`;
 }
 
@@ -78,7 +78,7 @@ async function walletButtons() {
       try {
         const svg = await fetch(`/api/me/tickets/${id}/qr.svg`, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
         const d = box.dataset;
-        const png = await ticketPng(svg, { title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, code: d.code,
+        const png = await ticketPng(svg, { test: d.test === "1", title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, code: d.code,
           rows: [["Ticket", d.type], ["Holder", d.holder || "Not set"], ...(Number(d.admits) > 1 ? [["Admits", `${d.admits} people`]] : []), ["Order", d.order]] });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(png); a.download = `ticket-${box.dataset.code}.png`; document.body.append(a); a.click(); a.remove();

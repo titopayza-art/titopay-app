@@ -764,7 +764,7 @@ async function orderPage(ref) {
       const t = tickets.find((x) => x.id === b.dataset.img);
       try {
         const svg = await fetch(t.qrUrl, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
-        const png = await ticketPng(svg, { title: o.event.title, when: `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`, place: `${o.event.venue}, ${o.event.city}`, code: t.code,
+        const png = await ticketPng(svg, { test: Number(t.test) === 1, title: o.event.title, when: `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`, place: `${o.event.venue}, ${o.event.city}`, code: t.code,
           rows: [["Ticket", t.ticket_type], ["Holder", t.holder_name || o.buyerName], ...(t.admits > 1 ? [["Admits", `${t.admits} people`]] : []), ["Order", o.reference]] });
         const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `ticket-${t.code}.png`; document.body.append(a); a.click(); a.remove();
         toast("Saved. Show this picture at the gate if you have no signal.", "good");

@@ -1293,7 +1293,8 @@ export async function qrPng(svg, { size = 1024, caption = "", background = "#FFF
 }
 // A ticket as a picture for the phone's gallery, in TicketRoom's ticket
 // design: logo, navy header with the event, the details, the QR code in a
-// frame, a tear line, the ticket code, and the tagline underneath.
+// frame, a tear line, the ticket code, and the tagline underneath. A test
+// ticket (t.test) carries an amber TEST TICKET band, like the one on screen.
 export async function ticketPng(svg, t) {
   const load = (src) => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => fail(new Error("Could not draw the ticket.")); i.src = src; });
   const qrUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
@@ -1348,6 +1349,11 @@ export async function ticketPng(svg, t) {
     fit(g, t.when, 700, 36, CW - 120); if (draw) { g.fillStyle = C.soft; g.fillText(t.when, MID, y); }
     y += 50; fit(g, t.place, 700, 36, CW - 120); if (draw) g.fillText(t.place, MID, y);
     y = top + headH;
+    // Test tickets: an amber band straight under the header.
+    if (t.test) {
+      if (draw) { g.fillStyle = C.amber; g.fillRect(X, y, CW, 96); font(g, 800, 38); g.fillStyle = C.navy; g.fillText("TEST TICKET · not valid for entry", MID, y + 62); }
+      y += 96;
+    }
     // Details
     y += 84;
     for (const [k, v] of t.rows || [["Ticket", t.type], ["Holder", t.holder], ["Order", t.order]]) {
@@ -1363,7 +1369,7 @@ export async function ticketPng(svg, t) {
       g.fillStyle = "#fff"; rrect(g, MID - box / 2, y, box, box, 34); g.fill(); g.lineWidth = 4; g.strokeStyle = C.line; g.stroke();
       g.imageSmoothingEnabled = false; g.drawImage(qr, MID - 190, y + 40, 380, 380); g.imageSmoothingEnabled = true;
     }
-    y += box + 50; font(g, 700, 30); if (draw) { g.fillStyle = C.muted; g.fillText("Scan at the entrance", MID, y); }
+    y += box + 50; font(g, 700, 30); if (draw) { g.fillStyle = C.muted; g.fillText(t.test ? "Test ticket: the gate refuses it" : "Scan at the entrance", MID, y); }
     // Tear line with notches
     y += 46;
     if (draw) {

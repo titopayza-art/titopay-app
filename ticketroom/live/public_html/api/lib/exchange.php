@@ -289,6 +289,7 @@ function resale_list(array $u, string $ticketId, int $price, ?array $bank): arra
         $t = owned_ticket($u['id'], $ticketId);
         $ev = row('SELECT * FROM events WHERE id = ?', [$t['event_id']]);
         if ($t['status'] !== 'valid') throw conflict('Only unused, valid tickets can be sold.', 'ticket_not_valid');
+        if (ticket_has_open_refund($t['id'])) throw conflict('This ticket has a refund on its way, so it cannot be sold.', 'refund_pending');
         if (empty($ev['resale_enabled'])) throw conflict('The organiser has switched off resale for this event. You can still pass your ticket to a friend.', 'resale_disabled');
         if (!resale_open($ev)) throw conflict('Resale for this event has closed. Listings close when the doors open.', 'resale_closed');
         if (val("SELECT 1 FROM ticket_transfers WHERE ticket_id = ? AND status = 'pending'", [$t['id']])) throw conflict('This ticket has a transfer waiting. Cancel the transfer first.', 'transfer_pending');
@@ -409,8 +410,19 @@ function resale_checkout(array $buyer, string $listingId, ?string $offerToken, a
 // which goes to the waitlist first, then back on the exchange.
 function resale_release_order(array $order): void
 {
+    // A listing whose event was cancelled, or whose ticket is being refunded, closes instead.
+    $l = row('SELECT * FROM resale_listings WHERE id = ? AND status = ? AND held_order_id = ?', [$order['resale_listing_id'], 'held', $order['id']]);
+    if ($l && ($why = resale_listing_blocked($l))) { resale_close_listing($l, 'closed', $why); return; }
     $n = affected("UPDATE resale_listings SET status = 'active', held_order_id = NULL, updated_at = ? WHERE id = ? AND status = 'held' AND held_order_id = ?", [now_iso(), $order['resale_listing_id'], $order['id']]);
     if ($n) waitlist_sweep($order['event_id']);
+}
+// Why a listing can no longer be sold, or null: its event was cancelled or
+// its ticket has a refund on its way.
+function resale_listing_blocked(array $l): ?string
+{
+    if (val('SELECT status FROM events WHERE id = ?', [$l['event_id']]) === 'cancelled') return 'event_cancelled';
+    if (ticket_has_open_refund($l['ticket_id'])) return 'refund_pending';
+    return null;
 }
 // Inside payment_apply()'s transaction, once the provider confirmed the money.
 function resale_payment_confirmed(array $order, array $p): void
@@ -422,12 +434,12 @@ function resale_payment_confirmed(array $order, array $p): void
     $l = row('SELECT * FROM resale_listings WHERE id = ?', [$order['resale_listing_id']]);
     $t = $l ? row('SELECT * FROM tickets WHERE id = ?', [$l['ticket_id']]) : null;
     $mine = $l && (($l['status'] === 'held' && $l['held_order_id'] === $order['id']) || $l['status'] === 'active');
-    if (!$mine || !$t || $t['status'] !== 'valid' || $t['owner_user_id'] !== $l['seller_id']) {
-        // The ticket went elsewhere while this payment was slow: full refund.
-        q("UPDATE orders SET status = 'paid_unfulfilled', paid_at = ?, updated_at = ? WHERE id = ?", [now_iso(), now_iso(), $order['id']]);
-        $order = row('SELECT * FROM orders WHERE id = ?', [$order['id']]);
-        $rf = refund_create($order, null, [], true, 'unfulfilled', 'Payment arrived after the resale ticket was no longer available.', null, 'processing');
-        $GLOBALS['TR_AFTER_COMMIT'][] = fn() => refund_process_safe($rf['id']);
+    // The event was cancelled, or the seller's ticket is being refunded, while this buyer paid.
+    $blocked = $mine ? resale_listing_blocked($l) : null;
+    if (!$mine || $blocked || !$t || $t['status'] !== 'valid' || $t['owner_user_id'] !== $l['seller_id']) {
+        // The ticket went elsewhere (or can't be sold) while this payment was slow: full refund.
+        if ($blocked) resale_close_listing($l, 'closed', $blocked);
+        payment_unfulfilled($order, $blocked === 'event_cancelled' ? 'Payment arrived after the event was cancelled.' : 'Payment arrived after the resale ticket was no longer available.');
         return;
     }
     $now = now_iso();

@@ -13,6 +13,8 @@ changes `live/public_html`.
 | `smoke.js <dir> [port]` | The Playwright smoke test. |
 | `lib.js` | API client (cookie jar + CSRF token) and outbox/SQLite readers shared by the two scripts. |
 | `TRIAGE.md` | The audit findings checked against the live code. |
+| `run-all.sh [port] [dir]` | Serves a fresh instance, runs `smoke.js` and every suite in `tests/`, then stops the server it started. |
+| `tests/money.js` | Money regression tests (refunds, resale, payouts, test money, reconciliation); scenarios are built in the PHP CLI with `tests/money-lib.php`. Uses a Yoco mock on port 8790 (`TR_MONEY_MOCK_PORT`); `TR_ONLY=M10` runs one item. |
 
 ## Run it
 
