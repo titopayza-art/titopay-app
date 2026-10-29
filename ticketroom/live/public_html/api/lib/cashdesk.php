@@ -117,7 +117,7 @@ function desk_find_guest(array $ev, string $input): array
         $f = user_by_email($in);
         $userId = $f['id'] ?? null;
     } elseif (preg_match('/^(?:\+?27|0)([6-8]\d{8})$/', (string) preg_replace('/[\s()-]/', '', $in), $m)) {
-        $userId = val("SELECT id FROM users WHERE phone = ? AND status = 'active' ORDER BY guest, created_at LIMIT 1", ['+27' . $m[1]]);
+        $userId = val("SELECT id FROM users WHERE phone = ? AND phone_verified_at IS NOT NULL AND status = 'active' ORDER BY guest, created_at LIMIT 1", ['+27' . $m[1]]);
     } else {
         $tag = tag_resolve($in);
         if ($tag && $tag['event_id'] === $ev['id'] && $tag['status'] === 'active') $userId = $tag['user_id'];

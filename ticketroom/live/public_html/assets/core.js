@@ -609,6 +609,8 @@ async function maintenanceScreen(u) {
   }
   if (/^\/admin(\/|$)/.test(location.pathname)) return;
   if (/^\/contact(?:\/|$)/.test(location.pathname)) return;
+  // Gate staff keep scanning and selling during maintenance.
+  if (/^\/(?:scan|pos)(?:\/|$)/.test(location.pathname)) return;
   const box = document.createElement("div");
   box.className = "maint-screen";
   render(box, html`<main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${s.maintenance.message}</p>

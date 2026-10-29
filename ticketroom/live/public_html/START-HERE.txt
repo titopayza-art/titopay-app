@@ -5,10 +5,12 @@ This is build 2026-10-22-phases.
 
 UPDATING A SITE THAT IS ALREADY LIVE
 ------------------------------------
-  1. Keep maintenance ON for the whole update. cPanel → File Manager →
-     public_html. Settings → tick "Show Hidden Files".
-  2. Before replacing files, make a cPanel backup of public_html and a separate
-     private backup of ticketroom-data (or the existing tr-data/data folder).
+  1. Keep maintenance ON for the whole update (gate scanners, the top-up
+     desk and tills keep working). cPanel → File Manager → public_html.
+     Settings → tick "Show Hidden Files".
+  2. Before replacing files: Admin portal → Backups → "Back up now", and
+     Download that copy. Also make a cPanel backup of public_html and of
+     ticketroom-data (or the existing tr-data/data folder).
      Never delete or overwrite those data folders during the code update.
   3. DELETE the old ticketroom.zip in public_html first. Every version has
      that same name, and cPanel will not upload over a file with the same
@@ -33,7 +35,11 @@ UPDATING A SITE THAT IS ALREADY LIVE
      the public opening, and it should happen only in that agreed window.
   9. On your phone: close TicketRoom and open it again. Remove an old
      home-screen icon and add it again.
-  Details: DEPLOY-AFRIHOST.md, "Already live? Updating to a new version".
+ 10. The cron job is required from this version. If it is not set up yet:
+     cPanel → Cron Jobs → every 5 minutes, with the full PHP path:
+       /usr/local/bin/php /home/YOURUSER/public_html/api/cron.php >/dev/null 2>&1
+  Details: DEPLOY-AFRIHOST.md, "Already live? Updating to a new version",
+  step 12 (cron) and step 13 (backups and restoring).
 
 PUTTING IT LIVE
 ---------------
@@ -61,6 +67,9 @@ The short version:
      Then sign in at https://ticketroom.co.za/admin. Staff sign-in requires a
      one-time code sent to the verified staff email address; secure that
      mailbox with its own MFA before adding staff.
+  5. Set up the cron job (required), every 5 minutes, full PHP path:
+       /usr/local/bin/php /home/YOURUSER/public_html/api/cron.php >/dev/null 2>&1
+  6. cPanel → Email Deliverability: SPF and DKIM green for ticketroom.co.za.
 
 
 THE THREE PORTALS: ONE ACCOUNT, ONE PORTAL
@@ -187,6 +196,21 @@ https://ticketroom.co.za/deploy-check.php within 30 minutes.
 It reports what reached the server, whether the API, clean addresses and
 email work, and what is left over from earlier uploads. Fix anything marked
 "Fix". Delete ticketroom-data/unlock-check and switch diagnostics off when done.
+
+
+BACKUPS
+-------
+The site copies its database every day (newest 14 kept) and before every
+upgrade, into ticketroom-data/backups. Admin portal → Backups: "Back up
+now" and Download. Keep a downloaded copy off the server. To restore one,
+see DEPLOY-AFRIHOST.md, "Restoring a backup".
+
+If ticketroom-data or its keys.php goes missing, the site stops with a short
+notice instead of starting empty: put them back from a backup. Details:
+DEPLOY-AFRIHOST.md, "If the site stops itself".
+
+Monitoring: https://ticketroom.co.za/api/health says "healthy":true when
+jobs, email and backups are fine. The owner gets an email if not.
 
 
 EMAIL

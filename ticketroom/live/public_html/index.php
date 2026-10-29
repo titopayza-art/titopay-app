@@ -107,7 +107,7 @@ foreach ($candidates as $rel) {
     $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
     // Only web files: never PHP source, notes, archives or hidden files.
     if ($name[0] === '.' || !isset($types[$ext]) || $name === 'START-HERE.txt') break;
-    if ($ext === 'html' && !in_array($name, ['admin.html', 'contact.html'], true) && ($msg = $maintenance()) !== null) { $maintenancePage($msg); exit; }
+    if ($ext === 'html' && !in_array($name, ['admin.html', 'contact.html', 'scan.html', 'pos.html'], true) && ($msg = $maintenance()) !== null) { $maintenancePage($msg); exit; }
     header('Content-Type: ' . $types[$ext]);
     header('X-Content-Type-Options: nosniff');
     if ($ext === 'html') {

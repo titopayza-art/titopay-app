@@ -579,8 +579,11 @@ route('POST', '/api/organiser/signup', function () {
         $existing = user_by_email($b['email']);
         // One email, one account: an email already used by a customer (even
         // one who only bought as a guest), organiser or staff account is taken.
+        // The answer looks the same as for a new account (so it never says who
+        // has one); the email's owner is told how to go on.
         if ($existing) {
-            throw conflict('An account with this email already exists. Use a different email for your organiser account, or sign in on the organiser portal if it is already one.', 'email_taken', ['email' => 'Already has an account.']);
+            if ($existing['status'] === 'active') send_account_exists($existing);
+            return;
         }
         if (!empty($b['phone']) && val("SELECT 1 FROM users WHERE phone = ? AND status = 'active' AND guest = 0", [$b['phone']])) {
             throw conflict('This mobile number is already on another TicketRoom account.', 'phone_taken', ['phone' => 'Already on another account.']);
@@ -1110,6 +1113,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
     if ($found && account_type($found) === 'staff') throw conflict('That email belongs to a TicketRoom staff account. Scanners need their own email.', 'staff_account', ['email' => 'Use a different email.']);
     $uid = $found['id'] ?? null;
     $invited = false;
+    $already = $uid && val('SELECT 1 FROM event_staff WHERE event_id = ? AND user_id = ?', [$event['id'], $uid]);
     // Someone new, or someone who has only bought tickets as a guest, gets an email to set a password.
     if (!$uid || (int) $found['guest'] === 1) {
         $token = random_token(32);
@@ -1129,6 +1133,12 @@ route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
        ON CONFLICT (event_id, user_id) DO UPDATE SET can_scan = excluded.can_scan, can_manage_tags = excluded.can_manage_tags, can_sell_tickets = excluded.can_sell_tickets',
         [$event['id'], $uid, $b['canScan'], $b['canManageTags'], $b['canSellTickets'], $u['id'], now_iso()]);
     audit('event.staff_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['eventId' => $event['id'], 'canScan' => $b['canScan'], 'canManageTags' => $b['canManageTags'], 'canSellTickets' => $b['canSellTickets']]]);
+    // Someone who already has an account is told they were added, and how to
+    // be taken off the team if they did not expect it.
+    if (!$invited && !$already) {
+        outbox_enqueue(['to' => $found['email'], 'userId' => $uid] + tpl('staffAdded', ['name' => $found['full_name'], 'organiser' => $org['name'], 'event' => $event['title'],
+            'canScan' => $b['canScan'], 'canManageTags' => $b['canManageTags'], 'canSellTickets' => $b['canSellTickets']]));
+    }
     return json_out(['ok' => true, 'invited' => $invited], 201);
 });
 

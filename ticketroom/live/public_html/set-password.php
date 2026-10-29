@@ -34,7 +34,7 @@ header('X-Robots-Tag: noindex, nofollow');
 header('Referrer-Policy: no-referrer');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
-header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+header('Strict-Transport-Security: max-age=31536000');
 
 $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 $error = '';

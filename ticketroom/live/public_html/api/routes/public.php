@@ -9,7 +9,7 @@ const PUBLIC_EVENT = "e.id, e.slug, e.title, e.is_free, e.summary, e.category, e
   (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes";
 
 route('GET', '/api/public/events', function () {
-    limit('browse', 300, 60);
+    limit_light('browse', 300, 60);
     $where = ["e.status = 'published'", 'e.ends_at > ?'];
     $p = [now_iso()];
     $q = trim(mb_substr((string) qs('q', ''), 0, 80));
@@ -189,7 +189,7 @@ function public_lineup(?string $json): array
 // Trending Artists: acts on upcoming live events, ranked by recent ticket
 // sales and likes for those events. Worked out on the fly and cached briefly.
 route('GET', '/api/public/artists/trending', function () {
-    limit('browse', 300, 60);
+    limit_light('browse', 300, 60);
     // Recounted every 5 minutes, or straight away when an event is published or edited.
     $sig = (string) val("SELECT count(*) || '|' || COALESCE(MAX(updated_at), '') FROM events WHERE status = 'published'");
     $c = row("SELECT value FROM meta WHERE key = 'trending_artists'");

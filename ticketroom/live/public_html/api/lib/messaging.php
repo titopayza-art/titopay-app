@@ -21,52 +21,118 @@ function mail_mode(): string
     return cfg('mail.smtpHost') && (string) cfg('mail.smtpPass', '') !== '' ? 'smtp' : 'mail';
 }
 // Sends one batch. Marketing is re-checked against consent at send time.
-// When the mail server cannot be reached, email waits two minutes before the
-// next try instead of every message waiting out its own connection timeout.
+//
+// Each message is claimed before it is sent: in one transaction the batch
+// gets a lease (claimed_until), so a second worker running at the same moment
+// skips it, and a worker that dies half way only holds it until the lease
+// runs out.
+//
+// A message that cannot go out yet waits longer each time (1 minute, then 5,
+// 15, 1 hour, 3, 6 and 12 hours) and is given up only about a day after it
+// was first queued. A mail server that says "slow down" (a rate limit) or
+// cannot be reached at all pauses email for a while instead, and the
+// message keeps its tries. A refusal that can never work (5xx) is final.
 const MAIL_PAUSE_SECONDS = 120;
+const MAIL_RATE_PAUSE_SECONDS = 600;
+const OUTBOX_LEASE_SECONDS = 300;
+const OUTBOX_BACKOFF = [60, 300, 900, 3600, 10800, 21600, 43200];
+const OUTBOX_GIVE_UP_SECONDS = 86400;
+final class SmtpServerError extends RuntimeException {}
 function mail_paused(): bool { return (int) val("SELECT value FROM meta WHERE key = 'mail_paused_until'") > time(); }
+function mail_pause(int $seconds, string $why): void
+{
+    q("INSERT INTO meta (key, value) VALUES ('mail_paused_until', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) (time() + $seconds)]);
+    error_log("[ticketroom] email paused for {$seconds}s: " . integration_scrub($why));
+}
+// 'pause': the mail server itself is down or refusing everyone (the message
+// keeps its tries). 'pause-rate': the server says slow down. 'defer': this
+// message waits and tries again later. 'fail': it can never be delivered.
+function outbox_failure_kind(Throwable $e, string $channel): string
+{
+    $m = $e->getMessage();
+    if ($channel !== 'sms' && ($e instanceof SmtpServerError || str_starts_with($m, 'SMTP connect failed') || str_starts_with($m, 'SMTP link lost'))) return 'pause';
+    if (preg_match('/rate.?limit|too many|throttl|exceeded|quota|slow down|^SMTP: 421/i', $m)) return $channel === 'sms' ? 'defer' : 'pause-rate';
+    if ($m === 'invalid recipient') return 'fail';
+    if (preg_match('/^SMTP: 5\d\d/', $m)) return 'fail';
+    return 'defer';
+}
+function outbox_next_try(int $attempts, ?string $createdAt): ?string
+{
+    if ($createdAt && (to_unix($createdAt) ?? 0) < microtime(true) - OUTBOX_GIVE_UP_SECONDS) return null;
+    $wait = OUTBOX_BACKOFF[min(max($attempts, 1), count(OUTBOX_BACKOFF)) - 1];
+    return iso_in($wait);
+}
 function outbox_deliver(int $limit = 25): int
 {
     $emailOff = mail_paused();
     $claimed = tx(function () use ($limit, $emailOff) {
+        $now = now_iso();
         $list = rows("SELECT o.*, c.organiser_id FROM message_outbox o LEFT JOIN campaigns c ON c.id = o.campaign_id
-                       WHERE o.status = 'queued' AND o.attempts < 5" . ($emailOff ? " AND o.channel = 'sms'" : '') . " ORDER BY o.created_at LIMIT $limit");
-        foreach ($list as $m) q('UPDATE message_outbox SET attempts = attempts + 1 WHERE id = ?', [$m['id']]);
+                       WHERE o.status = 'queued' AND (o.claimed_until IS NULL OR o.claimed_until < ?) AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)"
+                       . ($emailOff ? " AND o.channel = 'sms'" : '') . " ORDER BY o.created_at LIMIT $limit", [$now, $now]);
+        $lease = iso_in(OUTBOX_LEASE_SECONDS);
+        foreach ($list as $m) q('UPDATE message_outbox SET attempts = attempts + 1, claimed_until = ? WHERE id = ?', [$lease, $m['id']]);
         return $list;
     });
     $sent = 0;
     $down = false;
     foreach ($claimed as $m) {
+        $tries = (int) $m['attempts'] + 1;
         // Mail server unreachable: put the rest back untouched and try later.
-        if ($down && $m['channel'] !== 'sms') { q('UPDATE message_outbox SET attempts = attempts - 1 WHERE id = ?', [$m['id']]); continue; }
+        if ($down && $m['channel'] !== 'sms') { q('UPDATE message_outbox SET attempts = attempts - 1, claimed_until = NULL WHERE id = ?', [$m['id']]); continue; }
         try {
             if ($m['kind'] === 'marketing') {
                 $g = val("SELECT granted FROM marketing_consents WHERE user_id = ? AND COALESCE(organiser_id,'') = COALESCE(?,'') AND channel = ?", [$m['user_id'], $m['organiser_id'], $m['channel']]);
-                if (!$g) { q("UPDATE message_outbox SET status = 'suppressed', last_error = 'consent withdrawn' WHERE id = ?", [$m['id']]); continue; }
+                if (!$g) { q("UPDATE message_outbox SET status = 'suppressed', claimed_until = NULL, last_error = 'consent withdrawn' WHERE id = ?", [$m['id']]); continue; }
             }
             if ($m['channel'] === 'sms') { $mode = sms_provider(); $msgId = sms_send($m['to_address'], $m['body']); }
             else {
                 $mode = mail_mode();
                 $msgId = send_email($mode, $m['to_address'], (string) ($m['subject'] ?: 'TicketRoom'), $m['body']);
             }
-            q("UPDATE message_outbox SET status = 'sent', provider = ?, provider_message_id = ?, sent_at = ?, last_error = NULL WHERE id = ?", [$mode, $msgId, now_iso(), $m['id']]);
+            q("UPDATE message_outbox SET status = 'sent', provider = ?, provider_message_id = ?, sent_at = ?, claimed_until = NULL, next_attempt_at = NULL, last_error = NULL WHERE id = ?", [$mode, $msgId, now_iso(), $m['id']]);
             if ($m['campaign_id']) q('UPDATE campaigns SET delivered_count = delivered_count + 1 WHERE id = ?', [$m['campaign_id']]);
             $sent++;
         } catch (Throwable $e) {
-            if ($m['channel'] !== 'sms' && str_starts_with($e->getMessage(), 'SMTP connect failed')) {
+            $err = substr(integration_scrub($e->getMessage()), 0, 300);
+            $kind = outbox_failure_kind($e, $m['channel']);
+            if ($kind === 'pause' || $kind === 'pause-rate') {
                 $down = true;
-                q("INSERT INTO meta (key, value) VALUES ('mail_paused_until', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) (time() + MAIL_PAUSE_SECONDS)]);
-                error_log('[ticketroom] mail server unreachable, email paused for ' . MAIL_PAUSE_SECONDS . 's: ' . $e->getMessage());
+                mail_pause($kind === 'pause' ? MAIL_PAUSE_SECONDS : MAIL_RATE_PAUSE_SECONDS, $e->getMessage());
                 // Not this message's fault: it keeps all its tries for when the server is back.
-                q('UPDATE message_outbox SET attempts = attempts - 1, last_error = ? WHERE id = ?', [substr(integration_scrub($e->getMessage()), 0, 300), $m['id']]);
+                q('UPDATE message_outbox SET attempts = attempts - 1, claimed_until = NULL, last_error = ? WHERE id = ?', [$err, $m['id']]);
                 continue;
             }
-            $final = $m['attempts'] + 1 >= 5;
-            q('UPDATE message_outbox SET status = ?, last_error = ? WHERE id = ?', [$final ? 'failed' : 'queued', substr(integration_scrub($e->getMessage()), 0, 300), $m['id']]);
-            if ($final && $m['campaign_id']) q('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?', [$m['campaign_id']]);
+            $next = $kind === 'fail' ? null : outbox_next_try($tries, $m['created_at']);
+            q('UPDATE message_outbox SET status = ?, next_attempt_at = ?, claimed_until = NULL, last_error = ? WHERE id = ?', [$next ? 'queued' : 'failed', $next, $err, $m['id']]);
+            if (!$next && $m['campaign_id']) q('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?', [$m['campaign_id']]);
         }
     }
     return $sent;
+}
+// Admin "Retry": failed messages go back in the queue for another day of
+// tries. One message, or every failed one whose text is still kept.
+function outbox_retry(?string $id = null): int
+{
+    return tx(function () use ($id) {
+        $where = "status = 'failed' AND body <> '[redacted]'" . ($id ? ' AND id = ?' : '');
+        $p = $id ? [$id] : [];
+        foreach (rows("SELECT campaign_id, count(*) AS n FROM message_outbox WHERE $where AND campaign_id IS NOT NULL GROUP BY campaign_id", $p) as $c) {
+            q('UPDATE campaigns SET failed_count = MAX(failed_count - ?, 0) WHERE id = ?', [(int) $c['n'], $c['campaign_id']]);
+        }
+        $n = affected("UPDATE message_outbox SET status = 'queued', attempts = 0, next_attempt_at = NULL, claimed_until = NULL, created_at = ? WHERE $where", array_merge([now_iso()], $p));
+        if ($n) { q("DELETE FROM meta WHERE key = 'mail_paused_until'"); $GLOBALS['TR_OUTBOX_DIRTY'] = true; }
+        return $n;
+    });
+}
+// Emails carry password, confirmation and ticket links. Once sent, the text
+// is kept a week (for questions about it), failed ones a month, then only
+// who, when and the subject. Addresses go after 180 days.
+function outbox_redact(): void
+{
+    q("UPDATE message_outbox SET body = '[redacted]' WHERE status IN ('sent','suppressed') AND COALESCE(sent_at, created_at) < ? AND body <> '[redacted]'", [iso_in(-7 * 86400)]);
+    q("UPDATE message_outbox SET body = '[redacted]' WHERE status = 'failed' AND created_at < ? AND body <> '[redacted]'", [iso_in(-30 * 86400)]);
+    q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND to_address <> '[redacted]' AND status <> 'queued'", [iso_in(-180 * 86400)]);
 }
 
 // Sends one email straight away (tests from the admin portal), bypassing the
@@ -132,6 +198,8 @@ function send_email(string $mode, string $to, string $subject, string $text): st
     return $msgId;
 }
 // Minimal SMTP client: implicit TLS (465) or STARTTLS (587/25), AUTH LOGIN.
+// The mailbox password is never sent without TLS: on any port but 465 the
+// server must offer STARTTLS before we sign in, or nothing is sent.
 // One SMTP connection is kept open for the whole delivery run (a big match
 // sends tens of thousands of tickets; logging in for every email is slow and
 // mail servers throttle it). It is closed at the end of the request.
@@ -173,15 +241,22 @@ function smtp_open(): array
         $caps = smtp_cmd($c, $ehlo, [250]);
         if ($port !== 465 && stripos($caps, 'STARTTLS') !== false) {
             smtp_cmd($c, 'STARTTLS', [220]);
-            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new RuntimeException('SMTP TLS failed');
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new SmtpServerError('SMTP TLS failed');
             smtp_cmd($c, $ehlo, [250]);
+        } elseif ($port !== 465 && $user !== '') {
+            throw new SmtpServerError("The mail server did not offer a secure connection (STARTTLS) on port $port, so the mailbox password was not sent and nothing went out. Use port 465, or 587 with STARTTLS.");
         }
         if ($user !== '') {
             smtp_cmd($c, 'AUTH LOGIN', [334]);
             smtp_cmd($c, base64_encode($user), [334]);
             smtp_cmd($c, base64_encode((string) cfg('mail.smtpPass')), [235]);
         }
-    } catch (Throwable $e) { @fclose($fp); throw $e; }
+    } catch (Throwable $e) {
+        @fclose($fp);
+        // Anything before the first message (greeting, TLS, sign-in) is the
+        // server's problem, not one email's: email pauses instead.
+        throw $e instanceof SmtpServerError ? $e : new SmtpServerError($e->getMessage(), 0, $e);
+    }
     return $c;
 }
 function smtp_message(array $c, string $to, string $subject, array $headers, string $body): void
@@ -265,6 +340,8 @@ function place(array $e): string { return implode(', ', array_filter([$e['venue_
 // Same wording as src/modules/messaging/templates.js in the Node edition.
 function tpl(string $name, array $a): array
 {
+    // Names people typed are cleaned of links and hidden characters first.
+    $a = tpl_clean_names($a);
     $B = base_url();
     $hi = 'Hi ' . first_name($a['name'] ?? ($a['order']['buyer_name'] ?? null)) . ",\n\n";
     switch ($name) {
@@ -396,6 +473,21 @@ function tpl(string $name, array $a): array
         case 'staffPasswordReset':
             return ['subject' => 'Choose a new TicketRoom password',
                 'body' => $hi . "{$a['by']} has sent you a link to choose a new password for the TicketRoom admin portal. It works for 24 hours.\n\nChoose my password: {$a['url']}\n\nIf you didn't ask for this, tell {$a['by']} straight away." . FOOTER];
+        case 'accountExists':
+            return ['subject' => 'You already have a TicketRoom account',
+                'body' => $hi . "Someone, hopefully you, tried to create a new TicketRoom account with this email address. You already have one, so nothing new was made.\n\nSign in: {$a['url']}\n\nForgot your password? Use \"Forgot password?\" in the sign-in box and we'll email you a link. To sell tickets as an organiser, sign up with a different email address. If this wasn't you, you can ignore this email." . FOOTER];
+        case 'staffAdded':
+            $jobs = array_filter([(empty($a['canScan']) ? null : 'scan admission tickets'), (empty($a['canManageTags']) ? null : 'help attendees with wristbands'), (empty($a['canSellTickets']) ? null : 'sell tickets and reconcile door payments')]);
+            return ['subject' => "{$a['organiser']} added you to the event team for {$a['event']}",
+                'body' => $hi . "{$a['organiser']} has added you to the event team for {$a['event']}" . ($jobs ? ' to ' . implode(', ', $jobs) : '') . ".\n\nOn the day, open ticketroom.co.za/scan on your phone and sign in with your usual TicketRoom password to see your event tools.\n\nIf you don't know {$a['organiser']} or don't want to help at this event, reply to this email and we'll take you off the team." . FOOTER];
+        case 'friendInviteMember':
+            return ['subject' => "{$a['fromName']} wants to top up your wallet for {$a['event']['title']}",
+                'body' => "Hi there,\n\n{$a['fromName']} wants to add money to your cashless balance for {$a['event']['title']}, so you can tap and pay at the stalls.\n\n"
+                    . "You already have a TicketRoom account with this email address, so they can top you up straight away. Let them know this is the address to use.\n\nThe event: {$a['eventUrl']}" . FOOTER];
+        case 'opsAlert':
+            return ['subject' => 'TicketRoom needs a look',
+                'body' => "Hi,\n\nTicketRoom needs a look:\n" . implode("\n", array_map(fn($p) => "- $p", $a['problems']))
+                    . "\n\nOpen the admin portal: $B/admin#/\n\nWe'll remind you again in 6 hours if it is still the case." . FOOTER];
         case 'orgMemberInvite':
             return ['subject' => "{$a['organiser']} added you to their team on TicketRoom",
                 'body' => $hi . "{$a['by']} has added you to the {$a['organiser']} team on TicketRoom, with the " . ucfirst($a['role']) . " role. Set a password to open the organiser portal. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nAfter that, sign in at ticketroom.co.za/organisers." . FOOTER];
@@ -559,6 +651,8 @@ function email_catalog(): array
         ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/admin#/reset/sample"])],
         ['key' => 'staffPasswordReset', 'name' => 'Staff password reset', 'audience' => 'Staff', 'trigger' => 'When an admin sends a staff member a new-password link', 'sample' => fn() => tpl('staffPasswordReset', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'url' => "$B/admin#/reset/sample"])],
         ['key' => 'orgMemberInvite', 'name' => 'Added to an organiser team', 'audience' => 'Organiser', 'trigger' => 'When an organiser adds a new team member', 'sample' => fn() => tpl('orgMemberInvite', ['by' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'role' => 'manager', 'url' => "$B/organisers#/reset/sample"])],
+        ['key' => 'accountExists', 'name' => 'Sign-up with an email that has an account', 'audience' => 'Everyone', 'trigger' => 'When someone signs up with an email that already has an account', 'sample' => fn() => tpl('accountExists', ['name' => 'Lerato Mokoena', 'url' => "$B/account"])],
+        ['key' => 'staffAdded', 'name' => 'Added to an event team', 'audience' => 'Attendee', 'trigger' => 'When an organiser adds someone who already has an account to an event team', 'sample' => fn() => tpl('staffAdded', ['name' => 'Sipho Ndlovu', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'canScan' => true])],
         ['key' => 'refundDone', 'name' => 'Refund paid', 'audience' => 'Attendee', 'trigger' => 'When a refund reaches the customer\'s card', 'sample' => fn() => tpl('refundDone', ['name' => 'Sipho', 'order' => ['reference' => 'TR-8K2M4Q', 'buyer_name' => 'Sipho'], 'event' => ['title' => 'Soweto Sunset Sessions'], 'amountCents' => 32000])],
         ['key' => 'payoutPaid', 'name' => 'Payout paid', 'audience' => 'Organiser', 'trigger' => 'When finance records the EFT', 'sample' => fn() => tpl('payoutPaid', ['name' => 'Naledi', 'reference' => 'PO-4H8T2W', 'amountCents' => 1250000, 'organiser' => 'Soweto Community Arts', 'bank' => 'FNB ••••4321', 'bankReference' => 'TR PO-4H8T2W'])],
         ['key' => 'gatePass', 'name' => 'Gate pass', 'audience' => 'Attendee', 'trigger' => 'When an organiser issues a gate pass with an email address', 'sample' => fn() => tpl('gatePass', ['name' => 'Lerato', 'organiser' => 'Soweto Community Arts', 'role' => 'Crew', 'event' => 'Soweto Sunset Sessions', 'when' => 'Sat 21 Nov 2026, 15:00', 'venue' => 'Thokoza Park, Soweto', 'url' => "$B/pass?t=sample", 'reentry' => true])],
@@ -580,6 +674,8 @@ function email_catalog(): array
         ['key' => 'friendTopup', 'name' => 'Topped up by a friend', 'audience' => 'Attendee', 'trigger' => "When a friend's card top-up of your balance is confirmed", 'sample' => fn() => tpl('friendTopup', ['name' => 'Zanele', 'fromName' => 'Sipho Ndlovu', 'event' => $ev, 'amountCents' => 20000, 'balanceCents' => 20000])],
         ['key' => 'friendTopupSent', 'name' => 'You topped up a friend', 'audience' => 'Attendee', 'trigger' => "When your top-up of a friend's balance is confirmed", 'sample' => fn() => tpl('friendTopupSent', ['name' => 'Sipho', 'friendName' => 'Zanele Khumalo', 'event' => $ev, 'amountCents' => 20000, 'reference' => 'TU-7KQ2M9PX'])],
         ['key' => 'friendInvite', 'name' => 'Invite to get topped up', 'audience' => 'Everyone', 'trigger' => 'When someone wants to top up a friend who has no account yet', 'sample' => fn() => tpl('friendInvite', ['fromName' => 'Sipho Ndlovu', 'event' => $ev, 'url' => "$B/account", 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
+        ['key' => 'friendInviteMember', 'name' => 'Friend wants to top you up', 'audience' => 'Attendee', 'trigger' => 'When someone asks to top up a friend who already has an account', 'sample' => fn() => tpl('friendInviteMember', ['fromName' => 'Sipho Ndlovu', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
+        ['key' => 'opsAlert', 'name' => 'Site needs a look', 'audience' => 'Staff', 'trigger' => 'When email or background jobs are stuck (at most every 6 hours, to the owner)', 'sample' => fn() => tpl('opsAlert', ['problems' => ['40 messages are waiting to go out, the oldest for 45 minutes.']])],
         ['key' => 'promotionConfirmed', 'name' => 'Promote receipt', 'audience' => 'Organiser', 'trigger' => 'When a Promote purchase is paid (card or balance)', 'sample' => fn() => tpl('promotionConfirmed', ['name' => 'Naledi', 'event' => $ev + ['ends_at' => $ev['starts_at']],
             'promotion' => ['reference' => 'PR-7KQ2M9XW', 'price_cents' => 160000, 'paid_with' => 'card', 'paid_at' => now_iso(), 'ends_at' => $ev['starts_at'], 'test' => 0]])],
         ['key' => 'promotionRefunded', 'name' => 'Promote refunded', 'audience' => 'Organiser', 'trigger' => 'When TicketRoom refunds a Promote package (event cancelled)', 'sample' => fn() => tpl('promotionRefunded', ['name' => 'Naledi', 'event' => $ev, 'promotion' => ['reference' => 'PR-7KQ2M9XW'], 'amountCents' => 160000, 'toBalance' => false])],

@@ -1,4 +1,7 @@
-// Builds ticketroom.zip for Afrihost cPanel hosting. The zip is extracted
+// OBSOLETE: the Node.js package for Afrihost. The live site is built with
+// scripts/build-live.js, which alone writes ticketroom.zip; this script writes
+// ticketroom-node-afrihost.zip so the two can never be mixed up.
+// Builds a zip for Afrihost cPanel hosting. The zip is extracted
 // INSIDE public_html, so its root is exactly what public_html should contain:
 //   index.html, holding/   "Launching soon" page
 //   .htaccess              no folder listings; blocks private files and /ticketroom-app
@@ -9,7 +12,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const OUT = path.resolve(process.argv[2] || path.join(ROOT, "..", "ticketroom.zip"));
+const OUT = path.resolve(process.argv[2] || path.join(ROOT, "..", "ticketroom-node-afrihost.zip"));
 const STAGE = path.join(ROOT, "var", "afrihost-build");
 const APP = path.join(STAGE, "ticketroom-app");
 

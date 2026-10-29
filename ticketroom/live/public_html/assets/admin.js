@@ -188,7 +188,7 @@ function nav(counts = {}) {
     <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/retail-partners" data-role-need="admin finance support">Retail partners</a><a href="#/events">All events${c(counts.events)}</a><a href="#/event-changes" data-role-need="admin">Event change requests${c(counts.eventChanges)}</a><a href="#/promo-codes" data-role-need="admin">Promo codes & vouchers</a><a href="#/events" data-featured-nav data-role-need="admin">Featured events</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/wallets" data-feature="cashDesk">Wristbands & wallets</a><a href="#/support">Support${c(counts.support)}</a><a href="#/promotions" data-feature="promote">Promotions${c(counts.promotions)}</a>
     <div class="sect" data-feature="finance" data-role-need="admin finance">Finance</div><a href="#/refunds" data-feature="finance" data-role-need="admin finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance" data-role-need="admin finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance" data-role-need="admin finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance" data-role-need="admin finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance" data-role-need="admin finance">Ledger</a>
     <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/careers" data-role-need="admin">Careers</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
-    <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
+    <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/backups" data-role-need="admin">Backups</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
     <div class="sect">You</div><a href="#/staff">Staff & roles</a><a href="#/password">My password</a>`);
   // Each person sees only the sections their roles can open.
   $$("#sidenav [data-role-need]").forEach((a) => { if (!a.dataset.roleNeed.split(" ").some((r) => R.has(r))) a.remove(); });
@@ -747,8 +747,38 @@ async function audit() {
 }
 
 async function outbox() {
-  const { messages, adapters } = await get("/api/admin/outbox");
-  render(main, html`${head("Messages", `Email adapter: ${adapters.email} · SMS adapter: ${adapters.sms}`)}${tbl(["When", "Channel", "Kind", "To", "Subject", "Status"], messages.map((m) => html`<tr><td class="small">${fmtDateTime(m.created_at)}</td><td>${m.channel}</td><td>${m.kind}</td><td class="small">${m.to_address}</td><td class="small">${m.subject || ""}</td><td>${badge(m.status)}${m.last_error ? html`<div class="tiny muted">${m.last_error}</div>` : ""}</td></tr>`))}`);
+  const { messages, adapters, failed = 0, paused } = await get("/api/admin/outbox");
+  const canRetry = (isA() || isS()) && failed > 0;
+  render(main, html`${head("Messages", `Email adapter: ${adapters.email} · SMS adapter: ${adapters.sms}. A message that can't go out yet is tried again later, waiting longer each time, for about a day.`,
+      canRetry ? html`<button class="btn btn-dark" data-retry>Retry failed (${failed})</button>` : "")}
+    ${paused ? html`<p class="callout warn">Email is paused for a few minutes because the mail server is busy or can't be reached. It carries on by itself.</p>` : ""}
+    ${tbl(["When", "Channel", "Kind", "To", "Subject", "Status"], messages.map((m) => html`<tr><td class="small">${fmtDateTime(m.created_at)}</td><td>${m.channel}</td><td>${m.kind}</td><td class="small">${m.to_address}</td><td class="small">${m.subject || ""}</td><td>${badge(m.status)}${m.status === "queued" && m.next_attempt_at ? html`<div class="tiny muted">Next try ${fmtDateTime(m.next_attempt_at)}</div>` : ""}${m.last_error ? html`<div class="tiny muted">${m.last_error}</div>` : ""}</td></tr>`))}`);
+  $("[data-retry]")?.addEventListener("click", async () => {
+    if (!(await confirmDialog(`Retry ${failed} failed message${failed === 1 ? "" : "s"}?`, "They go back in the queue and are tried again for about a day.", { confirm: "Retry" }))) return;
+    try { const r = await post("/api/admin/outbox/retry", {}); toast(`${r.retried} message${r.retried === 1 ? " is" : "s are"} back in the queue.`, "good"); outbox(); }
+    catch (err) { toast(err.message, "bad"); }
+  });
+}
+
+// Copies of the database, made every day, before every update and on request.
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+const BACKUP_KIND = { daily: "Daily", manual: "Made by hand", "before-upgrade": "Before an update" };
+async function backups() {
+  if (!isA()) { render(main, html`${head("Backups", "Only admins can make and download backups.")}`); return; }
+  const d = await get("/api/admin/backups");
+  render(main, html`${head("Backups", `A copy of the whole database is made every day, before every update and when you press Back up now. The newest ${d.keep} are kept (and ${d.keepBeforeUpgrade} made before updates) in ticketroom-data/backups, outside the website. Download one now and then and keep it somewhere safe: a copy on the same server does not help if the server is lost.`,
+      html`<button class="btn btn-primary" data-backup-now>Back up now</button>`)}
+    ${d.problems.length ? html`<div class="callout warn stack">${d.problems.map((p) => html`<p class="mb-0">${p}</p>`)}</div>` : ""}
+    <p class="small muted">Background jobs: ${d.jobs.fresh ? "running on time" : `late (${d.jobs.stale.join(", ")})`}. Cron job: ${d.jobs.cron.lastRunAt ? `last ran ${fmtDateTime(d.jobs.cron.lastRunAt)}` : "not set up yet"}.</p>
+    ${tbl(["Made", "Kind", "#Size", ""], d.backups.map((b) => html`<tr data-backup-row><td class="small">${fmtDateTime(b.createdAt)}</td><td>${BACKUP_KIND[b.reason] || b.reason}</td><td class="num">${fmtSize(b.sizeBytes)}</td>
+      <td><a class="btn btn-ghost btn-sm" href="/api/admin/backups/${encodeURIComponent(b.id)}" download>Download</a></td></tr>`), "No backups yet. Press Back up now to make the first one.")}
+    <section class="card mt stack"><h2>Restoring a backup</h2><p class="mb-0">Restoring replaces everything on the site with the copy, so it is done on the server, with maintenance on. DEPLOY-AFRIHOST.md, "Restoring a backup", has the steps. Downloads are recorded in the audit log.</p></section>`);
+  $("[data-backup-now]").addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try { await post("/api/admin/backups", {}); toast("Backup made.", "good"); }
+    catch (err) { toast(err.message, "bad"); }
+    backups();
+  });
 }
 
 // ---------------- site settings: maintenance, banner, hours, support, legal, assistant ----------------
@@ -1254,5 +1284,5 @@ async function integrations() {
   document.title = "Admin portal | TicketRoom";
   nav();
   router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/event-changes", eventChangeRequests], ["/promo-codes", promoCodes], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/wallets", gate("cashDesk", wallets)], ["/support", support], ["/promotions", promotions],
-    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/retail-partners", retailPartners], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/careers", careersAdmin], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
+    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/retail-partners", retailPartners], ["/audit", audit], ["/outbox", outbox], ["/backups", backups], ["/site", siteSettings], ["/posters", posters], ["/careers", careersAdmin], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();

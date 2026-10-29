@@ -13,6 +13,8 @@ changes `live/public_html`.
 | `smoke.js <dir> [port]` | The Playwright smoke test. |
 | `lib.js` | API client (cookie jar + CSRF token) and outbox/SQLite readers shared by the two scripts. |
 | `TRIAGE.md` | The audit findings checked against the live code. |
+| `run-all.sh [port] [dir]` | Serves a fresh instance, runs `smoke.js` and every suite in `tests/`, stops the server it started. Also `npm run test:live` in `ticketroom/`. |
+| `tests/ops.js <dir> [port]` | Operations and security regressions (O* and S* in TRIAGE.md): email lease and retries, backups, keys and data folder, cron, health, rate limits, uploads, emails. Uses SMTP stand-ins on 127.0.0.1:8800-8802. |
 
 ## Run it
 
