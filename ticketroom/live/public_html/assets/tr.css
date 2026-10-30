@@ -425,25 +425,20 @@ body.maint { display: grid; place-items: center; min-height: 100vh; padding: 16p
 .maint-preview { background: var(--navy-900); color: #fff; border-radius: var(--radius); padding: 28px 20px; text-align: center; }
 .maint-preview img { width: min(260px, 80%); height: auto; border-radius: 12px; } .maint-preview p { color: #C8D4EA; } .maint-card p { color: #C8D4EA; }
 
-/* ---------- announcement card (Back office → Site settings) ---------- */
-.site-banner { padding: 20px 0 0; color: var(--navy-950); }
-.site-banner .wrap { display: block; }
-.announcement-card { display: grid; grid-template-columns: minmax(0, 1fr) auto 36px; align-items: center; gap: 18px; padding: 18px 20px; background: #FFF7E8; border: 1px solid #F0D8A9; border-left: 4px solid var(--amber-500); border-radius: 16px; box-shadow: 0 6px 18px rgba(11,29,63,.06); }
-.announcement-copy { min-width: 0; display: flex; align-items: flex-start; gap: 12px; }
-.site-banner p { min-width: 0; margin: 0; font-size: .98rem; line-height: 1.5; font-weight: 600; }
-.site-banner .pill { flex: none; display: inline-block; color: #74501A; border: 1px solid #E9C778; border-radius: 999px; padding: 3px 9px; font-size: .68rem; line-height: 1.4; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; }
-.site-banner .announcement-link { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 42px; padding: 9px 14px; color: #fff; background: var(--navy-900); border-radius: 10px; font-weight: 700; text-decoration: none; white-space: nowrap; }
-.site-banner .announcement-link:hover { background: var(--navy-800); }
-.site-banner .icon-btn { width: 36px; height: 36px; flex: none; color: var(--navy-700); border-radius: 50%; align-self: center; }
+/* ---------- announcement strip (Back office, Site settings) ---------- */
+.site-banner { background: var(--amber-100, #FFF1D6); border-bottom: 1px solid #F0D8A9; color: var(--navy-950); }
+.announcement-strip { display: flex; align-items: center; gap: 12px; min-height: 44px; padding-top: 6px; padding-bottom: 6px; }
+.site-banner p { flex: 1; min-width: 0; margin: 0; font-size: .9rem; font-weight: 600; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-banner .pill { flex: none; color: #74501A; border: 1px solid #E9C778; border-radius: 999px; padding: 2px 8px; font-size: .64rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.site-banner .announcement-link { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--navy-950); font-weight: 800; font-size: .9rem; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.site-banner .icon-btn { flex: none; width: 32px; height: 32px; color: var(--navy-700); border-radius: 50%; }
 .site-banner .icon-btn:hover { background: rgba(11,29,63,.08); }
 @media (max-width: 720px) {
-  .site-banner { padding-top: 16px; }
-  .announcement-card { grid-template-columns: minmax(0, 1fr) 32px; grid-template-areas: "copy close" "link close"; align-items: start; gap: 12px 8px; padding: 16px; }
-  .announcement-copy { grid-area: copy; gap: 9px; }
-  .site-banner p { font-size: .9rem; line-height: 1.48; }
-  .site-banner .pill { font-size: .62rem; padding: 3px 7px; }
-  .site-banner .announcement-link { grid-area: link; justify-self: start; min-height: 40px; }
-  .site-banner .icon-btn { grid-area: close; width: 32px; height: 32px; align-self: start; }
+  .announcement-strip { gap: 8px; padding-top: max(6px, env(safe-area-inset-top)); }
+  .site-banner .pill { display: none; }
+  .site-banner p { font-size: .82rem; }
+  .site-banner .announcement-link { font-size: .82rem; }
+}
 }
 
 /* ---------- assistant ---------- */
