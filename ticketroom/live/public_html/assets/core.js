@@ -91,6 +91,12 @@ export function gate(feature, fn) {
 // about while each piece loads on a slow connection.
 const root = document.documentElement;
 export function pageReady() {
+  const banner = $(".site-banner"), main = $("#main");
+  if (banner && main && main.childElementCount && !(main.childElementCount === 1 && main.firstElementChild.classList.contains("spinner"))) {
+    const hero = $(".hero", main);
+    if (hero) hero.after(banner);
+    else main.prepend(banner);
+  }
   if (!root.classList.contains("booting")) return;
   const show = () => root.classList.remove("booting");
   // After the next paint, so it all appears together; the timer covers tabs
@@ -942,13 +948,12 @@ export async function siteExtras() {
   $$("[data-hours-line]").forEach((x) => { x.textContent = footerHours(s.hours); });
   if (s.chatbot?.enabled && !$(".chat-fab")) chatWidget(s);
 }
-// The announcement is a slim one-line strip at the very top of public pages.
-// It is left off the sell page, which already says the same thing.
+// Keep public announcements in the page content, not in the site header.
 function showBanner(s) {
-  if (s?.banner && !$(".site-banner") && !/^\/sell(\/|$)/.test(location.pathname) && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
+  if (s?.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
     const b = document.createElement("div");
     b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
-    render(b, html`<div class="wrap announcement-strip"><span class="pill">New</span><p>${s.banner.text}</p>${s.banner.linkText && s.banner.linkUrl ? html`<a class="announcement-link" href="${s.banner.linkUrl}">${s.banner.linkText}${svgIcon("arrow", 14)}</a>` : ""}<button class="icon-btn" data-hide aria-label="Dismiss announcement">${svgIcon("close", 16)}</button></div>`);
+    render(b, html`<div class="wrap"><div class="announcement-card"><div class="announcement-copy"><span class="pill">New</span><p>${s.banner.text}</p></div>${s.banner.linkText && s.banner.linkUrl ? html`<a class="announcement-link" href="${s.banner.linkUrl}">${s.banner.linkText}${svgIcon("arrow", 16)}</a>` : ""}<button class="icon-btn" data-hide aria-label="Dismiss announcement">×</button></div></div>`);
     $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
     document.body.prepend(b);
   }
