@@ -9,7 +9,7 @@
 // The list holds no ticket codes: each entry is found by a keyed hash of the
 // code, and a QR code is only taken if the hash of its signature matches too.
 // A copy of the list gives nobody codes to type in or QR codes to print.
-import { get, post } from "/assets/core.js";
+import { get, post, me } from "/assets/core.js";
 
 const DB = "ticketroom-scan";
 const FORMAT = 2; // lists saved by older versions held codes in clear: they are dropped
@@ -21,7 +21,7 @@ const TZ = "Africa/Johannesburg";
 let idb = null;
 // { eventId, event, key, generatedAt, tickets: Map(codeHash -> [sigHash, version, status, name, type, multi, lastDay]) }
 let state = null;
-let queue = []; // [{ id, k, payload, gate, at }]
+let queue = []; // [{ id, k, payload, gate, at, by }] (by: who scanned, so a scan sent after a change of person stays theirs)
 let available = true; // false on servers without offline support
 let onChange = () => {};
 let timers = [];
@@ -147,7 +147,7 @@ export async function syncOthers() {
       let left = (await load(k)) || [];
       while (left.length) {
         const batch = left.slice(0, 200);
-        const r = await post("/api/staff/scan/sync", { eventId, scans: batch.map(({ id, payload, gate, at }) => ({ id, payload, gate, at })) }, { timeoutMs: 30000 });
+        const r = await post("/api/staff/scan/sync", { eventId, scans: batch.map(({ id, payload, gate, at, by }) => ({ id, payload, gate, at, by })) }, { timeoutMs: 30000 });
         for (const x of r.results) if (x.outcome === "already_used") doubles++;
         const done = new Set(batch.map((s) => s.id));
         left = left.filter((s) => !done.has(s.id));
@@ -211,7 +211,8 @@ export async function check(value, gate) {
   if (multi === 2 && lastDay === today()) return { outcome: "already_used", message: "Already scanned today.", holderName: name, ticketType: type, ageRestriction: age };
   if (multi === 2) t[6] = today();
   else if (!multi) t[2] = 2;
-  queue.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, k, payload: String(value).trim(), gate: gate || undefined, at: new Date().toISOString() });
+  const by = (await me().catch(() => null))?.id || undefined;
+  queue.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, k, payload: String(value).trim(), gate: gate || undefined, at: new Date().toISOString(), by });
   saveQueue();
   savePackSoon();
   onChange();
@@ -230,7 +231,7 @@ export async function sync() {
   try {
     while (queue.length && state?.eventId === eventId) {
       const batch = queue.slice(0, 200);
-      const r = await post("/api/staff/scan/sync", { eventId, scans: batch.map(({ id, payload, gate, at }) => ({ id, payload, gate, at })) }, { timeoutMs: 30000 });
+      const r = await post("/api/staff/scan/sync", { eventId, scans: batch.map(({ id, payload, gate, at, by }) => ({ id, payload, gate, at, by })) }, { timeoutMs: 30000 });
       for (const x of r.results) if (x.outcome === "already_used") doubles++;
       const done = new Set(batch.map((s) => s.id));
       queue = queue.filter((s) => !done.has(s.id));

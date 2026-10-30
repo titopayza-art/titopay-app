@@ -496,7 +496,15 @@ CREATE TABLE admission_log (
   outcome     TEXT NOT NULL CHECK (outcome IN ('admitted','already_used','invalid','wrong_event','revoked','refunded','event_not_live')),
   gate        TEXT,
   occurred_at TEXT NOT NULL,
-  pass_id     TEXT
+  pass_id     TEXT,
+  -- What the gate was told (replaced, refund_pending, test_ticket...), where
+  -- outcome keeps the broad class. Offline scans keep the scanner who made
+  -- them and the phone's time; synced_by and synced_at say who sent them and
+  -- when (upgrade 54).
+  reason      TEXT,
+  offline     INTEGER NOT NULL DEFAULT 0,
+  synced_by   TEXT REFERENCES users(id),
+  synced_at   TEXT
 );
 CREATE INDEX admission_event_idx ON admission_log (event_id, occurred_at);
 CREATE INDEX admission_scanner_idx ON admission_log (event_id, scanned_by);
@@ -565,6 +573,7 @@ CREATE TABLE door_tenders (
   UNIQUE (shift_id, method, external_reference)
 );
 CREATE INDEX door_tenders_shift_idx ON door_tenders (shift_id, created_at);
+CREATE INDEX IF NOT EXISTS door_tenders_event_idx ON door_tenders (event_id, cashier_id);
 
 -- Retail distribution partners. Applications are reviewed before any selling
 -- or retailer attribution is permitted. Partner cash/card sales use the same
@@ -1276,6 +1285,7 @@ CREATE TABLE IF NOT EXISTS wallet_cashouts (
 );
 CREATE INDEX IF NOT EXISTS wallet_cashouts_status_idx ON wallet_cashouts (status, created_at);
 CREATE INDEX IF NOT EXISTS wallet_cashouts_user_idx ON wallet_cashouts (user_id, event_id);
+CREATE INDEX IF NOT EXISTS wallet_cashouts_paid_idx ON wallet_cashouts (event_id, paid_by);
 -- cashdesk:end
 
 -- exchange:begin

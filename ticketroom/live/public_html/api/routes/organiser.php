@@ -1106,52 +1106,16 @@ route('GET', '/api/organiser/:orgId/events/:eventId/attendees', function ($a) {
 // ============================================================== event staff
 route('GET', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
     ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
-    return ['staff' => rows("SELECT u.id, u.full_name, u.email, s.can_scan, s.can_manage_tags, s.can_sell_tickets, s.created_at,
-                                    (SELECT count(*) FROM admission_log a WHERE a.scanned_by = u.id AND a.event_id = s.event_id AND a.outcome = 'admitted') AS admitted
-                               FROM event_staff s JOIN users u ON u.id = s.user_id WHERE s.event_id = ? ORDER BY s.created_at", [$event['id']])];
+    return ['staff' => team_list($event)];
 });
 
-// Add a scanner / desk staff member. Someone without an account is created and
-// emailed an invite to set their password (link valid 7 days).
+// Add a scanner / desk staff member, or change what they may do. The rules,
+// invites and emails are shared with the admin portal (lib/team.php).
 route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
     $u = require_auth();
     limit('staffadd', 30, 3600, $u['id']);
     ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
-    org_require_approved($org);
-    $b = check(body(), ['email' => R::email(), 'fullName' => R::str(['optional' => true, 'min' => 2, 'max' => 120]),
-        'canScan' => org_bool(['optional' => true, 'fallback' => true]), 'canManageTags' => R::bool(), 'canSellTickets' => R::bool(['optional' => true, 'fallback' => false])]);
-    $found = user_by_email($b['email']);
-    if ($found && $found['status'] !== 'active') throw conflict('That account is suspended or closed, so it cannot scan tickets.', 'account_inactive');
-    if ($found && account_type($found) === 'staff') throw conflict('That email belongs to a TicketRoom staff account. Scanners need their own email.', 'staff_account', ['email' => 'Use a different email.']);
-    $uid = $found['id'] ?? null;
-    $invited = false;
-    $already = $uid && val('SELECT 1 FROM event_staff WHERE event_id = ? AND user_id = ?', [$event['id'], $uid]);
-    // Someone new, or someone who has only bought tickets as a guest, gets an email to set a password.
-    if (!$uid || (int) $found['guest'] === 1) {
-        $token = random_token(32);
-        $name = $b['fullName'] ?? ($found['full_name'] ?? explode('@', $b['email'])[0]);
-        $uid = tx(function () use ($u, $b, $token, $name, $event, $org, $uid) {
-            $now = now_iso();
-            if (!$uid) $uid = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'account_type' => 'customer', 'created_at' => $now, 'updated_at' => $now])['id'];
-            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $uid, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
-            outbox_enqueue(['to' => $b['email'], 'userId' => $uid] + tpl('staffInvite', ['name' => $name, 'organiser' => $org['name'], 'event' => $event['title'], 'url' => base_url() . "/scan#/reset/$token",
-                'canScan' => $b['canScan'], 'canManageTags' => $b['canManageTags'], 'canSellTickets' => $b['canSellTickets']]));
-            audit('staff.invited', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['eventId' => $event['id']]]);
-            return $uid;
-        });
-        $invited = true;
-    }
-    q('INSERT INTO event_staff (event_id, user_id, can_scan, can_manage_tags, can_sell_tickets, added_by, created_at) VALUES (?,?,?,?,?,?,?)
-       ON CONFLICT (event_id, user_id) DO UPDATE SET can_scan = excluded.can_scan, can_manage_tags = excluded.can_manage_tags, can_sell_tickets = excluded.can_sell_tickets',
-        [$event['id'], $uid, $b['canScan'], $b['canManageTags'], $b['canSellTickets'], $u['id'], now_iso()]);
-    audit('event.staff_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['eventId' => $event['id'], 'canScan' => $b['canScan'], 'canManageTags' => $b['canManageTags'], 'canSellTickets' => $b['canSellTickets']]]);
-    // Someone who already has an account is told they were added, and how to
-    // be taken off the team if they did not expect it.
-    if (!$invited && !$already) {
-        outbox_enqueue(['to' => $found['email'], 'userId' => $uid] + tpl('staffAdded', ['name' => $found['full_name'], 'organiser' => $org['name'], 'event' => $event['title'],
-            'canScan' => $b['canScan'], 'canManageTags' => $b['canManageTags'], 'canSellTickets' => $b['canSellTickets']]));
-    }
-    return json_out(['ok' => true, 'invited' => $invited], 201);
+    return json_out(team_set($u, $event, $org, body()), 201);
 });
 
 // Live check-in view for the organiser (polled every few seconds).
@@ -1170,9 +1134,7 @@ route('GET', '/api/organiser/:orgId/events/:eventId/checkins/live', function ($a
 route('DELETE', '/api/organiser/:orgId/events/:eventId/staff/:userId', function ($a) {
     $u = require_auth();
     ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
-    q('DELETE FROM event_staff WHERE event_id = ? AND user_id = ?', [$event['id'], $a['userId']]);
-    audit('event.staff_removed', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['userId'], 'organiserId' => $event['organiser_id']]);
-    return ['ok' => true];
+    return team_remove($u, $event, $a['userId']);
 });
 
 // Vendors, tills and wristbands: routes/cashless.php.
