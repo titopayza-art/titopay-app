@@ -46,6 +46,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 const stamp = Date.now().toString(36);
 const uuid = () => crypto.randomUUID();
 const WIDTHS = [[390, 844], [1366, 900]];
+// Words and phrases that read as generic filler, plus emoji (country flags and tick marks are fine).
+const HYPE = /\b(?:seamless(?:ly)?|elevate[sd]?|unlock (?:your|the|new)|effortless(?:ly)?|empower(?:s|ing)?|robust|world-class|game-chang\w*|next-level|cutting-edge|journey|vibrant|curated|unforgettable|hassle-free|one-stop|whether you're|in today's|lorem|ipsum|dummy|todo|no surprises|in seconds|look no further|like never before)\b|[\u{1F300}-\u{1F5FF}\u{1F600}-\u{1FAFF}\u{2600}-\u{26FF}]/giu;
 
 // ---------------------------------------------------------------- accounts and data
 async function signUp(name, email, password) {
@@ -112,7 +114,7 @@ async function fixtures() {
 }
 
 // ---------------------------------------------------------------- the page audit (runs in the browser)
-function pageAudit({ phone, portal }) {
+function pageAudit({ phone, portal, HYPE_SOURCE }) {
   const out = { contrast: [], words: [], raw: [], empty: [], ids: [], badges: [], tap: [], strips: [], money: [], plurals: [], side: null };
   const d = document.documentElement;
   const visible = (el) => {
@@ -178,6 +180,7 @@ function pageAudit({ phone, portal }) {
   // Words and punctuation the style guide rules out, raw codes and JSON.
   const txt = document.body.innerText;
   for (const m of txt.matchAll(/[^\n]{0,30}[—!][^\n]{0,30}/g)) out.words.push(`"${m[0].trim()}"`);
+  for (const m of txt.matchAll(new RegExp(HYPE_SOURCE, "giu"))) out.words.push(`filler: "${m[0]}"`);
   const rawRes = [
     [/\{\s*"[A-Za-z_]+"\s*:/g, "JSON"],
     // Words joined by underscores; provider references with digits ("ch_abc_12f9") are real ids, not keys.
@@ -189,7 +192,7 @@ function pageAudit({ phone, portal }) {
   for (const [re, what] of rawRes) for (const m of txt.matchAll(re)) out.raw.push(`${what}: "${m[0]}"`);
   // Counts that read wrong ("1 orders") and, in the portals, money always in rands and cents.
   for (const m of txt.matchAll(/(?<![\d.R])\b1 (orders|tickets|events|people|items|organisers|approved organisers|scans|days|recipients|sales|ticket types|shops|people)\b/g)) out.plurals.push(`"${m[0]}"`);
-  if (portal) for (const m of txt.matchAll(/(?<![A-Za-z0-9])R\d{1,3}(?: \d{3})*(\.\d{2})?(?![\d%])/g)) if (!m[1]) out.money.push(`"${m[0]}"`);
+  if (portal) for (const m of txt.matchAll(/(?<![A-Za-z0-9-])R\d{1,3}(?: \d{3})*(\.\d{2})?(?![\d%A-Za-z])/g)) if (!m[1]) out.money.push(`"${m[0]}"`);
   // Empty boxes
   for (const el of document.querySelectorAll(".card, .kpi, .table-wrap, .callout, .attn-list, .ev2-sec, .tiles > *, .grid-2 > *, .grid-3 > *")) {
     if (!visible(el) || el.matches("input, select, textarea, button, img, svg")) continue;
@@ -257,7 +260,7 @@ async function shotTo(p, dir, name) { if (!dir) return; try { await p.screenshot
 
 // Checks the page as it is now; returns a list of problems (empty: clean).
 async function auditNow(p, ctx, phone, portal = false) {
-  const a = await p.evaluate(pageAudit, { phone, portal });
+  const a = await p.evaluate(pageAudit, { phone, portal, HYPE_SOURCE: HYPE.source });
   const probs = ctx.problems.splice(0);
   const list = [];
   if (a.side) list.push(`sideways: ${a.side}`);
@@ -492,7 +495,7 @@ async function crawl(F, sessions) {
     });
     await onPage(DESK, sessions.organiser, "/organisers#/", async (p) => {
       const t = await p.locator("main").innerText();
-      const bare = t.match(/(?<![A-Za-z0-9])R\d{1,3}(?: \d{3})*(?![.\d])/g);
+      const bare = t.match(/(?<![A-Za-z0-9-])R\d{1,3}(?: \d{3})*(?![.\dA-Za-z])/g);
       assert(!bare, `amounts without cents: ${bare}`);
     });
   });
@@ -545,6 +548,42 @@ async function crawl(F, sessions) {
       const t = await p.locator("main").innerText();
       assert(!/resale:sellers|payable:/.test(t) && /Resale sellers/.test(t), t.slice(0, 300));
     });
+  });
+
+  await test("copy: no filler words, emoji, exclamation marks or em dashes in the live package's visible strings", () => {
+    // Every page, script, email template, legal text and help answer, with code comments left out.
+    const root = path.resolve(__dirname, "../../public_html");
+    const hits = [];
+    const walk = (d) => { for (const f of fs.readdirSync(d)) { const p = path.join(d, f); if (fs.statSync(p).isDirectory()) walk(p); else if (/\.(html|js|php|json|txt)$/.test(f) && !/jsQR|\.min\./.test(f)) check(p); } };
+    const check = (file) => fs.readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+      const code = line.replace(/^\s*(\/\/|\*|\/\*|#).*$/, "").replace(/\s\/\/ .*$/, "");
+      if (!code.trim()) return;
+      const bad = [...code.matchAll(HYPE)].map((m) => m[0]);
+      if (/—/.test(code)) bad.push("em dash");
+      if (/[a-z)]![\s"'`<\\]/i.test(code.replace(/!=/g, ""))) bad.push("!");
+      if (bad.length) hits.push(`${path.relative(root, file)}:${i + 1} ${bad.join(", ")}: ${code.trim().slice(0, 90)}`);
+    });
+    walk(root);
+    assert(!hits.length, `${hits.length} line(s):\n  ${hits.slice(0, 30).join("\n  ")}`);
+  });
+
+  await test("Help: the floating button and the panel use the support headset, labelled Help and support", async () => {
+    const HEADSET = "M4 14v-2a8 8 0 0 1 16 0v2";
+    let seen = 0;
+    for (const size of WIDTHS) for (const [url, cookies] of [["/", []], ["/account#/tickets", sessions.customer], ["/organisers#/", sessions.organiser], ["/admin#/", sessions.admin], ["/scan", sessions.staff], ["/pos", sessions.vendor], ["/retail", sessions.retail]]) {
+      await onPage(size, cookies, url, async (p) => {
+        const fab = p.locator(".chat-fab");
+        if (!(await fab.count())) return;
+        seen++;
+        const r = await fab.evaluate((b, d) => ({ label: b.getAttribute("aria-label"), icon: !!b.querySelector(`svg path[d="${d}"]`), bubble: !!b.querySelector('svg path[d^="M21 12a8 8"]'), h: b.getBoundingClientRect().height }), HEADSET);
+        assert(r.label === "Help and support" && r.icon && !r.bubble, `${url} @${size[0]}: ${JSON.stringify(r)}`);
+        assert(r.h >= 40, `${url} @${size[0]}: button ${r.h}px tall`);
+        await fab.click();
+        const head = await p.locator(".chat-panel > header").evaluate((h, d) => ({ icon: !!h.querySelector(`svg path[d="${d}"]`), text: h.innerText }), HEADSET);
+        assert(head.icon && /Help and support/.test(head.text), `${url} panel header: ${JSON.stringify(head)}`);
+      });
+    }
+    assert(seen >= 4, `the Help button showed on only ${seen} page(s)`);
   });
 
   await test("U25 green badges are readable and the line-up example uses no real artists", async () => {

@@ -370,7 +370,7 @@ function tpl_text(string $name, array $a): array
             return [
                 'subject' => $soon ? "{$e['title']} starts at " . time_str($e['starts_at']) : "{$e['title']} is tomorrow",
                 'body' => $hi . ($soon ? "{$e['title']} starts at " . time_str($e['starts_at']) . ' today.' : "{$e['title']} is tomorrow.") . ' You have ' . plural($n, 'ticket') . ".\n\n"
-                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nOpen my tickets: $B/account#/tickets\n\nA few things that help at the gate:\n" . implode("\n", $tips) . "\n\nEnjoy it!" . FOOTER,
+                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nOpen my tickets: $B/account#/tickets\n\nA few things that help at the gate:\n" . implode("\n", $tips) . "\n\nEnjoy the event." . FOOTER,
             ];
         case 'checkoutAbandoned':
             $e = $a['event'];

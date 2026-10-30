@@ -305,7 +305,7 @@ async function eventChangeRequests() {
   const { requests } = await get(`/api/admin/event-change-requests?status=${filter}`);
   const labels = { title: "Event name", summary: "Summary", description: "Description", category: "Category", venueName: "Venue", address: "Street address", city: "City", province: "Province", startsAt: "Starts", endsAt: "Ends", capacity: "Capacity", salesStartAt: "Sales open", salesEndAt: "Sales close", doorsOpenAt: "Doors open", parkRideInfo: "Park and ride details", parkRideUrl: "Park and ride link", refundPolicy: "Refund policy", accessibilityInfo: "Accessibility", ageRestriction: "Age restriction", transfersEnabled: "Ticket transfers", resaleEnabled: "Fan resale", cashlessEnabled: "Cashless", isFree: "Free event", serviceFeePayer: "Service fee payer", ageGroups: "Audience", lineup: "Line-up", presaleQueueEnabled: "Presale queue", imageUploadId: "Poster image", name: "Ticket name", description: "Ticket description", priceCents: "Price", quantityTotal: "Quantity", perOrderLimit: "Per order", salesStartAt: "Sales open", salesEndAt: "Sales close", status: "Sale status", sortOrder: "Display order", kind: "Ticket kind", admits: "People per ticket" };
   const show = (key, value) => {
-    if (value === null || value === undefined || value === "") return "—";
+    if (value === null || value === undefined || value === "") return "None";
     if (["isFree", "transfersEnabled", "resaleEnabled", "cashlessEnabled", "presaleQueueEnabled"].includes(key)) return value ? "Yes" : "No";
     if (["startsAt", "endsAt", "salesStartAt", "salesEndAt", "doorsOpenAt"].includes(key)) return fmtDateTime(value);
     if (key === "priceCents") return moneyExact(value);
@@ -1176,7 +1176,7 @@ async function organiserDetail({ id }) {
         ${p.entityType === "company" ? html`<dt>Is a director</dt><dd>${p.repIsDirector ? "Yes" : "No (needs a letter of authorisation)"}</dd>` : ""}
         <dt>Account closed</dt><dd>${p.closedAt ? html`${fmtDate(p.closedAt)}: documents are deleted ${v.retention.years} years later` : "No"}</dd></dl>
         <p class="tiny muted mb-0">Each "Show" is recorded in the audit log and shown to the organiser.</p></section></div>
-    <section class="card mt"><h2>What is unlocked</h2><ul class="small">${gateLi(v.gates.freePublish, "Free events can go live")}${gateLi(v.gates.paidPublish, "Paid events can go on sale")}${gateLi(v.gates.payouts, "Payouts")}</ul></section>
+    <section class="card mt"><h2>What this allows</h2><ul class="small">${gateLi(v.gates.freePublish, "Free events can go live")}${gateLi(v.gates.paidPublish, "Paid events can go on sale")}${gateLi(v.gates.payouts, "Payouts")}</ul></section>
     <section class="card mt"><h2>Checklist</h2><ul class="kyc-list">${v.requirements.map((it) => item(it))}</ul></section>
     ${v.electronic.on || checks.length ? html`<section class="card mt"><div class="card-title"><h2>Electronic checks (VerifyNow)</h2>${v.electronic.test ? html`<span class="badge warn">TEST (sandbox)</span>` : ""}</div>
       <p class="small ${v.electronic.consent.given ? "muted" : ""}">${v.electronic.consent.given ? `Permission given ${fmtDateTime(v.electronic.consent.at)} (${v.electronic.consent.version}).` : "The organiser has not given permission for the checks yet. They are asked when they submit an event."}</p>
@@ -1360,7 +1360,7 @@ function teForm(open) {
 }
 async function testEventPage() {
   const { events: list, keepDays } = await get("/api/admin/test-events");
-  render(main, html`${head("Test event", "Try the whole free-event journey on the real site. Only people with the private link can open a test event: it is never listed on the website, it is left out of every report, and it is deleted with all its bookings when you're done.")}
+  render(main, html`${head("Test event", "Book, receive and scan a free test ticket on the real site, from checkout to the gate. Only people with the private link can open a test event: it is never listed on the website, it is left out of every report, and it is deleted with all its bookings when you're done.")}
     <section class="card stack"><h2>How to try it</h2><ol class="small mb-0">
       <li>Create a test event below, then open its private link on your phone (scan the QR code with the phone camera).</li>
       <li>Book free tickets signed in as a customer, and once more as a guest. Check the email, My tickets, Save ticket image and Transfer.</li>

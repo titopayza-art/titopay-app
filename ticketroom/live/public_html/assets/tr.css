@@ -1173,6 +1173,8 @@ button.side-profile:hover { background: rgba(255,255,255,.13); }
 }
 
 /* ---------- polish pass: focus, scrolling, phones, venue screens ---------- */
+.chat-panel > header .chat-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.chat-panel > header .chat-head .ico { color: var(--amber-500); opacity: 1; }
 /* A page button that repeats the side panel's main action shows only where the panel is folded away. */
 @media (min-width: 980px) { body.has-side .side-dup { display: none; } }
 /* Anchors and focused fields stop below the sticky header (U1). */

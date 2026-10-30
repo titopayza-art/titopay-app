@@ -980,18 +980,20 @@ export function callbackFields(u, topic = "callback", message = "") {
     <div class="field"><label for="cb-msg">How can we help?</label><textarea id="cb-msg" name="message" required maxlength="2000" placeholder="Include your order reference if you have one.">${message}</textarea></div>`;
 }
 
+// Help and support: a support headset, in the same line style as the other icons.
+const HEADSET_ICON = '<svg class="ico" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><path d="M4 14h2.5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2v-3Z"/><path d="M20 14h-2.5a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1H18a2 2 0 0 0 2-2v-3Z"/><path d="M20 17v1a3 3 0 0 1-3 3h-3"/></svg>';
 function chatWidget(s) {
   const KEY = "tr_chat_v1";
   let state; try { state = JSON.parse(store.get(KEY) || "null"); } catch { state = null; }
   if (!state?.conversation) state = { conversation: idem().replace(/[^A-Za-z0-9]/g, "").slice(0, 24), log: [] };
   const save = () => store.set(KEY, JSON.stringify({ conversation: state.conversation, log: state.log.slice(-30) }));
   const fab = document.createElement("button");
-  fab.className = "chat-fab"; fab.setAttribute("aria-label", "Chat with the TicketRoom assistant"); fab.setAttribute("aria-expanded", "false"); fab.setAttribute("aria-controls", "chat-panel");
-  render(fab, html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span>Help</span>`);
+  fab.className = "chat-fab"; fab.setAttribute("aria-label", "Help and support"); fab.setAttribute("aria-expanded", "false"); fab.setAttribute("aria-controls", "chat-panel");
+  render(fab, html`${raw(HEADSET_ICON)}<span>Help</span>`);
   const panel = document.createElement("section");
-  panel.className = "chat-panel"; panel.id = "chat-panel"; panel.hidden = true; panel.setAttribute("aria-label", "TicketRoom assistant");
+  panel.className = "chat-panel"; panel.id = "chat-panel"; panel.hidden = true; panel.setAttribute("aria-label", "Help and support");
   const starters = ["Where are my tickets?", "How do I list a free event?", "What are your fees?", "How do refunds work?"];
-  render(panel, html`<header><div><strong>TicketRoom assistant</strong><span class="tiny" data-status>${hoursText(s.hours)}</span></div><button class="icon-btn" data-x aria-label="Close chat">×</button></header>
+  render(panel, html`<header><span class="chat-head">${raw(HEADSET_ICON)}<div><strong>Help and support</strong><span class="tiny" data-status>${hoursText(s.hours)}</span></div></span><button class="icon-btn" data-x aria-label="Close chat">×</button></header>
     <div class="chat-log" aria-live="polite"></div>
     <div class="chat-starters">${starters.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>
     <form class="chat-form"><label class="sr-only" for="chat-in">Your question</label><input id="chat-in" maxlength="500" autocomplete="off" placeholder="Ask a question…"><button class="btn btn-primary btn-sm">Send</button></form>
@@ -1018,7 +1020,7 @@ function chatWidget(s) {
   const lastQuestion = () => [...state.log].reverse().find((m) => m.role === "user")?.text || "";
   const draw = () => {
     log.textContent = "";
-    bubble({ role: "assistant", text: s.chatbot.greeting || "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds or selling tickets." });
+    bubble({ role: "assistant", text: s.chatbot.greeting || "Hi, I'm the TicketRoom assistant. Ask me about tickets, events, refunds or selling tickets." });
     state.log.forEach(bubble);
     $(".chat-starters", panel).hidden = state.log.length > 0;
   };
