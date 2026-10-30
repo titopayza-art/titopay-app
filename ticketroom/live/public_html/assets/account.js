@@ -33,7 +33,7 @@ function ticketCard(t, offline = false) {
   const qrSrc = offline ? t.qrData : `/api/me/tickets/${t.id}/qr.svg?v=${encodeURIComponent(t.qrPayload || t.status)}`;
   const place = [t.venue_name, t.city].filter(Boolean).join(", ");
   return html`<div class="tk-wrap"><div class="tk-brand print-only"><img src="/assets/logo-mark-dark.svg" alt="" width="48" height="36"><span class="wordmark">TICKET<b>ROOM</b></span></div><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"} ${Number(t.test) === 1 ? "is-test" : ""}" aria-label="${Number(t.test) === 1 ? "Test ticket" : "Ticket"} ${t.code}">
-    ${Number(t.test) === 1 ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : ""}
+    ${Number(t.test) === 1 ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : Number(t.test_event) === 1 ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · not a real event</p>` : ""}
     <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${t.title}</h3>
       <p class="tk-when">${fmtDate(t.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(t.starts_at)}</p><p class="tk-where">${place}</p></header>
     <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || "Not set"}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${t.order_reference}</dd></div></dl>
@@ -52,7 +52,7 @@ function ticketCard(t, offline = false) {
       ${t.resale?.open && t.resale.faceValueCents > 0 && !t.resale.listing && !t.pending_transfer && !t.refund_open ? html`<button class="btn btn-ghost btn-sm" data-sell="${t.id}">Sell</button>` : ""}
       <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
     <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
-      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}" data-test="${Number(t.test) === 1 ? "1" : ""}"></div></div>` : ""}
+      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}" data-test="${Number(t.test) === 1 ? "1" : ""}" data-test-event="${Number(t.test_event) === 1 ? "1" : ""}"></div></div>` : ""}
   </div>`;
 }
 
@@ -79,7 +79,7 @@ async function walletButtons() {
       try {
         const svg = await fetch(`/api/me/tickets/${id}/qr.svg`, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
         const d = box.dataset;
-        const png = await ticketPng(svg, { test: d.test === "1", title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, code: d.code,
+        const png = await ticketPng(svg, { test: d.test === "1", testEvent: d.testEvent === "1", title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, code: d.code,
           rows: [["Ticket", d.type], ["Holder", d.holder || "Not set"], ...(Number(d.admits) > 1 ? [["Admits", `${d.admits} people`]] : []), ["Order", d.order]] });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(png); a.download = `ticket-${box.dataset.code}.png`; document.body.append(a); a.click(); a.remove();

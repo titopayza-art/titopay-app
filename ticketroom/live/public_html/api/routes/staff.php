@@ -5,10 +5,16 @@ declare(strict_types=1);
 
 route('GET', '/api/staff/events', function () {
     $u = require_auth();
+    // TicketRoom admins scan only test events (Admin portal, Test event, Open the scanner).
+    if (account_type($u) === 'staff') {
+        if (!has_role($u, 'admin')) return ['events' => []];
+        return ['events' => rows("SELECT id, title, venue_name, city, starts_at, ends_at, status, 0 AS cashless_enabled, age_restriction, 1 AS can_scan, 0 AS can_manage_tags, 0 AS can_sell_tickets, 1 AS is_test
+                                    FROM events WHERE is_test = 1 AND status = 'published' AND ends_at > ? ORDER BY starts_at", [iso_in(-86400)])];
+    }
     $all = 0; // only the events this person was added to, or their organisation's
     $list = rows("SELECT DISTINCT e.id, e.title, e.venue_name, e.city, e.starts_at, e.ends_at, e.status, e.cashless_enabled, e.age_restriction,
                          COALESCE(s.can_scan, CASE WHEN m.role IN ('owner','manager') THEN 1 END, ?) AS can_scan,
-                         COALESCE(s.can_manage_tags, CASE WHEN m.role IN ('owner','manager') THEN 1 END, 0) AS can_manage_tags,
+                         COALESCE(s.can_manage_tags, CASE WHEN m.role IN ('owner','manager') THEN 1 END, 0) AS can_manage_tags, e.is_test,
                          CASE WHEN m.role IN ('owner','manager') THEN 1 ELSE COALESCE(s.can_sell_tickets, 0) END AS can_sell_tickets
                     FROM events e
                     LEFT JOIN event_staff s ON s.event_id = e.id AND s.user_id = ?

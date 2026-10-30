@@ -27,7 +27,8 @@ const DATA = path.join(DIR, "ticketroom-data");
 const PUB = path.join(DIR, "public_html");
 const TR = path.resolve(__dirname, "../../..");          // ticketroom/
 const SRC = path.join(TR, "live", "public_html");          // the package source
-const MOCK = { lease: 8800, plain: 8801, codes: 8802, closed: 8804 };
+// TR_OPS_MOCK_PORTS="a,b,c,d" moves the stand-ins (lease, plain, codes, a closed port) when several runs share a machine.
+const MOCK = Object.fromEntries(["lease", "plain", "codes", "closed"].map((k, i) => [k, Number((process.env.TR_OPS_MOCK_PORTS || "8800,8801,8802,8804").split(",")[i])]));
 
 let failures = 0;
 const ok = (name, detail = "") => console.log(`PASS  ${name}${detail ? "  " + detail : ""}`);

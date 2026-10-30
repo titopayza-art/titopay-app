@@ -10,7 +10,8 @@ const PUBLIC_EVENT = "e.id, e.slug, e.title, e.is_free, e.summary, e.category, e
 
 route('GET', '/api/public/events', function () {
     limit_light('browse', 300, 60);
-    $where = ["e.status = 'published'", 'e.ends_at > ?'];
+    // Test events (Admin portal, Test event) open only from their private link.
+    $where = ["e.status = 'published'", 'e.ends_at > ?', 'e.is_test = 0'];
     $p = [now_iso()];
     $q = trim(mb_substr((string) qs('q', ''), 0, 80));
     if ($q !== '') {
@@ -74,7 +75,7 @@ route('GET', '/api/public/events', function () {
     } else {
         $total = (int) val('SELECT count(*) FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE ' . implode(' AND ', $where), $p);
     }
-    $cities = rows("SELECT city, count(*) AS n FROM events WHERE status = 'published' AND ends_at > ? GROUP BY city ORDER BY n DESC", [now_iso()]);
+    $cities = rows("SELECT city, count(*) AS n FROM events WHERE status = 'published' AND is_test = 0 AND ends_at > ? GROUP BY city ORDER BY n DESC", [now_iso()]);
     // The nearest known town to a location, so the page can say "near Johannesburg".
     $nearName = null;
     if ($near) { $best = INF; foreach (SA_PLACES as $name => $pl) { $d = km_between($near, [$pl[0], $pl[1]]); if ($d < $best) { $best = $d; $nearName = ucwords($name); } } }
@@ -86,7 +87,7 @@ route('GET', '/api/public/events/:slug', function ($a) {
     // waiting for approval exactly as buyers will see it, without sales.
     $pv = qs('preview') ? verify_link(qs('preview')) : null;
     $states = "'published','cancelled','completed'" . ($pv ? ",'draft','pending_approval'" : '');
-    $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.park_ride_info, e.park_ride_url, e.transfers_enabled, e.cashless_enabled, e.capacity, e.lineup, e.organiser_id, e.resale_enabled, e.prohibited_items, e.ticket_groups, o.slug AS organiser_slug, o.description AS organiser_about, o.logo_upload_id AS organiser_logo
+    $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.park_ride_info, e.park_ride_url, e.transfers_enabled, e.cashless_enabled, e.capacity, e.lineup, e.organiser_id, e.resale_enabled, e.prohibited_items, e.ticket_groups, e.is_test, o.slug AS organiser_slug, o.description AS organiser_about, o.logo_upload_id AS organiser_logo
                 FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.slug = ? AND e.status IN ($states)", [$a['slug']]);
     if (!$ev || ($pv && ($pv['pv'] ?? '') !== $ev['id'] && $ev['status'] !== 'published')) throw not_found('Event not found.');
     $preview = $pv && ($pv['pv'] ?? '') === $ev['id'];
@@ -128,7 +129,7 @@ route('POST', '/api/public/events/:slug/view', function ($a) {
     $u = user();
     if (!$u || account_type($u) !== 'customer') return ['saved' => false];
     limit('recently-viewed', 120, 60, $u['id']);
-    $eventId = val("SELECT id FROM events WHERE slug = ? AND status = 'published' AND ends_at > ?", [$a['slug'], now_iso()]);
+    $eventId = val("SELECT id FROM events WHERE slug = ? AND status = 'published' AND is_test = 0 AND ends_at > ?", [$a['slug'], now_iso()]);
     if (!$eventId) return ['saved' => false];
     q('INSERT INTO recently_viewed_events (user_id, event_id, viewed_at) VALUES (?,?,?) ON CONFLICT(user_id,event_id) DO UPDATE SET viewed_at = excluded.viewed_at', [$u['id'], $eventId, now_iso()]);
     q('DELETE FROM recently_viewed_events WHERE user_id = ? AND event_id NOT IN (SELECT event_id FROM recently_viewed_events WHERE user_id = ? ORDER BY viewed_at DESC LIMIT 20)', [$u['id'], $u['id']]);
@@ -138,7 +139,7 @@ route('GET', '/api/public/recently-viewed', function () {
     $u = user();
     if (!$u || account_type($u) !== 'customer') return ['events' => []];
     limit('recently-viewed', 120, 60, $u['id']);
-    return ['events' => rows('SELECT ' . PUBLIC_EVENT . " FROM recently_viewed_events rv JOIN events e ON e.id = rv.event_id JOIN organisers o ON o.id = e.organiser_id WHERE rv.user_id = ? AND e.status = 'published' AND e.ends_at > ? ORDER BY rv.viewed_at DESC LIMIT 12", [$u['id'], now_iso()])];
+    return ['events' => rows('SELECT ' . PUBLIC_EVENT . " FROM recently_viewed_events rv JOIN events e ON e.id = rv.event_id JOIN organisers o ON o.id = e.organiser_id WHERE rv.user_id = ? AND e.status = 'published' AND e.is_test = 0 AND e.ends_at > ? ORDER BY rv.viewed_at DESC LIMIT 12", [$u['id'], now_iso()])];
 });
 route('DELETE', '/api/public/recently-viewed', function () {
     $u = require_auth();
@@ -191,14 +192,14 @@ function public_lineup(?string $json): array
 route('GET', '/api/public/artists/trending', function () {
     limit_light('browse', 300, 60);
     // Recounted every 5 minutes, or straight away when an event is published or edited.
-    $sig = (string) val("SELECT count(*) || '|' || COALESCE(MAX(updated_at), '') FROM events WHERE status = 'published'");
+    $sig = (string) val("SELECT count(*) || '|' || COALESCE(MAX(updated_at), '') FROM events WHERE status = 'published' AND is_test = 0");
     $c = row("SELECT value FROM meta WHERE key = 'trending_artists'");
     if ($c) { $v = json_decode($c['value'], true); if (($v['at'] ?? 0) > time() - 300 && ($v['sig'] ?? '') === $sig) return ['artists' => $v['artists']]; }
     $since = iso_in(-30 * 86400);
     $events = rows("SELECT e.id, e.slug, e.title, e.starts_at, e.city, e.image_upload_id, e.lineup,
                            (SELECT COALESCE(SUM(oi.quantity),0) FROM orders o JOIN order_items oi ON oi.order_id = o.id WHERE o.event_id = e.id AND o.test = 0 AND o.status IN ('paid','partially_refunded') AND o.paid_at > ?) AS sold,
                            (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes
-                      FROM events e WHERE e.status = 'published' AND e.ends_at > ? AND e.lineup IS NOT NULL AND e.lineup <> ''", [$since, now_iso()]);
+                      FROM events e WHERE e.status = 'published' AND e.is_test = 0 AND e.ends_at > ? AND e.lineup IS NOT NULL AND e.lineup <> ''", [$since, now_iso()]);
     $acts = [];
     foreach ($events as $e) {
         $weight = 1 + (int) $e['sold'] + 2 * (int) $e['likes'];
@@ -330,7 +331,7 @@ route('GET', '/api/public/orders/:ref', function ($a) {
         'order' => [
             'reference' => $o['reference'], 'status' => $o['status'], 'subtotalCents' => $o['subtotal_cents'], 'discountCents' => $o['discount_cents'],
             'feeCents' => $o['fee_cents'], 'totalCents' => $o['total_cents'], 'refundedCents' => $o['refunded_cents'], 'expiresAt' => $o['expires_at'], 'paidAt' => $o['paid_at'],
-            'buyerName' => $o['buyer_name'], 'test' => (int) $o['test'] === 1,
+            'buyerName' => $o['buyer_name'], 'test' => (int) $o['test'] === 1, 'testEvent' => is_test_event($o['event_id']),
             'event' => ['title' => $o['title'], 'slug' => $o['slug'], 'startsAt' => $o['starts_at'], 'endsAt' => $o['ends_at'], 'venue' => $o['venue_name'], 'city' => $o['city']],
         ],
         'guest' => !$hidden && (int) $owner['guest'] === 1, 'email' => !$hidden && (int) $owner['guest'] === 1 ? $owner['email'] : null,

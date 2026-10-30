@@ -47,8 +47,12 @@ function event_staff_access(array $u, string $eventId, string $cap = 'can_scan')
                  LEFT JOIN event_staff s ON s.event_id = e.id AND s.user_id = ?
                  LEFT JOIN organiser_members m ON m.organiser_id = e.organiser_id AND m.user_id = ? WHERE e.id = ?', [$u['id'], $u['id'], $eventId]);
     if (!$ev) throw not_found('Event not found.');
-    // The organiser's owners and managers, and the gate staff they added. Never TicketRoom staff.
-    if (account_type($u) === 'staff') throw not_found('Event not found.');
+    // The organiser's owners and managers, and the gate staff they added. Never
+    // TicketRoom staff, except an admin scanning a test event (Admin, Test event).
+    if (account_type($u) === 'staff') {
+        if ($cap === 'can_scan' && (int) ($ev['is_test'] ?? 0) === 1 && has_role($u, 'admin')) return $ev;
+        throw not_found('Event not found.');
+    }
     if (in_array($ev['member_role'], ['owner', 'manager'], true) || !empty($ev[$cap])) return $ev;
     throw not_found('Event not found.');
 }
@@ -425,8 +429,9 @@ function fulfil_order(string $orderId): array
     outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $link, 'doorTender' => $doorReceipt]));
     // A short SMS too, when the buyer gave a mobile number and SMS is set up.
     if ($order['buyer_phone'] && sms_ready()) {
-        outbox_enqueue(['channel' => 'sms', 'to' => $order['buyer_phone'], 'userId' => $order['user_id'],
-            'body' => "TicketRoom: you're booked for {$event['title']} (" . plural($n, 'ticket') . "). Order {$order['reference']}. " . ($guest ? 'Tickets: ' . order_link($order) : ($link ? 'Your tickets are in your email.' : 'Tickets: ' . base_url() . '/account#/tickets'))]);
+        $testEv = (int) ($event['is_test'] ?? 0) === 1;
+        outbox_enqueue(['channel' => 'sms', 'to' => $order['buyer_phone'], 'userId' => $order['user_id'], 'eventId' => $testEv ? $event['id'] : null,
+            'body' => ($testEv ? 'TEST EVENT. ' : '') . "TicketRoom: you're booked for {$event['title']} (" . plural($n, 'ticket') . "). Order {$order['reference']}. " . ($guest ? 'Tickets: ' . order_link($order) : ($link ? 'Your tickets are in your email.' : 'Tickets: ' . base_url() . '/account#/tickets'))]);
     }
     return ['order' => $order];
 }
@@ -638,7 +643,7 @@ function tickets_for_user(string $userId): array
 {
     $list = rows("SELECT t.id, t.code, t.status, t.revoked_reason, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test, t.order_id, t.ticket_type_id, e.resale_enabled, e.doors_open_at,
                          tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
-                         e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, o.reference AS order_reference
+                         e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, e.is_test AS test_event, o.reference AS order_reference
                     FROM tickets t JOIN events e ON e.id = t.event_id JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
                    WHERE t.owner_user_id = ? ORDER BY e.starts_at, t.created_at", [$userId]);
     foreach ($list as &$t) {
@@ -715,6 +720,13 @@ function admit_moment(array $b): float { return !empty($b['at']) ? to_unix($b['a
 // One IMMEDIATE transaction per scan: two gates scanning one ticket at the
 // same moment are serialised, so exactly one is admitted.
 function admit(array $staff, array $b): array
+{
+    $r = admit_scan($staff, $b);
+    // A test event's tickets get in like any other; the gate is told it is a test.
+    if (is_test_event($b['eventId'] ?? null)) $r['testEvent'] = true;
+    return $r;
+}
+function admit_scan(array $staff, array $b): array
 {
     return tx(function () use ($staff, $b) {
         $eventId = $b['eventId'];

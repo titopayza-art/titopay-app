@@ -106,7 +106,9 @@ CREATE TABLE organisers (
   approved_at         TEXT,
   approved_by         TEXT REFERENCES users(id),
   ref                 TEXT,
-  logo_upload_id      TEXT
+  logo_upload_id      TEXT,
+  -- Upgrade 52: the built-in "TicketRoom Test" organiser of test events.
+  is_test             INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX organisers_ref_uq ON organisers (ref);
 
@@ -214,8 +216,14 @@ CREATE TABLE events (
   service_fee_payer         TEXT NOT NULL DEFAULT 'customer' CHECK (service_fee_payer IN ('customer','organiser')),
   prohibited_items          TEXT,
   ticket_groups             TEXT,
+  -- Upgrade 52: a test event (Admin portal, Test event). Never listed, left
+  -- out of reports, and the only kind of event that can be deleted.
+  is_test                   INTEGER NOT NULL DEFAULT 0,
   CHECK (ends_at > starts_at)
 );
+CREATE INDEX events_test_idx ON events (is_test, ends_at);
+CREATE TRIGGER events_delete_only_test BEFORE DELETE ON events WHEN COALESCE(OLD.is_test, 0) <> 1
+  BEGIN SELECT RAISE(ABORT, 'only test events can be deleted'); END;
 
 CREATE TABLE presale_queue_entries (
   id TEXT PRIMARY KEY,
@@ -470,7 +478,11 @@ CREATE TABLE admission_log (
 CREATE INDEX admission_event_idx ON admission_log (event_id, occurred_at);
 CREATE INDEX admission_scanner_idx ON admission_log (event_id, scanned_by);
 CREATE TRIGGER admission_log_no_update BEFORE UPDATE ON admission_log BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END;
-CREATE TRIGGER admission_log_no_delete BEFORE DELETE ON admission_log BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END;
+-- Scans stay append-only, except those of a test event, deleted with it (upgrade 52).
+CREATE TRIGGER admission_log_no_delete BEFORE DELETE ON admission_log
+  WHEN COALESCE((SELECT is_test FROM events WHERE id = OLD.event_id), 0) <> 1
+   AND COALESCE((SELECT e.is_test FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.id = OLD.ticket_id), 0) <> 1
+  BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END;
 
 CREATE TABLE event_staff (
   event_id        TEXT NOT NULL REFERENCES events(id),
@@ -631,8 +643,11 @@ CREATE TABLE message_outbox (
   sent_at             TEXT,
   -- Upgrade 49: a lease while one worker sends it, and when to try again.
   claimed_until       TEXT,
-  next_attempt_at     TEXT
+  next_attempt_at     TEXT,
+  -- Upgrade 52: set on messages about a test event, deleted with it.
+  event_id            TEXT
 );
+CREATE INDEX message_outbox_event_idx ON message_outbox (event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX message_outbox_status_idx ON message_outbox (status, created_at);
 CREATE INDEX message_outbox_due_idx ON message_outbox (status, next_attempt_at);
 CREATE UNIQUE INDEX message_outbox_campaign_user_uq ON message_outbox (campaign_id, user_id) WHERE campaign_id IS NOT NULL;

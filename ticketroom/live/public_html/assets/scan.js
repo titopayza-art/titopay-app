@@ -9,6 +9,8 @@ const main = $("#main");
 // The top-up desk is offered only where the server has it (features.cashDesk).
 let DESK = false;
 let EVENT = null, cam = null, nfcAbort = null, mode = "gate", deskTicket = null;
+// "Open the scanner" on the admin portal's Test event page: /scan?test=<event id>.
+const TEST_EVENT = new URLSearchParams(location.search).get("test");
 
 const VERDICT = {
   admitted: ["ok", "ADMIT"], already_used: ["no", "ALREADY SCANNED"], invalid: ["no", "NOT VALID"], test_ticket: ["no", "TEST TICKET"], wrong_event: ["warn", "WRONG EVENT"],
@@ -23,6 +25,8 @@ const unreachable = (err) => err.status === 0 || err.status === 502 || err.statu
 async function pickEvent() {
   const { events } = await get("/api/staff/events");
   if (!events.length) return render(main, html`<div class="card">${empty("You aren't assigned to any live events. Ask the organiser to add you as staff.")}</div>`);
+  const chosen = TEST_EVENT && events.find((e) => e.id === TEST_EVENT);
+  if (chosen) { localStorage.setItem("tr_scan_event", chosen.id); return start(chosen); }
   const saved = localStorage.getItem("tr_scan_event");
   const found = events.find((e) => e.id === saved);
   if (found && events.length === 1) return start(found);
@@ -34,7 +38,7 @@ function start(ev) {
   EVENT = ev;
   offline.forgetOthers(ev.id);
   if (!ev.can_scan && ev.can_sell_tickets) return boxOfficeApp(main, ev.id, { onBack: () => { localStorage.removeItem("tr_scan_event"); pickEvent(); }, backLabel: "Change event" });
-  render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1>${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}</div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
+  render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1>${Number(ev.is_test) === 1 ? html`<p class="tk-test mt" role="note" data-test-event>TEST EVENT · scans here are practice, not a real event</p>` : ""}${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}</div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
     <div class="tabs mt" role="tablist">${ev.can_scan ? html`<button role="tab" aria-selected="true" data-mode="gate">Gate</button>` : ""}${ev.can_manage_tags ? html`<button role="tab" aria-selected="false" data-mode="desk">Tag desk</button>` : ""}${DESK && ev.can_manage_tags && ev.cashless_enabled ? html`<button role="tab" aria-selected="false" data-topup>Top-up desk</button>` : ""}${ev.can_sell_tickets ? html`<button role="tab" aria-selected="false" data-boxoffice>Box office</button>` : ""}</div>
     <div class="row between"><span id="stats" class="small muted"></span><span class="netbar on" id="net">● Online</span></div>
     <p class="small muted mb-0" id="offline-state" aria-live="polite"></p>
@@ -111,7 +115,7 @@ function show(r) {
   const [kind, word] = VERDICT[r.outcome] || ["no", r.outcome];
   // A couple or table ticket lets several people in: say so in big letters.
   const big = r.outcome === "admitted" && r.admits > 1 ? `ADMIT ${r.admits}` : r.outcome === "admitted" && r.pass ? "PASS OK" : word;
-  verdict(kind, r.offline ? `${big} (OFFLINE)` : big, [r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
+  verdict(kind, r.offline ? `${big} (OFFLINE)` : big, [r.testEvent ? "TEST EVENT" : "", r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
     ["admitted", "already_used"].includes(r.outcome) ? ageRule(r.ageRestriction) : ""].filter(Boolean).join(" · "));
   beep(r.outcome === "admitted");
 }
@@ -176,7 +180,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   if (emailLinkPage("scanner")) return;
   const u = await requireUser("Gate staff: sign in to scan tickets.", "scanner");
   if (!u) return render(main, empty("Sign in to scan."));
-  if (accountType(u) === "staff") return wrongAccountPage(u, "scanner");
+  // TicketRoom staff use the scanner only for a test event, opened from the admin portal.
+  if (accountType(u) === "staff" && !TEST_EVENT) return wrongAccountPage(u, "scanner");
   await header($("#header"), { portal: "scanner" });
   render(main, spinner());
   DESK = !!(await features()).cashDesk;

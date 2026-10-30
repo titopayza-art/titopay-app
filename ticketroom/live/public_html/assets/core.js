@@ -1487,9 +1487,9 @@ export async function ticketPng(svg, t) {
     fit(g, t.when, 700, 36, CW - 120); if (draw) { g.fillStyle = C.soft; g.fillText(t.when, MID, y); }
     y += 50; fit(g, t.place, 700, 36, CW - 120); if (draw) g.fillText(t.place, MID, y);
     y = top + headH;
-    // Test tickets: an amber band straight under the header.
-    if (t.test) {
-      if (draw) { g.fillStyle = C.amber; g.fillRect(X, y, CW, 96); font(g, 800, 38); g.fillStyle = C.navy; g.fillText("TEST TICKET · not valid for entry", MID, y + 62); }
+    // Test tickets (and tickets of a test event): an amber band straight under the header.
+    if (t.test || t.testEvent) {
+      if (draw) { g.fillStyle = C.amber; g.fillRect(X, y, CW, 96); font(g, 800, 38); g.fillStyle = C.navy; g.fillText(t.test ? "TEST TICKET · not valid for entry" : "TEST EVENT · not a real event", MID, y + 62); }
       y += 96;
     }
     // Details

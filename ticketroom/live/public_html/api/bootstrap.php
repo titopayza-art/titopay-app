@@ -28,11 +28,12 @@ require TR_APP . '/lib/verifynow.php';
 require TR_APP . '/lib/promote.php';
 require TR_APP . '/lib/exchange.php';
 require TR_APP . '/lib/ops.php';
+require TR_APP . '/lib/testevent.php';
 
 // The API's route files, loaded by name. A file left behind by an older
 // upload (one no longer in this list) is never run. A new route file must be
 // added here.
-const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'verification'];
+const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'testevent', 'verification'];
 function tr_load_routes(): void
 {
     foreach (TR_ROUTE_FILES as $f) require_once TR_APP . "/routes/$f.php";
@@ -213,9 +214,16 @@ function tr_install_db(string $hash, ?string $adminEmail = null, ?string $adminN
     audit('system.installed', ['actor' => ['id' => $uid, 'primaryRole' => 'admin'], 'details' => ['version' => TR_VERSION]]);
 }
 
+// Scans stay append-only, except those of a test event (deleted with it).
+const TEST_SCANS_TRIGGER = "CREATE TRIGGER IF NOT EXISTS admission_log_no_delete BEFORE DELETE ON admission_log
+  WHEN COALESCE((SELECT is_test FROM events WHERE id = OLD.event_id), 0) <> 1
+   AND COALESCE((SELECT e.is_test FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.id = OLD.ticket_id), 0) <> 1
+  BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END";
+const TEST_EVENTS_TRIGGER = "CREATE TRIGGER IF NOT EXISTS events_delete_only_test BEFORE DELETE ON events WHEN COALESCE(OLD.is_test, 0) <> 1
+  BEGIN SELECT RAISE(ABORT, 'only test events can be deleted'); END";
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 50;
+const SCHEMA_VERSION = 52;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -545,6 +553,19 @@ const UPGRADES = [
         'CREATE INDEX IF NOT EXISTS kyc_checks_due_idx ON kyc_checks (status, next_attempt_at)',
         'CREATE UNIQUE INDEX IF NOT EXISTS kyc_checks_job_uq ON kyc_checks (job_id) WHERE job_id IS NOT NULL',
     ],
+    // Test events (Admin portal, Test event): the event and its built-in
+    // organiser are marked is_test, emails about one carry its event_id, and
+    // only a test event (with its scans) can ever be deleted.
+    52 => [
+        'ALTER TABLE events ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE organisers ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE message_outbox ADD COLUMN event_id TEXT',
+        'CREATE INDEX IF NOT EXISTS events_test_idx ON events (is_test, ends_at)',
+        'CREATE INDEX IF NOT EXISTS message_outbox_event_idx ON message_outbox (event_id) WHERE event_id IS NOT NULL',
+        'DROP TRIGGER IF EXISTS admission_log_no_delete',
+        TEST_SCANS_TRIGGER,
+        TEST_EVENTS_TRIGGER,
+    ],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -705,6 +726,8 @@ function jobs(): array
         ['verification-checks', 5, fn() => kyc_vn_work()],
         // Promote packages end with their event; unpaid ones lapse after a day.
         ['end-promotions', 300, fn() => promo_expire()],
+        // Test events (Admin portal, Test event) are deleted 7 days after they end.
+        ['test-events', 3600, fn() => test_events_cleanup()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];

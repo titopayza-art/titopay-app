@@ -8,8 +8,8 @@ function outbox_enqueue(array $m): ?string
 {
     if (empty($m['to'])) return null;
     $id = uuid();
-    q('INSERT OR IGNORE INTO message_outbox (id, channel, kind, to_address, subject, body, campaign_id, user_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        [$id, $m['channel'] ?? 'email', $m['kind'] ?? 'transactional', $m['to'], $m['subject'] ?? null, $m['body'], $m['campaignId'] ?? null, $m['userId'] ?? null, now_iso()]);
+    q('INSERT OR IGNORE INTO message_outbox (id, channel, kind, to_address, subject, body, campaign_id, user_id, created_at, event_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [$id, $m['channel'] ?? 'email', $m['kind'] ?? 'transactional', $m['to'], $m['subject'] ?? null, $m['body'], $m['campaignId'] ?? null, $m['userId'] ?? null, now_iso(), $m['eventId'] ?? null]);
     $GLOBALS['TR_OUTBOX_DIRTY'] = true;
     return $id;
 }
@@ -337,8 +337,10 @@ function first_name(?string $n): string { $p = preg_split('/\s+/', trim((string)
 function plural(int $n, string $w): string { return $n . ' ' . $w . ($n === 1 ? '' : 's'); }
 function place(array $e): string { return implode(', ', array_filter([$e['venue_name'] ?? null, $e['address'] ?? null, $e['city'] ?? null])); }
 
+// Messages about a test event say TEST EVENT (lib/testevent.php).
+function tpl(string $name, array $a): array { return test_event_mark(tpl_text($name, $a), $a); }
 // Same wording as src/modules/messaging/templates.js in the Node edition.
-function tpl(string $name, array $a): array
+function tpl_text(string $name, array $a): array
 {
     // Names people typed are cleaned of links and hidden characters first.
     $a = tpl_clean_names($a);
@@ -721,7 +723,7 @@ function send_abandoned(): int
     $list = rows("SELECT o.user_id, o.event_id, u.email, u.full_name, e.title, e.slug, e.starts_at, e.venue_name, e.address, e.city, max(o.created_at) AS last_at
                     FROM orders o JOIN users u ON u.id = o.user_id JOIN events e ON e.id = o.event_id
                    WHERE o.status IN ('expired','cancelled','failed') AND u.status = 'active' AND o.created_at < ? AND o.created_at > ?
-                     AND e.status = 'published' AND e.starts_at > ? AND COALESCE(e.sales_end_at, e.ends_at) > ? AND (e.sales_start_at IS NULL OR e.sales_start_at <= ?)
+                     AND e.status = 'published' AND e.is_test = 0 AND e.starts_at > ? AND COALESCE(e.sales_end_at, e.ends_at) > ? AND (e.sales_start_at IS NULL OR e.sales_start_at <= ?)
                      AND EXISTS (SELECT 1 FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale' AND tt.quantity_sold + tt.quantity_held < tt.quantity_total)
                      AND NOT EXISTS (SELECT 1 FROM orders p WHERE p.user_id = o.user_id AND p.event_id = o.event_id AND p.status IN ('pending_payment','paid','partially_refunded'))
                      AND NOT EXISTS (SELECT 1 FROM marketing_consents mc WHERE mc.user_id = o.user_id AND mc.organiser_id IS NULL AND mc.channel = 'email' AND mc.granted = 0)

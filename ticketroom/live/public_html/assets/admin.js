@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { features, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError } from "/assets/core.js";
+import { features, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError, toLocalInput, fromLocalInput, fmtTime } from "/assets/core.js";
 import { deskPicker } from "/assets/cashdesk.js";
 
 const main = $("#main");
@@ -187,7 +187,7 @@ function nav(counts = {}) {
   render($("#sidenav"), html`<a href="#/">Overview</a>
     <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/verification">Verification${c(counts.verif)}</a><a href="#/retail-partners" data-role-need="admin finance support">Retail partners</a><a href="#/events">All events${c(counts.events)}</a><a href="#/event-changes" data-role-need="admin">Event change requests${c(counts.eventChanges)}</a><a href="#/promo-codes" data-role-need="admin">Promo codes & vouchers</a><a href="#/events" data-featured-nav data-role-need="admin">Featured events</a><a href="#/users" data-role-need="admin support">Customers & organisers</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/wallets" data-feature="cashDesk">Wristbands & wallets</a><a href="#/support">Support${c(counts.support)}</a><a href="#/promotions" data-feature="promote">Promotions${c(counts.promotions)}</a>
     <div class="sect" data-feature="finance" data-role-need="admin finance">Finance</div><a href="#/refunds" data-feature="finance" data-role-need="admin finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance" data-role-need="admin finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance" data-role-need="admin finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance" data-role-need="admin finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance" data-role-need="admin finance">Ledger</a>
-    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/careers" data-role-need="admin">Careers</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
+    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/careers" data-role-need="admin">Careers</a><a href="#/subscribers" data-role-need="admin support">Subscribers</a><a href="#/qr">QR codes</a><a href="#/test-event" data-role-need="admin">Test event</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations" data-role-need="admin">Integrations</a><a href="#/backups" data-role-need="admin">Backups</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
     <div class="sect">You</div><a href="#/staff">Staff & roles</a><a href="#/password">My password</a>`);
   // Each person sees only the sections their roles can open.
@@ -1313,6 +1313,120 @@ async function integrations() {
   }));
 }
 
+
+// ---- Test event ------------------------------------------------------------------
+// A free event owned by the built-in "TicketRoom Test" organiser, to try the
+// whole journey on the real site: booking, emails, My tickets, transfers, the
+// waitlist and the gate. Never listed anywhere public, left out of every
+// report, and deleted with everything on it (by hand, or 7 days after it ends).
+const TE_VERDICT = {
+  admitted: ["ok", "ADMIT"], already_used: ["no", "ALREADY SCANNED"], invalid: ["no", "NOT VALID"], test_ticket: ["no", "TEST TICKET"], wrong_event: ["warn", "WRONG EVENT"],
+  revoked: ["no", "REVOKED"], refunded: ["no", "REFUNDED"], resold: ["no", "RESOLD"], listed: ["no", "ON RESALE"], event_not_live: ["warn", "NOT OPEN"],
+  replaced: ["no", "REPLACED"], refund_pending: ["no", "REFUND IN PROGRESS"],
+};
+const TE_KINDS = [["valid", "Scan a valid ticket"], ["again", "Scan it again"], ["madeup", "A made-up code"], ["replaced", "Old code of a passed-on ticket"], ["wrong_event", "Ticket for another event"]];
+function teVerdict(box, out) {
+  const r = out.result;
+  const [kind, word] = TE_VERDICT[r.outcome] || ["no", r.outcome];
+  const big = r.outcome === "admitted" && r.admits > 1 ? `ADMIT ${r.admits}` : word;
+  const sub = [r.testEvent ? "TEST EVENT" : "", r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : ""].filter(Boolean).join(" · ");
+  box.className = `verdict ${kind}`;
+  render(box, html`<div class="big">${big}</div>${sub ? html`<div>${sub}</div>` : ""}`);
+  box.parentElement.querySelector("[data-te-scanned]").textContent = `Scanned: ${out.scanned}`;
+}
+function teForm(open) {
+  const now = Date.now();
+  return html`<details class="card mt" ${raw(open ? "open" : "")}><summary><strong>${open ? "Create a test event" : "Create another test event"}</strong></summary>
+    <form class="stack mt" id="te-new">
+      <div class="grid-2"><div class="field"><label for="te-t">Title</label><input id="te-t" name="title" maxlength="120" value="TicketRoom test event"></div>
+        <div class="field"><label for="te-v">Venue</label><input id="te-v" name="venueName" maxlength="120" value="TicketRoom test venue"></div></div>
+      <div class="grid-2"><div class="field"><label for="te-s">Starts (SAST)</label><input id="te-s" name="startsAt" type="datetime-local" required value="${toLocalInput(new Date(now + 2 * 3600e3))}"></div>
+        <div class="field"><label for="te-e">Ends (SAST)</label><input id="te-e" name="endsAt" type="datetime-local" required value="${toLocalInput(new Date(now + 6 * 3600e3))}"></div></div>
+      <div class="grid-2"><div class="field"><label for="te-q">Free tickets</label><input id="te-q" name="quantity" type="number" min="1" max="500" value="50"><span class="hint">Set 1 or 2 to try the waitlist once it sells out.</span></div>
+        <div class="field"><label for="te-p">Most per person</label><input id="te-p" name="perPerson" type="number" min="1" max="10" value="4"></div></div>
+      <div class="grid-2"><div class="field"><label for="te-2">Second free ticket type <span class="muted">(optional)</span></label><input id="te-2" name="secondTicketName" maxlength="80" placeholder="VIP test ticket"></div>
+        <div class="field"><label for="te-2q">How many</label><input id="te-2q" name="secondQuantity" type="number" min="1" max="500" value="20"></div></div>
+      <p class="small muted mb-0">The gate opens 12 hours before the start, so a test event starting soon can be scanned straight away.</p>
+      <div class="row"><button class="btn btn-primary">Create test event</button></div></form></details>`;
+}
+async function testEventPage() {
+  const { events: list, keepDays } = await get("/api/admin/test-events");
+  render(main, html`${head("Test event", "Try the whole free-event journey on the real site. Only people with the private link can open a test event: it is never listed on the website, it is left out of every report, and it is deleted with all its bookings when you're done.")}
+    <section class="card stack"><h2>How to try it</h2><ol class="small mb-0">
+      <li>Create a test event below, then open its private link on your phone (scan the QR code with the phone camera).</li>
+      <li>Book free tickets signed in as a customer, and once more as a guest. Check the email, My tickets, Save ticket image and Transfer.</li>
+      <li>At the gate: press <strong>Open the scanner</strong>, or add a customer account to the event team and sign in at ticketroom.co.za/scan on a phone. <strong>Practice scans</strong> shows every gate answer with one tap.</li>
+      <li>Delete the test event when you're done. It is deleted on its own ${keepDays} days after it ends.</li></ol></section>
+    ${list.map((e) => html`<section class="card stack mt" data-te="${e.id}">
+      <div class="row between"><div><span class="badge warn">TEST EVENT</span> ${badge(e.status)}<h2 class="mb-0 mt">${e.title}</h2>
+        <p class="small muted mb-0">${fmtDateTime(e.startsAt)} to ${fmtDateTime(e.endsAt)} SAST · ${e.venue}, ${e.city} · <span class="mono">${e.ref}</span></p></div>
+        <button class="btn btn-ghost btn-sm" data-te-del>Delete test event</button></div>
+      <div class="kpis"><div class="kpi"><div class="k">Bookings</div><div class="v">${e.counts.orders}</div></div><div class="kpi"><div class="k">Tickets</div><div class="v">${e.counts.tickets}</div><div class="s">${e.ticketTypes.map((t) => `${t.name}: ${t.sold} of ${t.total}`).join(" · ")}</div></div>
+        <div class="kpi"><div class="k">Scanned</div><div class="v">${e.counts.scanned}</div></div><div class="kpi"><div class="k">Waitlist</div><div class="v">${e.counts.waitlist}</div></div></div>
+      <div class="field"><label for="te-l-${e.id}">Private link</label><div class="row"><input id="te-l-${e.id}" class="grow mono" readonly value="${e.link}"><button type="button" class="btn btn-ghost btn-sm" data-te-copy>Copy</button><a class="btn btn-ghost btn-sm" href="${e.link}" target="_blank" rel="noopener">Open</a></div>
+        <span class="hint">Scan the QR code with your phone camera to open it there. Deleted on its own on ${fmtDate(e.deletesAt)}.</span></div>
+      <div data-te-qr></div>
+      <h3 class="mb-0">At the gate</h3>
+      <div class="row"><a class="btn btn-primary" href="/scan?test=${e.id}" target="_blank" rel="noopener" data-te-scanner>Open the scanner</a><button type="button" class="btn btn-ghost" data-te-print>Print practice tickets</button><button type="button" class="btn btn-ghost" data-te-reset>Reset scans</button></div>
+      <p class="small muted mb-0">The scanner opens with this event chosen, signed in as you. To scan with someone else's phone, add their TicketRoom customer or organiser account to the event team; they sign in at /scan.</p>
+      <form class="row" data-te-staff><label class="sr-only" for="te-se-${e.id}">Email of the person to add</label><input id="te-se-${e.id}" class="grow" name="email" type="email" required placeholder="Email of their TicketRoom account"><button class="btn btn-ghost">Add to event team</button></form>
+      ${e.staff.length ? html`<ul class="small mb-0">${e.staff.map((s) => html`<li>${s.full_name} · ${s.email} <button type="button" class="btn btn-link" data-te-unstaff="${s.id}">Remove</button></li>`)}</ul>` : ""}
+      <div class="card flat stack" data-te-practice><h3 class="mb-0">Practice scans</h3>
+        <p class="small muted mb-0">Each button runs a real scan through the gate for this test event and shows the answer exactly as the scanner would.</p>
+        <div class="row">${TE_KINDS.map(([k, label]) => html`<button type="button" class="btn btn-ghost btn-sm" data-te-scan="${k}">${label}</button>`)}</div>
+        <form class="row" data-te-typed><label class="sr-only" for="te-c-${e.id}">Ticket code</label><input id="te-c-${e.id}" class="grow mono" name="code" required placeholder="Type or paste any ticket code" autocomplete="off" autocapitalize="characters"><button class="btn btn-ghost btn-sm">Check</button></form>
+        <p class="small mb-0" data-te-scanned aria-live="polite"></p>
+        <div class="verdict idle" data-te-verdict role="status" aria-live="assertive"><div class="big">READY</div><div>Choose a practice scan</div></div></div>
+    </section>`)}
+    ${teForm(!list.length)}`);
+
+  onSubmit($("#te-new"), async (v) => {
+    const body = { title: v.title || undefined, venueName: v.venueName || undefined, startsAt: fromLocalInput(v.startsAt), endsAt: fromLocalInput(v.endsAt),
+      quantity: Number(v.quantity) || undefined, perPerson: Number(v.perPerson) || undefined, secondTicketName: v.secondTicketName || undefined, secondQuantity: v.secondTicketName ? Number(v.secondQuantity) || undefined : undefined };
+    await post("/api/admin/test-events", body);
+    toast("Test event created. Open its private link on your phone to try it.", "good");
+    testEventPage();
+  });
+  for (const e of list) {
+    const box = $(`[data-te="${e.id}"]`);
+    post("/api/admin/qr", { text: e.link, ecc: "M" }).then((r) => $("[data-te-qr]", box).append(qrPanel(r.svg, { name: `ticketroom-test-event-${e.ref}`, caption: "TicketRoom test event" }))).catch(() => {});
+    $("[data-te-copy]", box).addEventListener("click", async () => { try { await navigator.clipboard.writeText(e.link); toast("Link copied.", "good"); } catch { toast(e.link); } });
+    $("[data-te-del]", box).addEventListener("click", async () => {
+      if (!(await confirmDialog(`Delete ${e.title}?`, "The test event and everything on it go for good: bookings, tickets, transfers, the waitlist, scans and its emails. Real events are never touched.", { confirm: "Delete test event", danger: true }))) return;
+      if (await act(() => api("DELETE", `/api/admin/test-events/${e.id}`, { confirm: "DELETE" }), "Test event deleted.")) testEventPage();
+    });
+    onSubmit($("[data-te-staff]", box), async (v) => { await post(`/api/admin/test-events/${e.id}/staff`, { email: v.email }); toast(`${v.email} can now scan this test event at /scan.`, "good"); testEventPage(); });
+    $$("[data-te-unstaff]", box).forEach((b) => b.addEventListener("click", async () => { if (await act(() => api("DELETE", `/api/admin/test-events/${e.id}/staff/${b.dataset.teUnstaff}`), "Removed from the event team.")) testEventPage(); }));
+    const scan = async (body) => {
+      const v = $("[data-te-verdict]", box);
+      try { teVerdict(v, await post(`/api/admin/test-events/${e.id}/practice-scan`, body)); } catch (err) { v.className = "verdict no"; render(v, html`<div class="big">ERROR</div><div>${err.message}</div>`); }
+    };
+    $$("[data-te-scan]", box).forEach((b) => b.addEventListener("click", () => scan({ kind: b.dataset.teScan })));
+    $("[data-te-typed]", box).addEventListener("submit", (ev) => { ev.preventDefault(); const c = ev.target.code.value.trim(); if (c) scan({ kind: "typed", code: c }); });
+    $("[data-te-reset]", box).addEventListener("click", async () => {
+      if (!(await confirmDialog("Reset scans?", "Every scanned ticket of this test event becomes unscanned again, so you can scan it once more. The scan history stays.", { confirm: "Reset scans" }))) return;
+      try { const r = await post(`/api/admin/test-events/${e.id}/reset-scans`); toast(`${r.reset} ticket${r.reset === 1 ? "" : "s"} can be scanned again.`, "good"); testEventPage(); } catch (err) { toast(err.message, "bad"); }
+    });
+    $("[data-te-print]", box).addEventListener("click", async () => {
+      try { practiceTickets(e, (await post(`/api/admin/test-events/${e.id}/practice-tickets`)).tickets); } catch (err) { toast(err.message, "bad"); }
+    });
+  }
+}
+// Four practice tickets to print, then scan with a phone camera at /scan.
+function practiceTickets(e, tickets) {
+  const live = tickets.filter((t) => t.status === "valid").slice(0, 4);
+  render(main, html`<div class="no-print">${head("Practice tickets", `${e.title}. Print this page, then scan the codes with a phone at /scan. They get in like real tickets, once each.`,
+      html`<button class="btn btn-primary" data-pt-print>Print</button><a class="btn btn-ghost" href="#/test-event" data-pt-back>Back to Test event</a>`)}</div>
+    <div class="grid-2" data-practice-tickets>${live.map((t) => html`<div class="tk-wrap"><article class="ticket" aria-label="Practice ticket ${t.code}">
+      <p class="tk-test" role="note">TEST EVENT · practice ticket</p>
+      <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${e.title}</h3><p class="tk-when">${fmtDateTime(e.startsAt)}</p><p class="tk-where">${e.venue}, ${e.city}</p></header>
+      <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticketType}</dd></div><div><dt>Holder</dt><dd>${t.holderName}</dd></div></dl>
+        <div class="t-qr">${raw(t.svg.replace("<svg ", '<svg role="img" aria-label="QR code" width="220" height="220" '))}</div><p class="tk-scan">Scan at the entrance</p></div>
+      <div class="tk-perf" aria-hidden="true"></div><div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">${t.code}</span></div></article></div>`)}</div>`);
+  $("[data-pt-print]").addEventListener("click", () => window.print());
+  $("[data-pt-back]").addEventListener("click", (ev) => { ev.preventDefault(); testEventPage(); });
+}
+
 (async () => {
   // Nothing on this page says "admin" until a staff account has signed in.
   // Staff who are already signed in get the admin header in one go.
@@ -1333,5 +1447,5 @@ async function integrations() {
   document.title = "Admin portal | TicketRoom";
   nav();
   router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/event-changes", eventChangeRequests], ["/promo-codes", promoCodes], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/wallets", gate("cashDesk", wallets)], ["/support", support], ["/promotions", promotions],
-    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/retail-partners", retailPartners], ["/audit", audit], ["/outbox", outbox], ["/backups", backups], ["/site", siteSettings], ["/posters", posters], ["/careers", careersAdmin], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
+    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/retail-partners", retailPartners], ["/audit", audit], ["/outbox", outbox], ["/backups", backups], ["/site", siteSettings], ["/posters", posters], ["/careers", careersAdmin], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/test-event", testEventPage], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();
