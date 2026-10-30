@@ -844,10 +844,10 @@ async function sellPage() {
           <div class="field"><label for="calc-price">Average ticket price (R)</label><input id="calc-price" type="number" min="0" max="1000000" step="0.01" value="150" inputmode="decimal"></div>
           <div class="field"><label for="calc-order">Average tickets per order</label><input id="calc-order" type="number" min="1" max="50" value="2" inputmode="numeric"></div>
           <div class="field"><label for="calc-payer">Who covers the service fee?</label><select id="calc-payer"><option value="customer">Customer pays at checkout</option><option value="organiser">I cover it from my proceeds</option></select></div></div>
-        <div class="kpis" aria-live="polite" data-calculator-results><div class="kpi"><div class="k">Gross ticket sales</div><div class="v" data-calc-turnover>–</div></div>
+        <div class="kpis calc-results" aria-live="polite" data-calculator-results><div class="kpi kpi-payout"><div class="k">Estimated payout</div><div class="v" data-calc-payout>–</div><div class="s">Before refunds or other deductions</div></div>
+          <div class="kpi"><div class="k">Gross ticket sales</div><div class="v" data-calc-turnover>–</div></div>
           <div class="kpi"><div class="k">Commission</div><div class="v" data-calc-commission>–</div><div class="s">${commissionPct}% + ${moneyExact(fees.organiserCommissionFixedCents ?? 250)} per paid ticket</div></div>
-          <div class="kpi"><div class="k">Service fees covered by you</div><div class="v" data-calc-service>–</div></div>
-          <div class="kpi"><div class="k">Estimated payout</div><div class="v" data-calc-payout>–</div><div class="s">Before refunds or other deductions</div></div></div>
+          <div class="kpi"><div class="k">Service fees covered by you</div><div class="v" data-calc-service>–</div></div></div>
         <p class="callout mb-0" data-calc-buyer>Customer service fee per average order: –</p></section>
     </div></section>`);
   // New here: account and organisation in one step. Signed in: straight to the organiser portal.

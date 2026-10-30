@@ -1417,3 +1417,15 @@ html.scan-cam-open, html.scan-cam-open body { overflow: hidden; }
 .item-list li > .grow { min-width: 0; flex: 1 1 12rem; overflow-wrap: anywhere; }
 fieldset.stack { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0; min-width: 0; }
 fieldset.stack legend { font-weight: 750; padding: 0 6px; }
+
+/* Fee calculator: the payout leads, amounts never break across lines */
+.calc-results .kpi .v { white-space: nowrap; font-size: clamp(1.2rem, 5vw, 1.6rem); }
+.calc-results .kpi-payout { grid-column: 1 / -1; background: var(--navy-950, #0B1D3F); border-color: transparent; color: #fff; }
+.calc-results .kpi-payout .k, .calc-results .kpi-payout .s { color: rgba(255,255,255,.75); }
+.calc-results .kpi-payout .v { font-size: clamp(1.7rem, 8vw, 2.2rem); color: var(--amber-500, #F2A93B); }
+@media (max-width: 560px) {
+  .calc-results { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .calc-results .kpi:not(.kpi-payout) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 12px 14px; }
+  .calc-results .kpi:not(.kpi-payout) .v { margin-top: 0; font-size: 1.15rem; grid-row: 1 / span 2; grid-column: 2; }
+  .calc-results .kpi:not(.kpi-payout) .s { grid-column: 1; }
+}
