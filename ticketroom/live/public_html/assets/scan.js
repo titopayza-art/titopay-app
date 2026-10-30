@@ -35,7 +35,7 @@ async function pickEvent() {
 }
 
 function start(ev) {
-  EVENT = ev;
+  EVENT = ev; STATS = null;
   offline.forgetOthers(ev.id);
   if (!ev.can_scan && ev.can_sell_tickets) return boxOfficeApp(main, ev.id, { onBack: () => { localStorage.removeItem("tr_scan_event"); pickEvent(); }, backLabel: "Change event" });
   render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1>${Number(ev.is_test) === 1 ? html`<p class="tk-test mt" role="note" data-test-event>TEST EVENT · scans here are practice, not a real event</p>` : ""}${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}</div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
@@ -76,7 +76,7 @@ function drawOffline() {
   if (offline.doubleEntries()) parts.push(`${offline.doubleEntries()} offline scan${offline.doubleEntries() === 1 ? " was" : "s were"} already used at another gate`);
   el.textContent = parts.join(" · ");
 }
-const fmtClock = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }) : "");
+const fmtClock = (iso) => (iso ? fmtTime(iso) : ""); // South African time, whatever the phone is set to
 
 function idle() { verdict("idle", mode === "gate" ? "READY" : deskTicket ? "SCAN TAG" : "SCAN TICKET", mode === "gate" ? "Point the camera at a ticket QR code" : deskTicket ? "Now scan or tap the wristband / card / QR tag" : "Scan the attendee's ticket QR first"); }
 function verdict(kind, big, sub = "") { const v = $("#verdict"); v.className = `verdict ${kind}`; render(v, html`<div class="big">${big}</div>${sub ? html`<div>${sub}</div>` : ""}`); }
@@ -97,6 +97,7 @@ async function handle(value, fromNfc = false) {
   try {
     const r = await post("/api/staff/scan", body, { timeoutMs: 6000 });
     show(r);
+    countScan(r);
     if (r.outcome === "admitted" && body.payload) offline.markUsed(body.payload).catch(() => {});
     setNet(true);
   } catch (err) {
@@ -142,7 +143,7 @@ function setNet(on) {
 
 // Totals are shared by every gate, so ask at most every 4 seconds, not after
 // every single scan.
-let lastRefresh = 0, refreshTimer = null;
+let lastRefresh = 0, refreshTimer = null, STATS = null;
 function refresh(now = false) {
   const wait = now ? 0 : Math.max(0, lastRefresh + 4000 - Date.now());
   if (refreshTimer) return;
@@ -153,11 +154,24 @@ setInterval(() => EVENT && refresh(), 15000);
 async function loadStats() {
   if (!EVENT) return;
   try {
-    const s = await get(`/api/staff/events/${EVENT.id}/stats`);
-    $("#stats").textContent = `${s.admitted.toLocaleString("en-ZA")} of ${plural(s.issued, "ticket")} scanned in · ${s.mine.toLocaleString("en-ZA")} by you`;
+    STATS = await get(`/api/staff/events/${EVENT.id}/stats`);
     setNet(true);
-    render($("#recent"), s.recent.length ? html`<div class="table-wrap"><table><tbody>${s.recent.map((x) => html`<tr><td>${fmtTime(x.occurred_at)}</td><td>${(VERDICT[x.outcome] || [, x.outcome])[1]}</td><td>${x.holder_name || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No scans yet.</p>`);
+    drawStats();
   } catch (err) { if (unreachable(err)) setNet(false); }
+}
+function drawStats() {
+  const s = STATS;
+  if (!s || !$("#stats")) return;
+  $("#stats").textContent = `${s.admitted.toLocaleString("en-ZA")} of ${plural(s.issued, "ticket")} scanned in · ${s.mine.toLocaleString("en-ZA")} by you`;
+  render($("#recent"), s.recent.length ? html`<div class="table-wrap"><table><tbody>${s.recent.map((x) => html`<tr><td>${fmtTime(x.occurred_at)}</td><td>${(VERDICT[x.outcome] || [, x.outcome])[1]}</td><td>${x.holder_name || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No scans yet.</p>`);
+}
+// Show this scan in the counts and the Recent list straight away; the next
+// refresh from the server replaces it with the full picture.
+function countScan(r) {
+  if (!STATS) return;
+  if (r.outcome === "admitted") { const n = r.pass ? 0 : (r.admits || 1); STATS.admitted += n; STATS.mine += n; }
+  STATS.recent = [{ occurred_at: new Date().toISOString(), outcome: r.outcome, holder_name: r.holderName || "" }, ...(STATS.recent || [])].slice(0, 10);
+  drawStats();
 }
 
 window.addEventListener("offline", () => setNet(false));

@@ -585,7 +585,7 @@ export function wrongAccountPage(u, portal, { elsewhere = false } = {}) {
   if (side) render(side, "");
   render($("#main"), html`<section class="welcome card"><span class="tk-label">${PORTALS[portal].name}</span>
     <h1>This portal isn't for this account</h1>
-    <p class="lead">You're signed in as ${u.email}, ${kind}${elsewhere ? ", from another tab or window" : ""}. ${why}</p>
+    <p class="lead">You're signed in as <span class="break">${u.email}</span>, ${kind}${elsewhere ? ", from another tab or window" : ""}. ${why}</p>
     <div class="row"><a class="btn btn-primary" href="${theirs.href}">Open the ${theirs.name.toLowerCase()}</a><button class="btn btn-ghost" data-out>Sign out</button></div></section>`);
   $("[data-out]").addEventListener("click", async () => { await signOut(); location.reload(); });
   pageReady();
@@ -1284,15 +1284,22 @@ export function emailLinkPage(portal, context) {
   if (reset) {
     const token = reset[1];
     const retailReturn = reset[2] === "retail";
-    render(main, html`<div class="page-head"><div><h1>Choose your password</h1><p class="muted">Use at least 14 characters. Staff will also verify a one-time code sent to their work email.</p></div></div>
+    // Event team, tills and the back office each open their own page after the password is set.
+    const here = location.pathname.replace(/\/+$/, "");
+    const toolPage = ["/scan", "/pos"].includes(here) ? here : "";
+    const intro = here === "/admin" ? "Use at least 14 characters. You'll also enter a one-time code sent to your work email."
+      : here === "/scan" ? "Use at least 14 characters. You'll use this password to open your event tools at ticketroom.co.za/scan."
+      : "Use at least 14 characters.";
+    render(main, html`<div class="page-head"><div><h1>Choose your password</h1><p class="muted">${intro}</p></div></div>
       <div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="14" required autocomplete="new-password"><span class="hint">At least 14 characters.</span></div>
-      <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="14" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
+      <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="14" required autocomplete="new-password"></div><button class="btn btn-primary">Save password</button></form></div>`);
     onSubmit($("#rs"), async (v) => {
       matchPasswords(v, "password", "passwordConfirm");
       const r = await post("/api/auth/password/reset", { token, password: v.password, ...(retailReturn ? { context: "retail" } : {}) });
       toast(r.signedIn ? "Password saved. You're signed in." : (r.staff ? "Password saved. Sign in and enter the code sent to your staff email." : (r.needsEmailOtp ? "Password saved. Sign in and enter the code sent to your email." : "Password saved.")), "good");
       meCache = undefined;
       if (r.context === "retail") openFresh("/retail#apply");
+      else if (toolPage) openFresh(toolPage);
       else go({ account_type: r.accountType });
     });
   } else {
