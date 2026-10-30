@@ -39,15 +39,20 @@ function adm_int_or_zero($v): int { return (int) ($v ?? 0); }
 // ---- dashboard ---------------------------------------------------------------
 route('GET', '/api/admin/dashboard', function () {
     adm_any();
-    $users = row("SELECT count(*) AS total, COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END),0) AS new7 FROM users WHERE status <> 'deleted'", [iso_in(-7 * 86400)]);
-    $orgs = row("SELECT COALESCE(SUM(status = 'pending'),0) AS pending, COALESCE(SUM(status = 'approved'),0) AS approved FROM organisers");
+    // Test events (Admin portal, Test event) and everything on them are left out:
+    // their event, organiser, orders, and guests who booked nothing else.
+    $users = row("SELECT count(*) AS total, COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END),0) AS new7 FROM users u WHERE status <> 'deleted'
+                    AND NOT (guest = 1 AND EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = u.id AND e.is_test = 1)
+                             AND NOT EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = u.id AND e.is_test = 0))", [iso_in(-7 * 86400)]);
+    $orgs = row("SELECT COALESCE(SUM(status = 'pending'),0) AS pending, COALESCE(SUM(status = 'approved'),0) AS approved FROM organisers WHERE is_test = 0");
     $events = row("SELECT COALESCE(SUM(status = 'pending_approval'),0) AS pending, COALESCE(SUM(status = 'published'),0) AS live,
                           COALESCE(SUM(cancellation_requested_at IS NOT NULL AND status <> 'cancelled'),0) AS cancel_requests,
-                          (SELECT count(*) FROM event_change_requests WHERE status = 'pending') AS change_requests FROM events");
+                          (SELECT count(*) FROM event_change_requests WHERE status = 'pending') AS change_requests FROM events WHERE is_test = 0");
     $since = iso_in(-86400);
     $sales = row("SELECT COALESCE(SUM(CASE WHEN paid_at > ? THEN total_cents ELSE 0 END),0) AS gmv24, COALESCE(SUM(total_cents),0) AS gmv_all,
                          COALESCE(SUM(CASE WHEN paid_at > ? THEN 1 ELSE 0 END),0) AS orders24
-                    FROM orders WHERE test = 0 AND status IN ('paid','partially_refunded','refunded','paid_unfulfilled')", [$since, $since]);
+                    FROM orders WHERE test = 0 AND status IN ('paid','partially_refunded','refunded','paid_unfulfilled')
+                     AND event_id NOT IN (SELECT id FROM events WHERE is_test = 1)", [$since, $since]);
     $ops = [
         'refunds_pending' => (int) val("SELECT count(*) FROM refunds WHERE status IN ('requested','manual_pending')"),
         'refunds_failed' => (int) val("SELECT count(*) FROM refunds WHERE status = 'failed'"),
@@ -86,7 +91,7 @@ route('GET', '/api/admin/organisers', function () {
                          (SELECT count(*) FROM events WHERE organiser_id = o.id) AS events,
                          o.commission_bps,
                          (SELECT u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = o.id AND m.role = 'owner' LIMIT 1) AS owner_name
-                    FROM organisers o WHERE (? IS NULL OR o.status = ?) AND (? IS NULL OR o.ref = ? OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(o.contact_email) LIKE ? ESCAPE '\\')
+                    FROM organisers o WHERE o.is_test = 0 AND (? IS NULL OR o.status = ?) AND (? IS NULL OR o.ref = ? OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(o.contact_email) LIKE ? ESCAPE '\\')
                    ORDER BY o.created_at DESC LIMIT 200", array_merge([$status, $status], adm_find()));
     // Verification at a glance: complete, waiting for review, or action needed.
     foreach ($list as &$o) {
@@ -147,7 +152,7 @@ route('GET', '/api/admin/events', function () {
                          o.name AS organiser_name, o.id AS organiser_id, o.ref AS organiser_ref,
                          (SELECT COALESCE(SUM(quantity_sold),0) FROM ticket_types WHERE event_id = e.id) AS sold
                     FROM events e JOIN organisers o ON o.id = e.organiser_id
-                   WHERE (? IS NULL OR e.status = ? OR (? = 'cancel_requests' AND e.cancellation_requested_at IS NOT NULL AND e.status <> 'cancelled')) AND (? = 0 OR e.featured = 1)
+                   WHERE e.is_test = 0 AND (? IS NULL OR e.status = ? OR (? = 'cancel_requests' AND e.cancellation_requested_at IS NOT NULL AND e.status <> 'cancelled')) AND (? = 0 OR e.featured = 1)
                      AND (? IS NULL OR e.ref = ? OR o.ref = ? OR lower(e.title) LIKE ? ESCAPE '\\' OR lower(o.name) LIKE ? ESCAPE '\\')
                    ORDER BY e.starts_at DESC LIMIT 300", array_merge([$status, $status, $status, $featured], adm_find(true)));
     foreach ($list as &$e) $e['sold'] = (int) $e['sold'];

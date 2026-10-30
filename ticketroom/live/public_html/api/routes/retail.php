@@ -45,7 +45,7 @@ function retail_events_for(array $p): array
 {
     return ['events' => rows("SELECT e.id, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at, e.sales_start_at, e.sales_end_at,
       (SELECT count(*) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale' AND tt.quantity_total > tt.quantity_sold + tt.quantity_held) AS ticket_types_available
-      FROM events e WHERE e.status = 'published' AND e.ends_at > ? ORDER BY e.starts_at LIMIT 300", [now_iso()]),
+      FROM events e WHERE e.status = 'published' AND e.is_test = 0 AND e.ends_at > ? ORDER BY e.starts_at LIMIT 300", [now_iso()]),
       'partner' => ['id' => $p['id'], 'name' => $p['business_name'], 'ref' => $p['ref'], 'salesChannels' => json_decode((string) $p['sales_channels'], true) ?: [], 'locationSet' => $p['location_lat_e6'] !== null && $p['location_lng_e6'] !== null],
       'rates' => ['commissionShareBps' => (int) (settings_all()['fees']['retailCommissionShareBps'] ?? 150), 'serviceShareCents' => (int) (settings_all()['fees']['retailServiceFeeShareCents'] ?? 300), 'serviceFeeCents' => (int) (settings_all()['fees']['ticketFeeFixedCents'] ?? 1000), 'serviceFeeBps' => (int) (settings_all()['fees']['ticketFeeBps'] ?? 0)]];
 }

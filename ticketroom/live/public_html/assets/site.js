@@ -317,7 +317,7 @@ async function eventPage(slug, opts = {}) {
   const pv = new URLSearchParams(location.search).get("preview");
   const [{ event: e, ticketTypes }, cfg] = await Promise.all([get(`/api/public/events/${encodeURIComponent(slug)}${pv ? `?preview=${encodeURIComponent(pv)}` : ""}`), get("/api/config")]);
   // Previews are private: keep them out of search engines.
-  if (e.preview) { const m = document.createElement("meta"); m.name = "robots"; m.content = "noindex"; document.head.append(m); }
+  if (e.preview || e.is_test) { const m = document.createElement("meta"); m.name = "robots"; m.content = "noindex"; document.head.append(m); }
   document.title = `${e.title} | TicketRoom`;
   if (!ticketsMode && !e.preview && e.status === "published") post(`/api/public/events/${encodeURIComponent(slug)}/view`, {}).catch(() => {});
   const ref = new URLSearchParams(location.search).get("ref");
@@ -346,10 +346,12 @@ async function eventPage(slug, opts = {}) {
   const previewBar = e.preview ? html`<div class="preview-bar" role="note"><div class="wrap row between"><span><strong>Preview.</strong> Only people with this link can see this page. Tickets go on sale once it is published.</span>
       ${e.previewOrganiserId ? html`<a class="btn btn-sm btn-primary" href="/organisers#/events/${e.id}">Back to publish</a>` : ""}</div></div>` : "";
   const eventUrl = `${location.origin}/events/${e.slug}`;
+  // A test event (Admin portal, Test event): only people with the link see it.
+  const testBar = Number(e.is_test) === 1 ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · made by TicketRoom to try bookings and the gate, not a real event</p>` : "";
 
   if (ticketsMode) {
     document.title = `Tickets: ${e.title} | TicketRoom`;
-    render(main, html`${previewBar}
+    render(main, html`${previewBar}${testBar}
       <section class="tix-head">${poster(e, "fill")}<span class="shade"></span><div class="wrap">
         <a class="tix-back" href="${eventHref}">${icon("back")}Event details</a>
         <div class="row between tix-head-row"><div><h1>${e.title}</h1><p class="mb-0">${dateLine} · ${fmtTime(e.starts_at)} · ${e.venue_name}, ${e.city}</p></div>
@@ -375,7 +377,7 @@ async function eventPage(slug, opts = {}) {
       e.cashless_enabled ? ["Cashless", "This is a cashless event. Link a wristband and top up in your account."] : null,
       e.is_free ? null : ["Refund policy", html`${e.refund_policy} <a class="ev-more" href="/legal/terms">View policy</a>`],
     ].filter(Boolean);
-    render(main, html`${previewBar}
+    render(main, html`${previewBar}${testBar}
       <div class="ev2">
         <div class="wrap ev2-top">
           <div class="ev2-banner">${e.image_upload_id ? html`<img class="ev2-banner-bg" src="/media/${e.image_upload_id}" alt=""><img class="ev2-banner-img" src="/media/${e.image_upload_id}" alt="${e.title} poster">` : poster(e, "fill")}</div>
@@ -709,11 +711,12 @@ async function eventPage(slug, opts = {}) {
 // their email (?k=…). Guests see their QR codes here and are offered an
 // account with the same email, which collects every ticket once confirmed.
 function orderTicket(t, o) {
+  const testEvent = !!o.testEvent;
   const when = `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`;
   const live = t.status === "valid" && t.qrUrl;
   const test = Number(t.test) === 1;
   return html`<div class="tk-wrap"><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"} ${test ? "is-test" : ""}" aria-label="${test ? "Test ticket" : "Ticket"} ${t.code}">
-    ${test ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : ""}
+    ${test ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : testEvent ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · not a real event</p>` : ""}
     <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${o.event.title}</h3><p class="tk-when">${when}</p><p class="tk-where">${o.event.venue}, ${o.event.city}</p></header>
     <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || o.buyerName}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${o.reference}</dd></div></dl>
       <div class="t-qr">${live ? html`<img src="${t.qrUrl}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
@@ -741,6 +744,7 @@ async function orderPage(ref) {
     const paid = o.status === "paid" || o.status === "partially_refunded";
     render(main, html`<div class="wrap section stack-lg"><div class="card pad-lg stack" aria-live="polite">
       <div class="row between"><span class="muted small">Order ${o.reference}</span><span class="row">${o.test ? html`<span class="badge warn">Test</span>` : ""}${badge(o.status)}</span></div>
+      ${o.testEvent ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · made by TicketRoom to try bookings and the gate, not a real event</p>` : ""}
       ${o.test ? html`<p class="callout warn mb-0"><strong>Test order.</strong> This was paid while TicketRoom payments were in test mode. No real money moved, and these tickets will not open the gate.</p>` : ""}
       ${paid && ticketsHidden ? html`<h1>Booking confirmed</h1><p>${ticketCount} ticket${ticketCount === 1 ? " is" : "s are"} booked for <strong>${o.event.title}</strong> and sent to the email address on the order. To see them, open the link in that confirmation email, or sign in with that email address.</p>`
         : paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you as well.</p>
@@ -769,7 +773,7 @@ async function orderPage(ref) {
       const t = tickets.find((x) => x.id === b.dataset.img);
       try {
         const svg = await fetch(t.qrUrl, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
-        const png = await ticketPng(svg, { test: Number(t.test) === 1, title: o.event.title, when: `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`, place: `${o.event.venue}, ${o.event.city}`, code: t.code,
+        const png = await ticketPng(svg, { test: Number(t.test) === 1, testEvent: !!o.testEvent, title: o.event.title, when: `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`, place: `${o.event.venue}, ${o.event.city}`, code: t.code,
           rows: [["Ticket", t.ticket_type], ["Holder", t.holder_name || o.buyerName], ...(t.admits > 1 ? [["Admits", `${t.admits} people`]] : []), ["Order", o.reference]] });
         const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `ticket-${t.code}.png`; document.body.append(a); a.click(); a.remove();
         toast("Saved. Show this picture at the gate if you have no signal.", "good");

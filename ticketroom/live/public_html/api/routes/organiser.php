@@ -401,9 +401,9 @@ function org_audience(string $orgId, string $channel, ?array $eventIds): array
                    JOIN marketing_consents mc ON mc.user_id = u.id AND mc.organiser_id = ? AND mc.channel = ? AND mc.granted = 1
                   WHERE u.status = 'active' AND $contact IS NOT NULL
                     AND (EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id
-                                  WHERE o.user_id = u.id AND e.organiser_id = ? AND o.status IN " . ORG_PAID . " AND o.test = 0 $evf)
+                                  WHERE o.user_id = u.id AND e.organiser_id = ? AND e.is_test = 0 AND o.status IN " . ORG_PAID . " AND o.test = 0 $evf)
                       OR EXISTS (SELECT 1 FROM tickets t JOIN events e ON e.id = t.event_id
-                                  WHERE t.owner_user_id = u.id AND e.organiser_id = ? $evf))", $p);
+                                  WHERE t.owner_user_id = u.id AND e.organiser_id = ? AND e.is_test = 0 $evf))", $p);
 }
 
 function org_audience_summary(string $orgId, array $eventIds): array
