@@ -118,7 +118,7 @@ export async function deskApp(el, eventId, { onBack, backLabel = "Back" } = {}) 
         const { cashout: c } = await post(`/api/cashdesk/events/${eventId}/cashouts/find`, { code });
         if (c.status !== "requested") return cashout(c.status === "paid" ? `Already paid${c.paidAt ? ` at ${fmtTime(c.paidAt)}` : ""}.` : `This cash-out is ${c.status}.`);
         render(el, frame(html`<section class="card stack center"><div class="small muted">Pay in cash to</div><h2 class="mb-0">${c.name}</h2><div class="desk-bal">${moneyExact(c.amountCents)}</div>
-          ${c.feeCents ? html`<div class="small muted">after a ${moneyExact(c.feeCents)} cash-out fee</div>` : ""}${c.test ? html`<span class="badge warn">test money</span>` : ""}
+          ${c.feeCents ? html`<div class="small muted">after a ${moneyExact(c.feeCents)} cash-out fee</div>` : ""}${c.test ? html`<span class="badge warn">Test money</span>` : ""}
           <button class="btn btn-good btn-block btn-lg" data-pay>I have paid ${rand(c.amountCents)} in cash</button><button class="btn btn-ghost btn-block" data-cancel>Not now</button></section>`));
         wire();
         $("[data-cancel]", el).addEventListener("click", () => cashout());

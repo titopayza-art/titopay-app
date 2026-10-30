@@ -131,7 +131,7 @@ function test_event_create(array $actor, array $b): array
             // The private link: long and random, so it cannot be guessed.
             'slug' => 'ticketroom-test-event-' . bin2hex(random_bytes(8)), 'title' => $title,
             'summary' => 'A TicketRoom test event, for trying bookings, tickets and the gate. Not a real event.',
-            'description' => "This is a TicketRoom test event. The TicketRoom team uses it to try the whole booking journey on the real site: free tickets, the confirmation email, My tickets, transfers, the waitlist and scanning at the gate.\n\nIt is not a real event, nobody can find it on the website, and it is deleted with all its bookings " . TEST_EVENT_KEEP_DAYS . ' days after it ends.',
+            'description' => "This is a TicketRoom test event. The TicketRoom team uses it to check every step of booking on the real site: free tickets, the confirmation email, My tickets, transfers, the waitlist and scanning at the gate.\n\nIt is not a real event, nobody can find it on the website, and it is deleted with all its bookings " . TEST_EVENT_KEEP_DAYS . ' days after it ends.',
             'category' => 'other', 'venue_name' => $b['venueName'] ?? 'TicketRoom test venue', 'address' => $b['address'] ?? 'Test only, not a real address', 'city' => $b['city'] ?? 'Johannesburg', 'province' => 'Gauteng',
             'starts_at' => $starts, 'ends_at' => $ends, 'capacity' => array_sum(array_column($types, 'qty')), 'status' => 'published', 'is_free' => 1, 'is_test' => 1,
             'refund_policy' => 'Test tickets are free. Nothing to refund.', 'transfers_enabled' => 1, 'resale_enabled' => 0,

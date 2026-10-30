@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { features, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError, toLocalInput, fromLocalInput, fmtTime } from "/assets/core.js";
+import { features, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, plural, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError, toLocalInput, fromLocalInput, fmtTime } from "/assets/core.js";
 import { deskPicker } from "/assets/cashdesk.js";
 
 const main = $("#main");
@@ -206,10 +206,10 @@ async function overview() {
   // Which build is running, so an upload can be checked at a glance.
   const build = await fetch("/version.txt", { cache: "no-store" }).then((r) => (r.ok ? r.text() : "")).then((t) => (t.match(/build (\S+)/) || [])[1] || "").catch(() => "");
   render(main, html`${head("Overview", `Signed in as ${[...R].join(", ")}.${build ? ` Running build ${build}.` : ""}`)}
-    <div class="kpis"><div class="kpi"><div class="k">GMV (24h)</div><div class="v">${money(d.sales.gmv24)}</div><div class="s">${d.sales.orders24} orders</div></div>
-      <div class="kpi"><div class="k">GMV (all time)</div><div class="v">${money(d.sales.gmv_all)}</div></div>
+    <div class="kpis"><div class="kpi"><div class="k">GMV (24h)</div><div class="v">${moneyExact(d.sales.gmv24)}</div><div class="s">${plural(d.sales.orders24, "order")}</div></div>
+      <div class="kpi"><div class="k">GMV (all time)</div><div class="v">${moneyExact(d.sales.gmv_all)}</div></div>
       <div class="kpi"><div class="k">Users</div><div class="v">${d.users.total}</div><div class="s">+${d.users.new7} this week</div></div>
-      <div class="kpi"><div class="k">Live events</div><div class="v">${d.events.live}</div><div class="s">${d.organisers.approved} approved organisers</div></div></div>
+      <div class="kpi"><div class="k">Live events</div><div class="v">${d.events.live}</div><div class="s">${plural(d.organisers.approved, "approved organiser")}</div></div></div>
     <section class="card mt"><h2>Needs attention</h2><div class="attn-list">
       ${d.ops.payments_test ? html`<a class="attn warn" href="#/integrations"><span class="n">TEST</span><span class="t">Payments are in test mode<small>Buyers pay with practice payments and get TEST tickets the gate refuses${d.ops.test_orders ? ` (${d.ops.test_orders} so far)` : ""}. Switch to Live in Integrations before tickets go on sale.</small></span><span class="go" aria-hidden="true">›</span></a>` : ""}
       ${alert(d.organisers.pending, ["organiser awaiting approval", "organisers awaiting approval"], "#/organisers")}
@@ -228,7 +228,7 @@ async function overview() {
       ${alert(d.ops.support_open, ["open support case", "open support cases"], "#/support")}
       ${Object.values(d.ops).every((x) => !x) && !d.organisers.pending && !d.events.pending ? html`<p class="callout good mb-0">All clear.</p>` : ""}</div></section>
     <section class="card mt"><h2>Ledger integrity</h2><p class="${d.ledger.balanced ? "callout good" : "callout bad"}">${d.ledger.balanced ? `Balanced: ${d.ledger.entries} entries sum to R0.00.` : `UNBALANCED. Investigate journals ${d.ledger.unbalancedJournals.join(", ")}`}</p>
-      ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td class="mono">${c.account}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}
+      ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td title="${c.account}">${accountName(c.account)}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}
       ${moneyFindings(d.ledger.exceptions)}</section>`);
 }
 
@@ -277,7 +277,7 @@ async function events() {
   const { events: list } = await get(`/api/admin/events${query.size ? `?${query}` : ""}`);
   render(main, html`${head(filter === "featured" ? "Featured events" : "All events", filter === "featured" ? "Only staff can choose which events appear in TicketRoom’s featured rail. Add placements from All events; remove them here." : "Every event on TicketRoom, from every organiser. Approve, suspend or handle cancellation requests.")}
     ${searchBox("eq", q, "Search by event ID (EV-…), organiser ID, event or organiser name")}<div class="chips ${q ? "hidden" : ""}">${[["pending_approval", "Awaiting approval"], ["cancel_requests", "Cancellation requests"], ["published", "Published"], ["suspended", "Suspended"], ["featured", "Featured"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
-    <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong><div class="tiny muted mono">${e.ref || ""}</div>${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">featured</span>` : ""}</td><td>${e.organiser_name}<div class="tiny muted mono">${e.organiser_ref || ""}</div></td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
+    <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong><div class="tiny muted mono">${e.ref || ""}</div>${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">Featured</span>` : ""}</td><td>${e.organiser_name}<div class="tiny muted mono">${e.organiser_ref || ""}</div></td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
       <td>${isA() ? html`<div class="row">
         ${e.status === "pending_approval" ? html`<button class="btn btn-good btn-sm" data-a="publish" data-id="${e.id}">Publish</button><button class="btn btn-ghost btn-sm" data-a="reject" data-id="${e.id}">Request changes</button>` : ""}
         ${e.status === "published" ? html`<button class="btn btn-ghost btn-sm" data-a="${e.featured ? "unfeature" : "feature"}" data-id="${e.id}">${e.featured ? "Unfeature" : "Feature"}</button><button class="btn btn-ghost btn-sm" data-a="suspend" data-id="${e.id}">Suspend</button>` : ""}
@@ -305,7 +305,7 @@ async function eventChangeRequests() {
   const { requests } = await get(`/api/admin/event-change-requests?status=${filter}`);
   const labels = { title: "Event name", summary: "Summary", description: "Description", category: "Category", venueName: "Venue", address: "Street address", city: "City", province: "Province", startsAt: "Starts", endsAt: "Ends", capacity: "Capacity", salesStartAt: "Sales open", salesEndAt: "Sales close", doorsOpenAt: "Doors open", parkRideInfo: "Park and ride details", parkRideUrl: "Park and ride link", refundPolicy: "Refund policy", accessibilityInfo: "Accessibility", ageRestriction: "Age restriction", transfersEnabled: "Ticket transfers", resaleEnabled: "Fan resale", cashlessEnabled: "Cashless", isFree: "Free event", serviceFeePayer: "Service fee payer", ageGroups: "Audience", lineup: "Line-up", presaleQueueEnabled: "Presale queue", imageUploadId: "Poster image", name: "Ticket name", description: "Ticket description", priceCents: "Price", quantityTotal: "Quantity", perOrderLimit: "Per order", salesStartAt: "Sales open", salesEndAt: "Sales close", status: "Sale status", sortOrder: "Display order", kind: "Ticket kind", admits: "People per ticket" };
   const show = (key, value) => {
-    if (value === null || value === undefined || value === "") return "—";
+    if (value === null || value === undefined || value === "") return "None";
     if (["isFree", "transfersEnabled", "resaleEnabled", "cashlessEnabled", "presaleQueueEnabled"].includes(key)) return value ? "Yes" : "No";
     if (["startsAt", "endsAt", "salesStartAt", "salesEndAt", "doorsOpenAt"].includes(key)) return fmtDateTime(value);
     if (key === "priceCents") return moneyExact(value);
@@ -459,7 +459,7 @@ async function refunds() {
   const actionable = list.filter((r) => r.status === "requested" && !r.mine);
   render(main, html`${head("Refunds", "Every refund needs a second person: you cannot approve a refund you requested.", isF() && filter === "requested" && actionable.length ? html`<button class="btn btn-good" data-bulk>Approve all ${actionable.length} I can</button>` : "")}
     ${!isF() ? html`<p class="callout">View only. Approving refunds needs the finance role.</p>` : ""}
-    <div class="chips">${["requested", "manual_pending", "failed", "completed", "rejected", "all"].map((k) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${k}</button>`)}</div>
+    <div class="chips">${["requested", "manual_pending", "failed", "completed", "rejected", "all"].map((k) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${sentence(k)}</button>`)}</div>
     <div class="mt">${tbl(["Ref", "Event", "Type", "Reason", "By", "#Amount", "Status", ""], list.map((r) => html`<tr><td class="mono">${r.reference}${r.order_reference ? html`<div class="tiny muted">${r.order_reference}</div>` : ""}</td><td>${r.event_title}</td><td>${r.kind.replace("_", " ")}</td><td class="small">${r.reason}${r.failure_reason ? html`<div class="tiny">Failed: ${r.failure_reason}</div>` : ""}</td><td class="small">${r.requested_by_name || "system"}${r.decided_by_name ? html`<div class="tiny muted">decided: ${r.decided_by_name}</div>` : ""}</td>
       <td class="num">${moneyExact(r.amount_cents + r.fee_refund_cents)}</td><td>${badge(r.status)}</td>
       <td>${isF() && r.status === "requested" && !r.mine ? html`<div class="row"><button class="btn btn-good btn-sm" data-ok="${r.id}">Approve</button><button class="btn btn-ghost btn-sm" data-no="${r.id}">Reject</button></div>` : ""}
@@ -488,14 +488,14 @@ async function promotions() {
   const { promotions: list, revenue: rv } = await get(`/api/admin/promotions${filter === "all" ? "" : `?status=${filter}`}`);
   const canSocial = isA() || isS();
   render(main, html`${head("Promotions", "Organisers pay once to promote an event until it ends. Post their events on our socials, and refund a package if its event is cancelled.")}
-    <div class="kpis"><div class="kpi"><div class="k">Promote revenue</div><div class="v">${money(rv.liveCents)}</div><div class="s">${rv.live} paid package${rv.live === 1 ? "" : "s"}, less refunds</div></div>
-      <div class="kpi"><div class="k">Test purchases</div><div class="v">${money(rv.testCents)}</div><div class="s">${rv.test} TEST package${rv.test === 1 ? "" : "s"}, never revenue</div></div>
+    <div class="kpis"><div class="kpi"><div class="k">Promote revenue</div><div class="v">${moneyExact(rv.liveCents)}</div><div class="s">${rv.live} paid package${rv.live === 1 ? "" : "s"}, less refunds</div></div>
+      <div class="kpi"><div class="k">Test purchases</div><div class="v">${moneyExact(rv.testCents)}</div><div class="s">${rv.test} TEST package${rv.test === 1 ? "" : "s"}, never revenue</div></div>
       <div class="kpi"><div class="k">Active now</div><div class="v">${rv.active}</div><div class="s">promoted until their events end</div></div>
       <div class="kpi"><div class="k">Social posts to do</div><div class="v">${rv.socialQueue}</div><div class="s">requested or scheduled</div></div></div>
     <div class="chips mt">${[["social", "Social queue"], ["active", "Active"], ["pending_payment", "Unpaid"], ["ended", "Ended"], ["refunded", "Refunded"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
     <div class="mt">${tbl(["Ref", "Event", "Paid", "Status", "Social", ""], list.map((p) => html`<tr>
       <td class="mono small">${p.reference}${p.test ? html` <span class="badge amber">TEST</span>` : ""}</td>
-      <td><a href="/events/${p.event_slug}" target="_blank" rel="noopener">${p.event_title}</a><div class="tiny muted">${p.organiser_name} · ${p.bought_by_email || ""}</div>${p.event_status === "cancelled" || p.cancellation_requested_at ? html`<div class="tiny"><span class="badge bad">event ${p.event_status === "cancelled" ? "cancelled" : "cancellation requested"}</span></div>` : ""}</td>
+      <td><a href="/events/${p.event_slug}" target="_blank" rel="noopener">${p.event_title}</a><div class="tiny muted">${p.organiser_name} · ${p.bought_by_email || ""}</div>${p.event_status === "cancelled" || p.cancellation_requested_at ? html`<div class="tiny"><span class="badge bad">Event ${p.event_status === "cancelled" ? "cancelled" : "cancellation requested"}</span></div>` : ""}</td>
       <td class="small">${moneyExact(p.price_cents)}${p.paid_at ? html`<div class="tiny muted">${p.paid_with === "balance" ? "from balance" : p.payment_provider || "card"} · ${fmtDate(p.paid_at)}</div>` : ""}</td>
       <td>${badge(p.status)}${p.status === "active" ? html`<div class="tiny muted">until ${fmtDate(p.ends_at)}</div>` : ""}${p.refund_status && p.refund_status !== "completed" ? html`<div class="tiny">refund ${p.refund_status.replace("_", " ")}${p.refund_failure ? `: ${p.refund_failure}` : ""}</div>` : ""}</td>
       <td>${p.social_status ? badge(p.social_status) : html`<span class="tiny muted">no request</span>`}</td>
@@ -561,7 +561,7 @@ async function payments() {
     ${stale.length ? html`<section class="card mb"><h2>Waiting for the provider</h2><p class="muted small">Pending for more than 30 minutes.</p>${tbl(["Since", "Order", "Provider", "#Amount", "What to do"], stale.map((p) => html`<tr><td class="small">${fmtDateTime(p.created_at)}</td><td class="mono small">${p.order_reference || "–"}</td><td>${p.provider}${p.environment !== "live" ? html` <span class="badge amber">TEST</span>` : ""}</td><td class="num">${moneyExact(p.amount_cents)}</td><td class="small">${p.what_to_do}</td></tr>`))}</section>` : ""}
     <h2>Payments</h2>${tbl(["When", "Purpose", "User", "Provider ref", "#Amount", "Status", ""], list.map((p) => html`<tr><td class="small">${fmtDateTime(p.created_at)}</td><td>${p.purpose}</td><td class="small">${p.email}</td><td class="mono small">${p.provider_reference || "–"}</td><td class="num">${moneyExact(p.amount_cents)}${p.refunded_cents ? html`<div class="tiny">−${moneyExact(p.refunded_cents)}</div>` : ""}</td><td>${badge(p.status)}${p.failure_reason ? html`<div class="tiny muted">${p.failure_reason}</div>` : ""}</td>
       <td>${["pending", "cancelled", "failed"].includes(p.status) && p.provider_reference ? html`<button class="btn btn-ghost btn-sm" data-re="${p.id}">Re-check</button>` : ""}</td></tr>`))}
-    <h2 class="mt-lg">Webhook deliveries</h2>${tbl(["Received", "Event id", "Signature", "Attempts", "Status", "Error"], webhooks.map((w) => html`<tr><td class="small">${fmtDateTime(w.received_at)}</td><td class="mono small">${w.provider_event_id}</td><td>${w.signature_valid ? "valid" : html`<span class="badge bad">invalid</span>`}</td><td>${w.attempts}</td><td>${badge(w.status)}</td><td class="small">${w.error || ""}</td></tr>`))}`);
+    <h2 class="mt-lg">Webhook deliveries</h2>${tbl(["Received", "Event id", "Signature", "Attempts", "Status", "Error"], webhooks.map((w) => html`<tr><td class="small">${fmtDateTime(w.received_at)}</td><td class="mono small">${w.provider_event_id}</td><td>${w.signature_valid ? "valid" : html`<span class="badge bad">Invalid</span>`}</td><td>${w.attempts}</td><td>${badge(w.status)}</td><td class="small">${w.error || ""}</td></tr>`))}`);
   $$("[data-re]").forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/payments/${b.dataset.re}/recheck`); toast(`Provider says: ${r.result}`, "good"); payments(); } catch (err) { toast(err.message, "bad"); } }));
 }
 
@@ -580,7 +580,7 @@ async function reconciliation() {
     ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider" ${raw(providers.length ? "" : "disabled")}>${providers.length ? providers.map((x) => html`<option value="${x}">${x === "yoco" ? "Yoco" : x === "payfast" ? "PayFast" : x}</option>`) : html`<option value="">No payment provider set up yet</option>`}</select></div>
       <div class="field"><label for="rfr">From</label><input id="rfr" name="from" type="date" value="${from.toISOString().slice(0, 10)}"></div><div class="field"><label for="rto">To (exclusive)</label><input id="rto" name="to" type="date" value="${new Date(today.getTime() + 864e5).toISOString().slice(0, 10)}"></div></div>
       <div class="field"><label for="rc">Provider report (CSV) <span class="muted">${providers.length ? "(export it from the provider's portal)" : "(optional, otherwise fetched from the provider)"}</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
-    <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${c.account}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p>${moneyFindings(ledger.exceptions)}</section>
+    <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${accountName(c.account)}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p>${moneyFindings(ledger.exceptions)}</section>
     <h2 class="mt-lg">Runs</h2>${tbl(["When", "Period", "Source", "Matched", "Exceptions", "#Provider total", "#Internal total", ""], runs.map((r) => html`<tr><td class="small">${fmtDateTime(r.created_at)}<div class="tiny muted">${r.created_by_name || ""}</div></td><td class="small">${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}</td><td>${r.source}</td><td>${r.summary.matched || 0}</td><td>${r.summary.exceptions ? html`<span class="badge bad">${r.summary.exceptions}</span>` : "0"}</td><td class="num">${moneyExact(r.summary.providerTotalCents)}</td><td class="num">${moneyExact(r.summary.internalTotalCents)}</td><td><button class="btn btn-ghost btn-sm" data-run="${r.id}">Open</button></td></tr>`))}`);
   if ($("#rf")) onSubmit($("#rf"), async (v) => { await post("/api/admin/reconciliation", { provider: v.provider, from: new Date(v.from).toISOString(), to: new Date(v.to).toISOString(), csv: v.csv }); toast("Reconciliation complete.", "good"); reconciliation(); });
   $$("[data-run]").forEach((b) => b.addEventListener("click", async () => {
@@ -591,11 +591,20 @@ async function reconciliation() {
   }));
 }
 
+// Ledger account codes ("payable:retail:<id>") and keys ("vendorId") as words.
+const ACCOUNT_WORDS = { wallets: "Wallets", wallet: "Wallet", resale: "Resale", sellers: "sellers", payable: "Owed to", retail: "retail partner", revenue: "Revenue", bank: "Bank", provider: "Payment provider", vendor: "Vendor", organiser: "Organiser", event: "event",
+  booking_fees: "booking fees", service_fees: "service fees", commission: "commission", promotions: "promotions", payouts: "payouts", retail_payouts: "retail partner payouts", clearing: "clearing", user: "customer" };
+const sentence = (t) => { const s = String(t || "").replace(/_/g, " ").trim(); return s.charAt(0).toUpperCase() + s.slice(1); };
+const accountName = (code) => sentence(String(code || "").split(":").filter((p) => !/^[0-9a-f-]{16,}$/i.test(p)).map((p) => ACCOUNT_WORDS[p] || p.replace(/_/g, " ")).join(" "));
+const humanKey = (k) => sentence(String(k).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase());
+const detailValue = (v) => v === null || v === undefined ? "none" : typeof v === "boolean" ? (v ? "yes" : "no") : Array.isArray(v) ? v.map(detailValue).join(", ") : typeof v === "object" ? Object.entries(v).map(([k, x]) => `${humanKey(k).toLowerCase()} ${detailValue(x)}`).join(", ") : /^[a-z_]+(?::[a-z_]+)+$/.test(String(v)) ? String(v).replace(/[_:]/g, " ") : String(v).replace(/_/g, " ");
+const detailsText = (d) => (d && typeof d === "object" ? Object.entries(d).map(([k, v]) => `${humanKey(k)}: ${detailValue(v)}`).join(" · ") : d ? String(d) : "");
+
 async function ledgerPage() {
   const [{ accounts }, { journals }] = await Promise.all([get("/api/admin/ledger/accounts"), get("/api/admin/ledger/journals")]);
   render(main, html`${head("Ledger", "Immutable double-entry ledger. Debits positive, credits negative; every journal sums to zero. Corrections are reversal journals.")}
-    <h2>Accounts</h2>${tbl(["Account", "Kind", "#Balance", "#Entries"], accounts.map((a) => html`<tr><td class="mono small">${a.code}</td><td>${a.kind}</td><td class="num">${moneyExact(a.balance_cents)}</td><td class="num">${a.entries}</td></tr>`))}
-    <h2 class="mt-lg">Recent journals</h2>${tbl(["When", "Kind", "Reference", "Lines"], journals.map((j) => html`<tr><td class="small">${fmtDateTime(j.created_at)}</td><td>${j.kind}${j.reverses_journal_id ? html`<div class="tiny muted">reversal</div>` : ""}</td><td class="mono small">${j.reference}</td><td class="small mono">${j.lines.map((l) => html`<div>${l.amount > 0 ? "DR" : "CR"} ${moneyExact(Math.abs(l.amount))} ${l.account}</div>`)}</td></tr>`))}`);
+    <h2>Accounts</h2>${tbl(["Account", "Kind", "#Balance", "#Entries"], accounts.map((a) => html`<tr><td class="small" title="${a.code}">${accountName(a.code)}</td><td>${sentence(a.kind)}</td><td class="num">${moneyExact(a.balance_cents)}</td><td class="num">${a.entries}</td></tr>`))}
+    <h2 class="mt-lg">Recent journals</h2>${tbl(["When", "Kind", "Reference", "Lines"], journals.map((j) => html`<tr><td class="small">${fmtDateTime(j.created_at)}</td><td>${sentence(j.kind)}${j.reverses_journal_id ? html`<div class="tiny muted">Reversal</div>` : ""}</td><td class="mono small">${j.reference}</td><td class="small mono">${j.lines.map((l) => html`<div>${l.amount > 0 ? "DR" : "CR"} ${moneyExact(Math.abs(l.amount))} <span title="${l.account}">${accountName(l.account)}</span></div>`)}</td></tr>`))}`);
 }
 
 async function tags() {
@@ -633,7 +642,7 @@ async function cashouts(box) {
   const { cashouts: list, dualApprovalCents } = await get("/api/admin/cashouts");
   const eft = list.filter((c) => c.method === "eft");
   render(box, html`<h2 class="mt-lg">Wallet cash-outs by EFT</h2><p class="small muted">Guests asking for what was left on their cashless balance. Cash-outs of ${moneyExact(dualApprovalCents)} or more need two people in finance.</p>
-    ${tbl(["Ref", "Guest", "Event", "Bank", "#Amount", "Status", ""], eft.map((c) => html`<tr><td class="mono">${c.reference}${c.test ? html` <span class="badge warn">test</span>` : ""}</td><td>${c.guest_name}<div class="tiny muted">${c.guest_email}</div></td><td class="small">${c.event_title}</td>
+    ${tbl(["Ref", "Guest", "Event", "Bank", "#Amount", "Status", ""], eft.map((c) => html`<tr><td class="mono">${c.reference}${c.test ? html` <span class="badge warn">Test</span>` : ""}</td><td>${c.guest_name}<div class="tiny muted">${c.guest_email}</div></td><td class="small">${c.event_title}</td>
       <td class="small">${c.bank_name} ••••${c.bank_account_last4}<div class="tiny muted">${c.bank_account_holder}</div></td><td class="num">${moneyExact(c.amount_cents)}${c.fee_cents ? html`<div class="tiny muted">fee ${moneyExact(c.fee_cents)}</div>` : ""}</td>
       <td>${badge(c.status === "approved_once" ? "needs second approval" : c.status)}${c.first_approved_by_name ? html`<div class="tiny muted">first: ${c.first_approved_by_name}</div>` : ""}</td>
       <td>${isF() && ["requested", "approved_once"].includes(c.status) ? html`<div class="row"><button class="btn btn-good btn-sm" data-coa="${c.id}">Approve</button><button class="btn btn-ghost btn-sm" data-cor="${c.id}">Reject</button></div>` : ""}
@@ -650,7 +659,7 @@ async function resalePayouts(box) {
   const { payouts: list } = await get("/api/admin/resale-payouts");
   const open = list.filter((p) => p.status !== "paid");
   render(box, html`<h2 class="mt-lg">Resale payouts</h2><p class="small muted">Fans who sold a ticket on TicketRoom Exchange. Card payouts go back to the card they paid with; EFT payouts need approval, then the EFT.</p>
-    ${tbl(["Ref", "Seller", "Event", "How", "#Amount", "Status", ""], [...open, ...list.filter((p) => p.status === "paid").slice(0, 20)].map((p) => html`<tr><td class="mono">${p.reference}${p.test ? html` <span class="badge warn">test</span>` : ""}<div class="tiny muted">${p.listing_reference}</div></td>
+    ${tbl(["Ref", "Seller", "Event", "How", "#Amount", "Status", ""], [...open, ...list.filter((p) => p.status === "paid").slice(0, 20)].map((p) => html`<tr><td class="mono">${p.reference}${p.test ? html` <span class="badge warn">Test</span>` : ""}<div class="tiny muted">${p.listing_reference}</div></td>
       <td>${p.seller_name}<div class="tiny muted">${p.seller_email}</div></td><td class="small">${p.event_title}</td>
       <td class="small">${p.method === "card" ? `Card (${p.provider})` : p.bank_account_last4 ? html`EFT ${p.bank_name} ••••${p.bank_account_last4}<div class="tiny muted">${p.bank_account_holder}</div>` : "EFT, no account yet"}${p.failure_reason ? html`<div class="tiny">${p.failure_reason}</div>` : ""}</td>
       <td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td>
@@ -696,12 +705,12 @@ async function terminals() {
 async function support() {
   const { cases } = await get("/api/admin/support");
   const open = cases.filter((c) => ["open", "in_progress"].includes(c.status));
-  render(main, html`${head("Support & callbacks", `${open.length} open · ${open.filter((c) => c.overdue).length} overdue · ${open.filter((c) => c.handled_by === "organiser").length} with organisers. Callback requests promise a response within 24–48 hours.`)}
+  render(main, html`${head("Support & callbacks", `${open.length} open · ${open.filter((c) => c.overdue).length} overdue · ${open.filter((c) => c.handled_by === "organiser").length} with organisers. Callback requests promise a response within 24 to 48 hours.`)}
     ${tbl(["Ref", "Customer", "Topic", "Request", "Due", "Status", ""], cases.map((c) => html`<tr><td class="mono">${c.reference}<div class="tiny muted">${c.source === "account_deletion" ? "deletion request" : c.source || "web"}</div></td>
       <td class="small">${c.full_name ? html`<strong>${c.full_name}</strong><br>` : ""}${c.phone ? html`<a href="tel:${c.phone}">${c.phone}</a><br>` : ""}<a href="mailto:${c.email}">${c.email}</a>${c.preferred_time ? html`<div class="tiny muted">best time: ${c.preferred_time}</div>` : ""}</td>
       <td>${c.category}</td><td><strong>${c.subject}</strong><div class="small muted">${c.body.slice(0, 160)}</div></td>
-      <td class="small">${c.due_at ? html`${fmtDateTime(c.due_at)}${c.overdue ? html`<div><span class="badge bad">overdue</span></div>` : ""}` : "–"}</td>
-      <td>${badge(c.status)}${c.handled_by === "organiser" ? html`<div class="tiny"><span class="badge amber plain">with ${c.organiser_name}</span></div>` : ""}${c.assignee ? html`<div class="tiny muted">${c.assignee}</div>` : ""}</td>
+      <td class="small">${c.due_at ? html`${fmtDateTime(c.due_at)}${c.overdue ? html`<div><span class="badge bad">Overdue</span></div>` : ""}` : "–"}</td>
+      <td>${badge(c.status)}${c.handled_by === "organiser" ? html`<div class="tiny"><span class="badge amber plain">With ${c.organiser_name}</span></div>` : ""}${c.assignee ? html`<div class="tiny muted">${c.assignee}</div>` : ""}</td>
       <td><button class="btn btn-ghost btn-sm" data-c="${c.id}">Open</button></td></tr>`))}`);
   $$("[data-c]").forEach((b) => b.addEventListener("click", () => supportCase(b.dataset.c)));
 }
@@ -752,7 +761,7 @@ async function supportCase(id) {
 async function audit() {
   const { entries } = await get("/api/admin/audit");
   render(main, html`${head("Audit log", "Append-only and hash-chained. The database refuses edits and deletions; the chain check detects tampering done around it.", html`<button class="btn btn-dark" data-verify>Verify chain</button>`)}
-    ${tbl(["When", "Actor", "Action", "Entity", "Details"], entries.map((e) => html`<tr><td class="small">${fmtDateTime(e.occurred_at)}</td><td class="small">${e.actor_name || e.actor_role}</td><td><code>${e.action}</code></td><td class="small mono">${e.entity_type || ""} ${e.entity_id ? e.entity_id.slice(0, 8) : ""}</td><td class="tiny mono">${JSON.stringify(e.details).slice(0, 160)}</td></tr>`))}`);
+    ${tbl(["When", "Actor", "Action", "Entity", "Details"], entries.map((e) => html`<tr><td class="small">${fmtDateTime(e.occurred_at)}</td><td class="small">${e.actor_name || e.actor_role}</td><td title="${e.action}">${sentence(String(e.action || "").replace(/\./g, " "))}</td><td class="small">${sentence(e.entity_type || "")} <span class="mono">${e.entity_id ? e.entity_id.slice(0, 8) : ""}</span></td><td class="tiny">${detailsText(e.details).slice(0, 200)}</td></tr>`))}`);
   $("[data-verify]").addEventListener("click", async () => { const r = await get("/api/admin/audit/verify"); toast(r.ok ? `Chain intact (${r.checked} entries).` : `Chain BROKEN at entry ${r.brokenAt}.`, r.ok ? "good" : "bad"); });
 }
 
@@ -800,12 +809,12 @@ async function siteSettings() {
   render(main, html`${head("Site settings", "Changes apply to the live site within a few seconds. Every change is written to the audit log.")}
     ${!isA() ? html`<p class="callout">View only. Changing site settings needs the admin role.</p>` : ""}
     <div class="grid-2">
-    <section class="card stack ${s.maintenance.enabled ? "flat" : ""}" aria-labelledby="mt-h"><h2 id="mt-h">Maintenance mode ${s.maintenance.enabled ? html`<span class="badge bad">ON</span>` : html`<span class="badge good">off</span>`}</h2>
+    <section class="card stack ${s.maintenance.enabled ? "flat" : ""}" aria-labelledby="mt-h"><h2 id="mt-h">Maintenance mode ${s.maintenance.enabled ? html`<span class="badge bad">ON</span>` : html`<span class="badge good">Off</span>`}</h2>
       <p class="small muted mb-0">When on, every visitor gets the maintenance page from the server: nobody can browse, book, sign up or sign in except TicketRoom staff, who see the site as normal with a yellow reminder bar. Payment notifications from Yoco and PayFast keep arriving.</p>
       <form class="stack" id="f-mt"><div class="field"><label for="mt-msg">Message shown to visitors</label><textarea id="mt-msg" name="message" maxlength="500" ${ro}>${s.maintenance.message}</textarea></div>
         <div class="row">${s.maintenance.enabled ? html`<button class="btn btn-good" name="enabled" value="0" ${ro}>Turn maintenance OFF</button>` : html`<button class="btn btn-danger" name="enabled" value="1" ${ro}>Turn maintenance ON</button>`}<button type="button" class="btn btn-ghost" data-save-mt ${ro}>Save message only</button><button type="button" class="btn btn-ghost" data-preview-mt>See what visitors see</button></div></form></section>
 
-    <section class="card stack" aria-labelledby="bn-h"><h2 id="bn-h">Announcement banner ${s.banner.enabled ? html`<span class="badge good">showing</span>` : html`<span class="badge">hidden</span>`}</h2>
+    <section class="card stack" aria-labelledby="bn-h"><h2 id="bn-h">Announcement banner ${s.banner.enabled ? html`<span class="badge good">Showing</span>` : html`<span class="badge">Hidden</span>`}</h2>
       <p class="small muted mb-0">Shown at the top of every public page. Visitors can hide it for their visit; turn it off here to remove it for everyone.</p>
       <form class="stack" id="f-bn"><label class="check"><input type="checkbox" name="enabled" ${raw(s.banner.enabled ? "checked" : "")} ${ro}><span>Show the banner</span></label>
         <div class="field"><label for="bn-t">Text</label><input id="bn-t" name="text" maxlength="200" required value="${s.banner.text}" ${ro}></div>
@@ -814,14 +823,14 @@ async function siteSettings() {
         <button class="btn btn-dark" ${ro}>Save banner</button></form></section>
     </div>
 
-    <section class="card stack mt" aria-labelledby="retail-h"><h2 id="retail-h">Retail partner programme ${s.retail.enabled ? html`<span class="badge good">active</span>` : html`<span class="badge">coming soon</span>`}</h2>
+    <section class="card stack mt" aria-labelledby="retail-h"><h2 id="retail-h">Retail partner programme ${s.retail.enabled ? html`<span class="badge good">Active</span>` : html`<span class="badge">Coming soon</span>`}</h2>
       <p class="small muted mb-0">When inactive, the public Retail page shows a Coming soon notice and retail applications, directory listings, attributed sales and retailer tills are paused. Admins can still review applications and reconcile existing earnings. Pausing is blocked until open retailer shifts are cashed up and reserved sales are resolved.</p>
       <form class="stack" id="f-retail"><label class="check"><input type="checkbox" name="enabled" ${raw(s.retail.enabled ? "checked" : "")} ${ro}><span>Activate retail applications and sales</span></label>
         <div class="field"><label for="retail-message">Coming soon message</label><textarea id="retail-message" name="message" maxlength="300" ${ro}>${s.retail.message}</textarea><span class="hint">Shown on the public Retail page while the programme is inactive.</span></div>
         <button class="btn btn-dark" ${ro}>Save retail settings</button></form></section>
 
     <section class="card stack mt" aria-labelledby="fees-h"><h2 id="fees-h">Pricing and fees</h2>
-      <p class="small muted mb-0">Controls ticket fees, Promote and advertising prices, cashless vendor commission, and the approved retailer share. Default retailer share: 1.50% of ticket value plus R3.00 of the service fee per paid ticket. This comes from existing fees, never adds a buyer charge, applies only to paid retailer-attributed sales, and is capped at the fees actually collected. Free tickets earn R0. Changes apply to new orders; existing orders keep their recorded amounts.</p>
+      <p class="small muted mb-0">Controls ticket fees, Promote and advertising prices, cashless vendor commission, and the approved retailer share. Default retailer share: 1.50% of ticket value plus R3.00 of the service fee per paid ticket. This comes from existing fees, never adds a buyer charge, applies only to paid retailer-attributed sales, and is capped at the fees actually collected. Free tickets earn nothing. Changes apply to new orders; existing orders keep their recorded amounts.</p>
       <form class="grid-2" id="f-fees"><div class="field"><label for="fee-service">Service fee per paid ticket (R)</label><input id="fee-service" name="service" inputmode="decimal" required value="${(s.fees.ticketFeeFixedCents / 100).toFixed(2)}"><span class="hint">Free tickets are never charged.</span></div>
         <div class="field"><label for="fee-service-rate">Service fee percentage (%)</label><input id="fee-service-rate" name="serviceRate" type="number" inputmode="decimal" min="0" max="20" step="0.01" required value="${(s.fees.ticketFeeBps / 100).toFixed(2)}"><span class="hint">Optional percentage added to the flat fee.</span></div>
         <div class="field"><label for="fee-commission">Standard commission (%)</label><input id="fee-commission" name="commission" type="number" inputmode="decimal" min="0" max="50" step="0.01" required value="${(s.fees.organiserCommissionBps / 100).toFixed(2)}"><span class="hint">Percentage of net ticket sales.</span></div>
@@ -925,7 +934,7 @@ async function posters() {
   render(main, html`${head("Advertising posters", "Manage sponsored poster slots. Home page: the Featured rail below events and trending. Event discovery: the sponsored rail directly below Upcoming events.", isA() ? html`<button class="btn btn-primary" data-new>New poster</button>` : "")}
     ${list.length ? html`<div class="poster-rail">${list.map((p) => html`<article class="card flat stack">
       <div class="ad-poster">${p.image_upload_id ? html`<img src="/media/${p.image_upload_id}" alt="">` : ""}<div class="meta"><h3>${p.title}</h3>${p.subtitle ? html`<span>${p.subtitle}</span>` : ""}</div></div>
-      <div class="row between"><span>${live(p) ? html`<span class="badge good">live</span>` : p.active ? html`<span class="badge warn">scheduled</span>` : html`<span class="badge">paused</span>`} <span class="badge plain">${p.placement === "events" ? "Event discovery" : "Home page"}</span></span><span class="small muted">${p.clicks} clicks</span></div>
+      <div class="row between"><span>${live(p) ? html`<span class="badge good">Live</span>` : p.active ? html`<span class="badge warn">Scheduled</span>` : html`<span class="badge">Paused</span>`} <span class="badge plain">${p.placement === "events" ? "Event discovery" : "Home page"}</span></span><span class="small muted">${p.clicks} clicks</span></div>
       <p class="small muted mb-0">${p.link_url || "No link"}${p.starts_at || p.ends_at ? html`<br>${p.starts_at ? fmtDate(p.starts_at) : "now"} – ${p.ends_at ? fmtDate(p.ends_at) : "no end"}` : ""}</p>
       ${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-edit="${p.id}">Edit</button><button class="btn btn-ghost btn-sm" data-toggle="${p.id}">${p.active ? "Pause" : "Activate"}</button><button class="btn btn-ghost btn-sm" data-del="${p.id}">Delete</button></div>` : ""}</article>`)}</div>`
       : empty("No posters yet. Create one for the home page or event discovery rail.")}`);
@@ -1005,7 +1014,7 @@ async function assistantPage() {
       <div class="kpi"><div class="k">Not answered</div><div class="v">${stats.unanswered}</div><div class="s">add articles for these</div></div>
       <div class="kpi"><div class="k">Helpful</div><div class="v">${stats.helpful}</div><div class="s">${stats.unhelpful} not helpful</div></div></div>
     <div class="chips mt">${[["kb", "Knowledge base"], ["log", "All conversations"], ["gaps", "Gaps & unhelpful"]].map(([k, l]) => html`<button class="chip" data-tab="${k}" aria-pressed="${tab === k}">${l}</button>`)}</div>
-    <div class="mt">${tab === "kb" ? tbl(["Question", "Answer", "Link", "Status", ""], articles.map((a) => html`<tr><td><strong>${a.question}</strong><div class="tiny muted">${(a.keywords || []).join(", ")}</div></td><td class="small">${a.answer.slice(0, 220)}${a.answer.length > 220 ? "…" : ""}</td><td class="small mono">${a.link_url || ""}</td><td>${a.active ? badge("active") : html`<span class="badge">off</span>`}</td>
+    <div class="mt">${tab === "kb" ? tbl(["Question", "Answer", "Link", "Status", ""], articles.map((a) => html`<tr><td><strong>${a.question}</strong><div class="tiny muted">${(a.keywords || []).join(", ")}</div></td><td class="small">${a.answer.slice(0, 220)}${a.answer.length > 220 ? "…" : ""}</td><td class="small mono">${a.link_url || ""}</td><td>${a.active ? badge("active") : html`<span class="badge">Off</span>`}</td>
         <td>${canEdit ? html`<button class="btn btn-ghost btn-sm" data-edit="${a.id}">Edit</button>` : ""}</td></tr>`))
       : tbl(["When", "Question", "Answer", "Source", "Feedback"], chats.map((c) => html`<tr><td class="small">${fmtDateTime(c.created_at)}</td><td><strong>${c.question}</strong>${c.matched ? html`<div class="tiny muted">matched: ${c.matched}</div>` : ""}</td><td class="small">${c.answer.slice(0, 240)}</td><td>${c.source}</td><td>${c.helpful === true ? "Helpful" : c.helpful === false ? "Not helpful" : ""}${canEdit && tab === "gaps" ? html` <button class="btn btn-ghost btn-sm" data-from="${c.id}">Answer it</button>` : ""}</td></tr>`))}</div>`);
   $$("[data-tab]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_as", b.dataset.tab); assistantPage(); }));
@@ -1033,7 +1042,7 @@ async function emailsPage() {
   const { emails, settings: st, delivery } = await get("/api/admin/emails");
   const ro = raw(isA() ? "" : "disabled");
   const groups = ["Attendee", "Everyone", "Organiser", "Subscriber", "Staff"];
-  const auto = (e) => e.setting ? (st[e.setting] ? html`<span class="badge good">automatic · on</span>` : html`<span class="badge">automatic · off</span>`) : html`<span class="badge info">sent when it happens</span>`;
+  const auto = (e) => e.setting ? (st[e.setting] ? html`<span class="badge good">Automatic · on</span>` : html`<span class="badge">Automatic · off</span>`) : html`<span class="badge info">Sent when it happens</span>`;
   render(main, html`${head("Email templates", "Every email TicketRoom sends. Each is sent as a branded HTML email with a plain-text version.")}
     ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Set up the mailbox under <a href="#/integrations">Integrations</a> → Email, then send yourself a test.</p>` : ""}
     <section class="card stack"><h2>Automatic emails</h2>
@@ -1148,17 +1157,17 @@ async function organiserDetail({ id }) {
   const redraw = () => organiserDetail({ id });
   const item = (it, eventId = "") => {
     const d = it.document;
-    return html`<li class="kyc-item"><div class="grow kyc-body"><div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${it.required ? "" : html`<span class="badge plain">not required</span>`}</div>
+    return html`<li class="kyc-item"><div class="grow kyc-body"><div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${it.required ? "" : html`<span class="badge plain">Not required</span>`}</div>
       <div class="tiny muted">${it.reason}</div>${it.detail ? html`<div class="tiny">${it.detail}</div>` : ""}${it.signed ? html`<div class="tiny">Signed by ${it.signed.name}, ${fmtDateTime(it.signed.at)} (${it.signed.version})</div>` : ""}
       ${it.rejectReason ? html`<div class="tiny">Not accepted: ${it.rejectReason}</div>` : ""}
       ${d && !d.deleted ? html`<div class="tiny muted">Uploaded ${fmtDateTime(d.uploadedAt)} · ${kb(d.sizeBytes)}${d.reviewedBy ? ` · checked by ${d.reviewedBy}` : ""}</div>${providerNote(d.provider, d.provider?.label, d.provider?.simulated)}` : ""}</div>
       ${d && !d.deleted ? html`<div class="row">${fileLink(d.id)}${d.status === "submitted" ? html`<button class="btn btn-good btn-sm" data-kyc-ok="${d.id}">Approve</button><button class="btn btn-ghost btn-sm" data-kyc-no="${d.id}">Reject</button>` : ""}</div>` : ""}</li>`;
   };
-  const gateLi = (g, label) => html`<li>${g.ok ? badge("approved") : html`<span class="badge bad">blocked</span>`} ${label}${g.missing.length ? html`<span class="tiny muted"> · needs ${g.missing.join(", ")}</span>` : ""}</li>`;
+  const gateLi = (g, label) => html`<li>${g.ok ? badge("approved") : html`<span class="badge bad">Blocked</span>`} ${label}${g.missing.length ? html`<span class="tiny muted"> · needs ${g.missing.join(", ")}</span>` : ""}</li>`;
   render(main, html`<div class="crumbs"><a href="#/organisers">Organiser accounts</a></div>${head(o.name, html`<span class="mono">${o.ref || ""}</span> · ${badge(o.status)} · verification ${badge(v.overall)}`)}
     ${v.provider.simulated ? html`<p class="callout warn small"><strong>Sandbox (simulated) identity checks are on.</strong> ${v.provider.rule}</p>` : ""}
     <div class="grid-2"><section class="card"><h2>Organisation</h2><dl class="dl"><dt>Contact</dt><dd>${o.contact_email}${o.contact_phone ? html`<br>${o.contact_phone}` : ""}</dd>
-        <dt>Owners</dt><dd>${owners.map((w) => html`<div>${w.full_name} · ${w.email} ${w.email_verified ? html`<span class="badge good">email verified</span>` : html`<span class="badge warn">email not verified</span>`}${w.phone ? html`<div class="tiny muted">${w.phone} (not verified: phone checks are not available yet)</div>` : ""}</div>`)}</dd>
+        <dt>Owners</dt><dd>${owners.map((w) => html`<div>${w.full_name} · ${w.email} ${w.email_verified ? html`<span class="badge good">Email verified</span>` : html`<span class="badge warn">Email not verified</span>`}${w.phone ? html`<div class="tiny muted">${w.phone} (not verified: phone checks are not available yet)</div>` : ""}</div>`)}</dd>
         <dt>Bank</dt><dd>${o.bank_account_last4 ? html`${o.bank_name} · ${o.bank_account_holder} · ••••${o.bank_account_last4} · branch ${o.bank_branch_code} ${isA() || isF() ? html`<button class="btn btn-link btn-sm" data-reveal-bank>Show account number</button>` : ""}` : "Not given"}</dd>
         <dt>Sells paid tickets</dt><dd>${v.sellsPaid ? "Yes" : "No (free events only)"}</dd></dl></section>
       <section class="card"><h2>Who they are</h2><dl class="dl"><dt>Kind</dt><dd>${v.entityNames[p.entityType]}</dd><dt>${p.entityType === "individual" ? "Name" : "Representative"}</dt><dd>${p.legalName || "Not given"}</dd>
@@ -1167,7 +1176,7 @@ async function organiserDetail({ id }) {
         ${p.entityType === "company" ? html`<dt>Is a director</dt><dd>${p.repIsDirector ? "Yes" : "No (needs a letter of authorisation)"}</dd>` : ""}
         <dt>Account closed</dt><dd>${p.closedAt ? html`${fmtDate(p.closedAt)}: documents are deleted ${v.retention.years} years later` : "No"}</dd></dl>
         <p class="tiny muted mb-0">Each "Show" is recorded in the audit log and shown to the organiser.</p></section></div>
-    <section class="card mt"><h2>What is unlocked</h2><ul class="small">${gateLi(v.gates.freePublish, "Free events can go live")}${gateLi(v.gates.paidPublish, "Paid events can go on sale")}${gateLi(v.gates.payouts, "Payouts")}</ul></section>
+    <section class="card mt"><h2>What this allows</h2><ul class="small">${gateLi(v.gates.freePublish, "Free events can go live")}${gateLi(v.gates.paidPublish, "Paid events can go on sale")}${gateLi(v.gates.payouts, "Payouts")}</ul></section>
     <section class="card mt"><h2>Checklist</h2><ul class="kyc-list">${v.requirements.map((it) => item(it))}</ul></section>
     ${v.electronic.on || checks.length ? html`<section class="card mt"><div class="card-title"><h2>Electronic checks (VerifyNow)</h2>${v.electronic.test ? html`<span class="badge warn">TEST (sandbox)</span>` : ""}</div>
       <p class="small ${v.electronic.consent.given ? "muted" : ""}">${v.electronic.consent.given ? `Permission given ${fmtDateTime(v.electronic.consent.at)} (${v.electronic.consent.version}).` : "The organiser has not given permission for the checks yet. They are asked when they submit an event."}</p>
@@ -1176,12 +1185,12 @@ async function organiserDetail({ id }) {
     <section class="card mt"><div class="card-title"><h2>Risk and event documents</h2></div>
       <form class="row" id="orisk"><label for="or-sel">Organiser risk</label><select id="or-sel" name="riskOverride" ${raw(isA() ? "" : "disabled")}>${RISK_OPTS.map(([k, l]) => html`<option value="${k}" ${raw((p.riskOverride || "auto") === k ? "selected" : "")}>${l}</option>`)}</select>
         <input name="note" class="grow" maxlength="300" placeholder="Why (kept in the audit log)" value="${p.riskNote || ""}" aria-label="Why" ${raw(isA() ? "" : "disabled")}>${isA() ? html`<button class="btn btn-ghost btn-sm">Save</button>` : ""}</form>
-      ${v.events.length ? v.events.map((e) => html`<div class="kyc-event"><div class="row between"><span><strong>${e.title}</strong> <span class="tiny muted mono">${e.ref || ""}</span> ${badge(e.status)} <span class="small muted">${fmtDate(e.startsAt)} · ${e.capacity} people${e.paid ? " · paid" : " · free"}</span></span>
-          <span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : html`<span class="badge good">standard</span>`}
+      ${v.events.length ? v.events.map((e) => html`<div class="kyc-event"><div class="row between"><span><strong>${e.title}</strong> <span class="tiny muted mono">${e.ref || ""}</span> ${badge(e.status)} <span class="small muted">${fmtDate(e.startsAt)} · ${plural(e.capacity, "person", "people")}${e.paid ? " · paid" : " · free"}</span></span>
+          <span>${e.risk.level === "high" ? html`<span class="badge bad">High risk</span>` : html`<span class="badge good">Standard</span>`}
           ${isA() ? html`<select data-ev-risk="${e.id}" aria-label="Risk for ${e.title}">${RISK_OPTS.map(([k, l]) => html`<option value="${k}" ${raw((e.risk.override || "auto") === k ? "selected" : "")}>${l}</option>`)}</select>` : ""}</span></div>
           ${e.risk.reasons.length ? html`<p class="tiny muted mb-0">${e.risk.reasons.join("; ")}</p>` : ""}
           ${e.requirements.length ? html`<ul class="kyc-list">${e.requirements.map((it) => item(it, e.id))}</ul>` : html`<p class="tiny muted mb-0">No event documents needed.</p>`}</div>`) : html`<p class="muted mb-0">No current events.</p>`}</section>
-    <section class="card mt"><h2>Documents held</h2>${tbl(["Document", "Status", "Uploaded", "#Size"], v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`), "No documents.")}
+    <section class="card mt"><h2>Documents held</h2>${tbl(["Document", "Status", "Uploaded", "#Size"], v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">Deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`), "No documents.")}
       <h3 class="mt">Who opened them</h3>${v.accessLog.length ? html`<ul class="small">${v.accessLog.map((x) => html`<li>${fmtDateTime(x.at)}: ${x.who}, ${x.action.toLowerCase()}</li>`)}</ul>` : html`<p class="small muted">Nobody yet.</p>`}
       ${isA() ? html`<div class="row mt">${p.closedAt ? html`<button class="btn btn-ghost btn-sm" data-close-org="reopen">Reopen (stop the deletion countdown)</button>` : html`<button class="btn btn-ghost btn-sm" data-close-org="close">Mark the account closed</button>`}<span class="tiny muted">Closing starts the ${v.retention.years}-year keeping period; documents are then deleted automatically.</span></div>` : ""}</section>`);
   kycDecideWire(main, redraw);
@@ -1220,16 +1229,16 @@ function integrationCard(i) {
   const field = (f) => f.options
     ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><select id="ig-${i.key}-${f.name}" name="${f.name}" ${raw(isA() ? "" : "disabled")}>${Object.entries(f.options).map(([v, l]) => html`<option value="${v}" ${raw(v === f.value ? "selected" : "")}>${l}</option>`)}</select>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
     : f.auto
-      ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><span class="label">${f.label}</span><p class="mb-0">${f.set ? html`<span class="badge good">connected</span>` : html`<span class="badge plain">not connected yet</span>`}</p>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
+      ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><span class="label">${f.label}</span><p class="mb-0">${f.set ? html`<span class="badge good">Connected</span>` : html`<span class="badge plain">Not connected yet</span>`}</p>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
     : f.file
-      ? html`<div class="field"><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">saved</span>` : html`<span class="badge plain">not set</span>`}</label>
+      ? html`<div class="field"><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">Saved</span>` : html`<span class="badge plain">Not set</span>`}</label>
           <input id="ig-${i.key}-${f.name}" type="file" accept="${f.file}" data-file="${f.name}" ${raw(isA() ? "" : "disabled")}><input type="hidden" name="${f.name}" value="">${f.hint ? html`<span class="hint">${f.hint}${f.set ? " Choose a new file only to replace the saved one." : ""}</span>` : ""}</div>`
     : f.secret
-      ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">saved</span>` : html`<span class="badge plain">not set</span>`}</label>
+      ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">Saved</span>` : html`<span class="badge plain">Not set</span>`}</label>
           ${writeOnly(`ig-${i.key}-${f.name}`, f.name, f.plain, f.set)}${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
       : html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><input id="ig-${i.key}-${f.name}" name="${f.name}" value="${f.value || ""}" placeholder="${f.placeholder || ""}" autocomplete="off" ${raw(isA() ? "" : "disabled")}>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`;
   return html`<section class="card stack integ" data-integ="${i.key}">
-    <div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.status === "active" ? "active" : "draft")}${i.status === "active" ? html` <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment}</span>` : html` <span class="badge plain">not set up</span>`}</span></div>
+    <div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.status === "active" ? "active" : "draft")}${i.status === "active" ? html` <span class="badge ${i.environment === "live" ? "good" : "warn"}">${sentence(i.environment)}</span>` : html` <span class="badge plain">Not set up</span>`}</span></div>
     <p class="muted mb-0">${INTEG_HELP[i.key] || ""}</p>
     ${i.key === "payments" && isA() && i.environment !== "live" ? html`<div class="callout small stack"><span><strong>Want to try payments now?</strong> The TicketRoom sandbox needs no provider account: buyers see a practice payment page and choose whether it goes through. PayFast's shared test account sends you through PayFast's own sandbox instead. Either way no real money moves and every ticket is marked TEST. Switch to your own keys and Live when you're ready.</span>
       <div class="row"><button type="button" class="btn btn-primary btn-sm" data-sandbox="ticketroom">Use the TicketRoom sandbox</button><button type="button" class="btn btn-ghost btn-sm" data-sandbox="payfast">Use PayFast's test account</button></div></div>` : ""}
@@ -1240,7 +1249,7 @@ function integrationCard(i) {
     ${i.key === "verifynow" && i.problem ? html`<p class="callout bad small mb-0"><strong>Problem:</strong> ${i.problem}</p>` : ""}
     ${i.key === "verifynow" ? html`<p class="small mb-0" data-vn-credits>Credits: ${i.credits && i.credits.credits != null ? html`<strong>${i.credits.credits}</strong> <span class="tiny muted">(at ${fmtDateTime(i.credits.at)})</span>` : "press Test connection to see the balance"}.${i.running ? ` ${i.running} check${i.running === 1 ? "" : "s"} running.` : ""}${i.waiting ? html` <a href="#/verification">${i.waiting} check${i.waiting === 1 ? "" : "s"} waiting for a person</a>.` : ""}</p>
       <p class="small mb-0">Bank check results arrive at <span class="mono">${i.notifyUrl}</span>, signed with the secret TicketRoom made. Nothing to set up in VerifyNow: the address is sent with each check.</p>` : ""}
-    ${i.key === "wallet" ? html`<p class="small mb-0">Apple Wallet: ${i.apple ? html`<span class="badge good">ready</span>` : html`<span class="badge plain">not set up</span>`} · Google Wallet: ${i.google ? html`<span class="badge good">ready</span>` : html`<span class="badge plain">not set up</span>`}${i.webServiceUrl ? html`. Apple Wallet asks for updates at <span class="mono">${i.webServiceUrl}</span>` : ""}</p>` : ""}
+    ${i.key === "wallet" ? html`<p class="small mb-0">Apple Wallet: ${i.apple ? html`<span class="badge good">Ready</span>` : html`<span class="badge plain">Not set up</span>`} · Google Wallet: ${i.google ? html`<span class="badge good">Ready</span>` : html`<span class="badge plain">Not set up</span>`}${i.webServiceUrl ? html`. Apple Wallet asks for updates at <span class="mono">${i.webServiceUrl}</span>` : ""}</p>` : ""}
     ${i.redirectUrl ? html`<p class="small mb-0">In Google Cloud, create an OAuth client ID (Web application) and add this under Authorised redirect URIs: <span class="mono">${i.redirectUrl}</span></p>` : ""}
     ${i.key === "payouts" && i.provider === "peach" ? html`<p class="callout warn small mb-0"><strong>Sandbox and production are separate.</strong> Sandbox lets finance submit test payouts against Peach’s sandbox after approval; these never settle or reduce real organiser balances. Production transfers are irreversible, must be pre-funded, and require careful beneficiary checks. Configure this URL in Peach’s Payouts webhook settings and request a source-of-funds review before your first live payout.</p>` : ""}
     ${i.notifyUrl && i.key !== "verifynow" ? html`<p class="small mb-0">${i.key === "payouts" ? "Payout status webhook:" : "Payment notifications arrive at"} <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : i.provider === "peach" && i.key === "payments" ? " Configure this URL on your Peach Checkout profile and add the custom header X-TicketRoom-Peach-Secret using the saved webhook secret." : i.provider === "peach" ? " Configure this endpoint in Peach Payouts and provide the signing secret from Peach." : ". PayFast is told this address with every payment."}</p>` : ""}
@@ -1258,9 +1267,9 @@ async function integrations() {
   const editable = d.integrations.every((i) => i.fields);
   render(main, html`${head("Integrations", editable ? "Set up email, card payments, SMS and identity checks yourself. Keys, passwords and usernames are stored encrypted and are never shown again: you only see whether each one is saved." : "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
     <p class="callout small">Current standard: ${moneyExact(d.defaults.bookingFeeCents)} service fee per paid ticket${d.defaults.bookingFeeBps ? ` + ${d.defaults.bookingFeeBps / 100}%` : ""}. Organisers can cover the service fee or have customers pay it. Commission is ${d.defaults.organiserCommissionBps / 100}% + ${moneyExact(d.defaults.organiserCommissionFixedCents)} per paid ticket (percentage override per organiser under Organisers). Free events pay nothing.</p>
-    <div class="stack">${d.integrations.map((i) => i.fields ? integrationCard(i) : html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "–"}</span></span></div>
+    <div class="stack">${d.integrations.map((i) => i.fields ? integrationCard(i) : html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${sentence(i.environment) || "Not set"}</span></span></div>
       <dl class="dl"><dt>Provider</dt><dd>${i.provider}</dd><dt>Endpoint</dt><dd class="mono small">${i.endpoint || "–"}</dd>${i.webhookUrl ? html`<dt>Webhook URL</dt><dd class="mono small">${i.webhookUrl}</dd>` : ""}
-        ${Object.entries(i.credentials || {}).map(([k, v]) => html`<dt>${k}</dt><dd>${v === "set" ? html`<span class="badge good">set</span>` : html`<span class="badge bad">missing</span>`}</dd>`)}
+        ${Object.entries(i.credentials || {}).map(([k, v]) => html`<dt>${k}</dt><dd>${v === "set" ? html`<span class="badge good">Set</span>` : html`<span class="badge bad">Missing</span>`}</dd>`)}
         <dt>Last 24h</dt><dd>${i.calls || 0} calls, ${i.failures || 0} failures${i.avg_ms ? `, avg ${i.avg_ms} ms` : ""}${i.problems ? html` · <span class="badge bad">${i.problems} webhook problems</span>` : ""}</dd></dl>
       ${isA() ? html`<div><button class="btn btn-ghost btn-sm" data-health="${i.key}">Run health check</button></div>` : ""}</section>`)}</div>`);
   // Write-only boxes open for typing only when tapped, so browsers never fill saved logins into them.
@@ -1366,7 +1375,7 @@ function teForm(open) {
 }
 async function testEventPage() {
   const { events: list, keepDays } = await get("/api/admin/test-events");
-  render(main, html`${head("Test event", "Try the whole free-event journey on the real site. Only people with the private link can open a test event: it is never listed on the website, it is left out of every report, and it is deleted with all its bookings when you're done.")}
+  render(main, html`${head("Test event", "Book, receive and scan a free test ticket on the real site, from checkout to the gate. Only people with the private link can open a test event: it is never listed on the website, it is left out of every report, and it is deleted with all its bookings when you're done.")}
     <section class="card stack"><h2>How to try it</h2><ol class="small mb-0">
       <li>Create a test event below, then open its private link on your phone (scan the QR code with the phone camera).</li>
       <li>Book free tickets signed in as a customer, and once more as a guest. Check the email, My tickets, Save ticket image and Transfer.</li>

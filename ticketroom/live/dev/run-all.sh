@@ -28,6 +28,9 @@ echo "== smoke.js"
 TR_STRICT="${TR_STRICT:-0}" node "$HERE/smoke.js" "$DIR" "$PORT" || failed+=("smoke.js")
 for t in "$HERE"/tests/*.js; do
   [ -e "$t" ] || continue
+  # Every suite signs in from the same address; start each one with empty
+  # rate-limit counters so one suite's sign-ins do not throttle the next.
+  php -r '$db = new PDO("sqlite:" . $argv[1]); $db->exec("DELETE FROM rate_limits");' "$DIR/ticketroom-data/ticketroom.sqlite" || true
   echo "== tests/$(basename "$t")"
   node "$t" "$DIR" "$PORT" || failed+=("tests/$(basename "$t")")
 done

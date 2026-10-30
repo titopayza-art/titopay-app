@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 
@@ -77,14 +77,15 @@ function setupChecklist(events) {
 
 // ---------------- dashboard ----------------
 async function dashboard() {
-  const d = await get(`${base()}/dashboard`);
+  const [d, u] = await Promise.all([get(`${base()}/dashboard`), me()]);
   const t = d.totals;
+  const firstName = String(u?.full_name || "").trim().split(/\s+/)[0];
   const upcoming = d.events.filter((e) => new Date(e.starts_at) > new Date()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-  render(main, html`${head(`Hi, ${ORG.name}`, html`Here's how your events are selling.${ORG.ref ? html` <span class="small">Organiser ID <span class="mono">${ORG.ref}</span></span>` : ""}`, can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}
+  render(main, html`${head(firstName ? `Hi, ${firstName}` : "Dashboard", html`Here's how ${ORG.name} is selling.${ORG.ref ? html` <span class="small">Organiser ID <span class="mono">${ORG.ref}</span></span>` : ""}`, can("owner", "manager") ? html`<a class="btn btn-primary side-dup" href="#/events/new">Create event</a>` : "")}
     ${pendingBanner()}${verifBanner()}${setupChecklist(d.events)}
-    <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
+    <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${moneyExact(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold.toLocaleString("en-ZA")}</div><div class="s">across ${t.events} event${t.events === 1 ? "" : "s"}</div></div>
-      <div class="kpi"><div class="k">Last 7 days</div><div class="v">${money(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} order${t.last7Orders === 1 ? "" : "s"}</div></div>
+      <div class="kpi"><div class="k">Last 7 days</div><div class="v">${moneyExact(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} order${t.last7Orders === 1 ? "" : "s"}</div></div>
       <div class="kpi"><div class="k">Live events</div><div class="v">${t.live}</div><div class="s">published & upcoming</div></div></div>
     <section class="card mt"><div class="card-title"><h2>Upcoming events</h2><a href="#/events">All events</a></div>
       ${upcoming.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
@@ -113,7 +114,7 @@ function eventForm(e = {}, submitLabel = "") {
     <div class="field"><label for="serviceFeePayer">Who pays the service fee?</label><select id="serviceFeePayer" name="serviceFeePayer"><option value="customer" ${sel("customer", e.service_fee_payer || "customer")}>Customer pays at checkout</option><option value="organiser" ${sel("organiser", e.service_fee_payer || "customer")}>I cover it from my proceeds</option></select><span class="hint">The current service fee is set by TicketRoom. This setting applies to your event's ticket sales; resale fees are shown separately. Free tickets are not charged a service fee.</span></div>
     <div class="field"><label for="title">Event name</label><input id="title" name="title" required maxlength="140" value="${e.title || ""}"></div>
     <div class="field"><label for="summary">One-line summary</label><input id="summary" name="summary" maxlength="240" value="${e.summary || ""}" placeholder="Shown on event cards"></div>
-    <div class="grid-2"><div class="field"><label for="category">Category</label><select id="category" name="category">${CATS.map((c) => html`<option value="${c}" ${sel(c, e.category)}>${c}</option>`)}</select></div>
+    <div class="grid-2"><div class="field"><label for="category">Category</label><select id="category" name="category">${CATS.map((c) => html`<option value="${c}" ${sel(c, e.category)}>${categoryLabel(c)}</option>`)}</select></div>
       <div class="field"><label for="capacity">Total capacity</label><input id="capacity" name="capacity" type="number" min="1" required value="${e.capacity || ""}"></div></div>
     <div class="grid-2"><div class="field"><label for="startsAt">Starts</label><input id="startsAt" name="startsAt" type="datetime-local" required value="${toLocalInput(e.starts_at)}"></div>
       <div class="field"><label for="endsAt">Ends</label><input id="endsAt" name="endsAt" type="datetime-local" required value="${toLocalInput(e.ends_at)}"></div></div>
@@ -125,7 +126,7 @@ function eventForm(e = {}, submitLabel = "") {
         <div class="field"><label for="province">Province <span class="muted">(optional)</span></label><select id="province" name="province" autocomplete="address-level1"><option value="">Choose province</option>${PROVINCES.map((p) => html`<option ${sel(p, e.province)}>${p}</option>`)}</select></div></div>
     </section>
     <div class="field"><label for="description">Description</label><textarea id="description" name="description" maxlength="8000">${e.description || ""}</textarea></div>
-    <div class="field"><label for="lineup">Line up <span class="muted">(optional)</span></label><textarea id="lineup" name="lineup" maxlength="4000" rows="4" placeholder="${"20:00 Black Coffee\n21:30 Sjava\nDJ Maphorisa"}">${lineupText(e.lineup)}</textarea>
+    <div class="field"><label for="lineup">Line up <span class="muted">(optional)</span></label><textarea id="lineup" name="lineup" maxlength="4000" rows="4" placeholder="${"20:00 Headline act\n21:30 Support act\nResident DJ"}">${lineupText(e.lineup)}</textarea>
       <span class="hint">One act per line, headliner first. Start a line with a time to show set times. Shown in the Line up tab and in Trending artists.</span></div>
     <div class="field"><label for="img">Poster image</label><input id="img" type="file" accept="image/png,image/jpeg,image/webp"><input type="hidden" name="imageUploadId" value="${e.image_upload_id || ""}"><span class="hint">PNG, JPEG or WebP, up to 2 MB. 16:9 works best.</span></div>
     <div class="grid-2"><div class="field"><label for="salesStartAt">Sales open <span class="muted">(optional)</span></label><input id="salesStartAt" name="salesStartAt" type="datetime-local" value="${toLocalInput(e.sales_start_at)}"></div>
@@ -343,9 +344,9 @@ async function overviewTab(el, d) {
   const checkPct = a.checkins.issued ? Math.round((a.checkins.admitted / a.checkins.issued) * 100) : 0;
   render(el, html`<div class="kpis">
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold}</div><div class="s">of ${t.capacity} capacity</div><div class="meter amber mt"><i data-pct="${(t.ticketsSold / t.capacity) * 100}"></i></div></div>
-      <div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.ticket_revenue_cents)}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"}${t.refunded_cents ? ` · refunds ${money(t.refunded_cents)}` : ""}</div></div>
+      <div class="kpi"><div class="k">Ticket revenue</div><div class="v">${moneyExact(t.ticket_revenue_cents)}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"}${t.refunded_cents ? ` · refunds ${moneyExact(t.refunded_cents)}` : ""}</div></div>
       <div class="kpi"><div class="k">Checked in</div><div class="v">${a.checkins.admitted}</div><div class="s">${checkPct}% of ${a.checkins.issued} issued</div></div>
-      <div class="kpi"><div class="k">Owed to you</div><div class="v">${money(t.payableCents)}</div><div class="s">${t.abandoned} abandoned checkouts</div></div></div>
+      <div class="kpi"><div class="k">Owed to you</div><div class="v">${moneyExact(t.payableCents)}</div><div class="s">${t.abandoned} abandoned checkouts</div></div></div>
     <details class="card mt"><summary><strong>Event operations</strong><span class="small muted"> · staff, tills, inventory and open issues</span></summary>
       <div class="grid-2 mt">
         <div class="stack"><h3 class="mb-0">People and equipment</h3>
@@ -372,7 +373,7 @@ async function overviewTab(el, d) {
         ${a.trackingLinks.map((l) => html`<tr><td>${l.label}<div class="tiny muted mono">${l.code}</div></td><td class="num">${l.clicks}</td><td class="num">${l.orders}</td><td class="num">${moneyExact(l.revenue_cents)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">Create tracking links under Promos & links to see which channels sell.</p>`}</section>
       <section class="card"><h3>Check-ins by hour</h3>${a.checkinsByHour.length ? barChart(a.checkinsByHour, { label: (x) => x.hour.slice(0, 2), value: (x) => x.n, title: "Check-ins by hour", height: 150 }) : html`<p class="muted">No scans yet. Gate staff use the Scanner on their phones.</p>`}</section>
       <section class="card"><h3>Promo codes</h3>${a.promoCodes.length ? html`<div class="table-wrap"><table><thead><tr><th>Code</th><th class="num">Used</th><th class="num">Discount given</th></tr></thead><tbody>${a.promoCodes.map((p) => html`<tr><td class="mono">${p.code}</td><td class="num">${p.used_count}${p.max_uses ? `/${p.max_uses}` : ""}</td><td class="num">${moneyExact(p.discount_given_cents)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No promo codes.</p>`}</section>
-      ${d.event.cashless_enabled ? html`<section class="card"><h3>Cashless</h3><p>${money(a.cashless.topups_cents)} topped up by ${a.cashless.wallets} attendees.</p>${a.vendors.length ? html`<div class="table-wrap"><table><thead><tr><th>Vendor</th><th class="num">Sales</th><th class="num">Gross</th></tr></thead><tbody>${a.vendors.map((v) => html`<tr><td>${v.name}</td><td class="num">${v.sales}</td><td class="num">${moneyExact(v.gross_cents)}</td></tr>`)}</tbody></table></div>` : ""}</section>` : ""}
+      ${d.event.cashless_enabled ? html`<section class="card"><h3>Cashless</h3><p>${moneyExact(a.cashless.topups_cents)} topped up by ${a.cashless.wallets} attendees.</p>${a.vendors.length ? html`<div class="table-wrap"><table><thead><tr><th>Vendor</th><th class="num">Sales</th><th class="num">Gross</th></tr></thead><tbody>${a.vendors.map((v) => html`<tr><td>${v.name}</td><td class="num">${v.sales}</td><td class="num">${moneyExact(v.gross_cents)}</td></tr>`)}</tbody></table></div>` : ""}</section>` : ""}
     </div>`);
   paintMeters(el);
   $("[data-tbl]", el).addEventListener("click", (ev) => { const t2 = $("#dtbl"); t2.classList.toggle("hidden"); ev.target.textContent = t2.classList.contains("hidden") ? "Show as table" : "Hide table"; });
@@ -511,7 +512,7 @@ async function ordersTab(el, d) {
     const { orders } = await get(`${base()}/events/${d.event.id}/orders?q=${encodeURIComponent(q)}`);
     render($("#olist", el), orders.length ? html`<div class="table-wrap"><table><thead><tr><th>Order</th><th>Buyer</th><th>Tickets</th><th class="num">Total</th><th>Payment / receipt</th><th>Status</th><th>Date</th><th></th></tr></thead><tbody>
       ${orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.buyer_name}<div class="small muted">${o.buyer_email}</div></td><td>${o.tickets}</td><td class="num">${moneyExact(o.total_cents)}${o.refunded_cents ? html`<div class="tiny muted">−${moneyExact(o.refunded_cents)}</div>` : ""}</td>
-        <td>${o.payment_method || "—"}${o.door_receipt ? html`<div class="tiny muted">Receipt ${o.door_receipt}</div>` : ""}${o.terminal_reference ? html`<div class="tiny muted">Ref ${o.terminal_reference}</div>` : ""}</td>
+        <td>${o.payment_method || "Not recorded"}${o.door_receipt ? html`<div class="tiny muted">Receipt ${o.door_receipt}</div>` : ""}${o.terminal_reference ? html`<div class="tiny muted">Ref ${o.terminal_reference}</div>` : ""}</td>
         <td>${badge(o.status)}${o.refund_status ? html`<div class="tiny">refund ${o.refund_status}</div>` : ""}</td><td>${fmtDate(o.created_at)}</td>
         <td>${can("owner", "finance") && ["paid", "partially_refunded"].includes(o.status) && o.total_cents > 0 ? html`<button class="btn btn-ghost btn-sm" data-refund="${o.id}" data-ref="${o.reference}">Refund</button>` : ""}</td></tr>`)}</tbody></table></div>` : empty("No orders yet."));
     $$("[data-refund]", el).forEach((b) => b.addEventListener("click", () => {
@@ -573,7 +574,7 @@ async function staffTab(el, d, reload) {
     try {
       const x = await get(`${base()}/events/${d.event.id}/checkins/live`);
       const pct = x.issued ? Math.round((x.admitted / x.issued) * 100) : 0;
-      render(live, html`<div class="grid-3"><div class="kpi"><div class="k">Admitted</div><div class="v">${x.admitted}</div><div class="s">of ${x.issued} tickets (${pct}%)</div></div>
+      render(live, html`<div class="grid-3"><div class="kpi"><div class="k">Admitted</div><div class="v">${x.admitted}</div><div class="s">of ${plural(x.issued, "ticket")} (${pct}%)</div></div>
         <div class="kpi"><div class="k">Still to arrive</div><div class="v">${Math.max(0, x.issued - x.admitted)}</div><div class="s">valid tickets not yet scanned</div></div>
         <div class="kpi"><div class="k">Last 15 minutes</div><div class="v">${x.last15min}</div><div class="s">people admitted</div></div></div>
         <div class="meter mt" aria-hidden="true"><i data-pct="${pct}"></i></div>
@@ -749,7 +750,7 @@ async function detailsTab(el, d, reload) {
   const history = (d.eventChangeRequests || []).filter((r) => r.status !== "pending").slice(0, 5);
   const fields = { title: "Event name", summary: "Summary", description: "Description", category: "Category", venueName: "Venue", address: "Street address", city: "City", province: "Province", startsAt: "Starts", endsAt: "Ends", capacity: "Capacity", salesStartAt: "Sales open", salesEndAt: "Sales close", doorsOpenAt: "Doors open", parkRideInfo: "Park and ride details", parkRideUrl: "Park and ride link", prohibitedItems: "Prohibited items", ticketGroups: "Ticket groups", refundPolicy: "Refund policy", accessibilityInfo: "Accessibility", ageRestriction: "Age restriction", transfersEnabled: "Ticket transfers", resaleEnabled: "Fan resale", cashlessEnabled: "Cashless", isFree: "Free event", serviceFeePayer: "Service fee payer", ageGroups: "Audience", lineup: "Line-up", presaleQueueEnabled: "Presale queue", imageUploadId: "Poster image" };
   const changeValue = (v) => typeof v === "string" ? v : JSON.stringify(v);
-  const changesList = (r) => html`<ul class="small">${Object.entries(r.changes?.event || {}).map(([k, v]) => html`<li><strong>${fields[k] || k}:</strong> ${changeValue(r.before?.event?.[k]) || "—"} → ${changeValue(v) || "—"}</li>`)}${r.changes?.ticketType ? html`<li><strong>${r.changes.ticketType.id ? "Ticket type" : "New ticket type"}:</strong> ${Object.entries(r.changes.ticketType.changes || {}).map(([k, v]) => `${k}: ${changeValue(r.before?.ticketType?.fields?.[k]) || "—"} → ${changeValue(v)}`).join(" · ")}</li>` : ""}</ul>`;
+  const changesList = (r) => html`<ul class="small">${Object.entries(r.changes?.event || {}).map(([k, v]) => html`<li><strong>${fields[k] || k}:</strong> ${changeValue(r.before?.event?.[k]) || "none"} → ${changeValue(v) || "none"}</li>`)}${r.changes?.ticketType ? html`<li><strong>${r.changes.ticketType.id ? "Ticket type" : "New ticket type"}:</strong> ${Object.entries(r.changes.ticketType.changes || {}).map(([k, v]) => `${k}: ${changeValue(r.before?.ticketType?.fields?.[k]) || "none"} → ${changeValue(v)}`).join(" · ")}</li>` : ""}</ul>`;
   render(el, html`${reviewRequired && pending ? html`<section class="card stack"><div class="row between"><h3 class="mb-0">Change request awaiting review</h3>${badge("pending")}</div><p class="mb-0">${pending.request_reason}</p>${changesList(pending)}<p class="small muted mb-0">The live event remains unchanged until an admin completes the review.</p><button class="btn btn-ghost btn-sm" data-withdraw>Withdraw request</button></section>` : ""}
     ${reviewRequired && !pending ? html`<div class="card stack"><p class="callout mb-0">Changes to this live event are reviewed by TicketRoom before they appear publicly. We check the event details, ticket inventory, buyer impact and compliance. If a date or venue changes after tickets have been issued, holders are emailed after approval.</p><div class="field"><label for="event-change-reason">Why do these changes need to be made?</label><textarea id="event-change-reason" required minlength="10" maxlength="1000" rows="3" placeholder="Explain the change and give relevant supporting details for the admin review."></textarea></div>${eventForm(d.event, "Submit changes for admin review")}</div>` : ""}
     ${!reviewRequired ? html`<div class="card">${eventForm(d.event, "Save changes")}</div>` : ""}
@@ -827,8 +828,8 @@ function campaignDialog(c, evs, done, opts = {}) {
       <div class="row mt"><button class="btn btn-ghost btn-sm" data-test>Send test to me</button><label class="sr-only" for="sat">Schedule for</label><input type="datetime-local" id="sat" class="grow"><button class="btn btn-ghost btn-sm" data-sched>Schedule</button><button class="btn btn-primary btn-sm" data-send>Send now</button></div></div>`);
     $("[data-test]", dlg).addEventListener("click", async () => { try { const r = await post(`${base()}/campaigns/${current.id}/test`); toast(`Test queued to ${r.sentTo}.`, "good"); } catch (err) { toast(err.message, "bad"); } });
     $("[data-send]", dlg).addEventListener("click", async () => {
-      if (!(await confirmDialog("Send campaign?", `This sends to ${p.recipients} people now. It can't be recalled.`, { confirm: "Send now" }))) return;
-      try { const r = await post(`${base()}/campaigns/${current.id}/send`, {}); toast(`Sent to ${r.campaign.recipients_count} recipients.`, "good"); dlg.close(); } catch (err) { toast(err.message, "bad"); }
+      if (!(await confirmDialog("Send campaign?", `This sends to ${plural(p.recipients, "person", "people")} now. It can't be recalled.`, { confirm: "Send now" }))) return;
+      try { const r = await post(`${base()}/campaigns/${current.id}/send`, {}); toast(`Sent to ${plural(r.campaign.recipients_count, "recipient")}.`, "good"); dlg.close(); } catch (err) { toast(err.message, "bad"); }
     });
     $("[data-sched]", dlg).addEventListener("click", async () => {
       const at = $("#sat", dlg).value; if (!at) return toast("Pick a date and time.", "bad");
@@ -970,7 +971,7 @@ function promoteStats(el, d, r) {
     <div class="kpis"><div class="kpi"><div class="k">Messages sent</div><div class="v">${(t.emailsSent + t.smsSent).toLocaleString("en-ZA")}</div><div class="s">${t.campaignsSent} campaign${t.campaignsSent === 1 ? "" : "s"} · ${t.emailsSent} email${r.sms.ready ? `, ${t.smsSent} SMS` : ""}</div></div>
       <div class="kpi"><div class="k">Clicks</div><div class="v">${t.clicks.toLocaleString("en-ZA")}</div><div class="s">on campaign links</div></div>
       <div class="kpi"><div class="k">Tickets</div><div class="v">${t.tickets.toLocaleString("en-ZA")}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"} through campaign links</div></div>
-      <div class="kpi"><div class="k">Revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">ticket sales through campaign links</div></div></div>
+      <div class="kpi"><div class="k">Revenue</div><div class="v">${moneyExact(t.revenueCents)}</div><div class="s">ticket sales through campaign links</div></div></div>
     <p class="tiny muted mt mb-0">Opens are not tracked: TicketRoom doesn't hide tracking pixels in emails. Clicks count each time someone opens a campaign link.${t.testOrders ? ` ${t.testOrders} test order${t.testOrders === 1 ? "" : "s"} came through campaign links and ${t.testOrders === 1 ? "is" : "are"} left out of these figures.` : ""}${t.notDelivered ? ` ${t.notDelivered} message${t.notDelivered === 1 ? " was" : "s were"} not delivered (unsubscribed or bounced).` : ""}</p>
     <div class="grid-2 mt"><div><h4 class="small">Messages sent per day</h4><div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.messages, title: "Messages sent per day, last 30 days", tickEvery: 5, height: 150 })}</div></div>
       <div><h4 class="small">Tickets per day</h4><div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.allTickets, title: "Tickets sold per day for this event, last 30 days", tickEvery: 5, height: 150 })}</div><p class="tiny muted mb-0">All sales for the event. ${a.daily.reduce((s, x) => s + x.campaignTickets, 0)} of them in this period came through campaign links.</p></div></div>
@@ -991,10 +992,10 @@ async function promoteHome() {
     ${pendingBanner()}
     <section class="promote-offer mb"><div class="promote-pitch"><span class="tk-label">One event, one price</span><h2>Everything included until your event ends</h2>
       <ul class="promote-ticks">${PROMOTE_INCLUDES(FEATURES.sms).map(([t]) => html`<li>${t}</li>`)}</ul></div>
-      <div class="promote-price"><div class="promote-amount">${moneyExact(priceCents).replace(/\.00$/, "")}</div><div class="small">once off per event</div><p class="tiny mb-0">Pick an event below to see what's included and buy.</p></div></section>
+      <div class="promote-price"><div class="promote-amount">${moneyExact(priceCents)}</div><div class="small">once off per event</div><p class="tiny mb-0">Pick an event below to see what's included and buy.</p></div></section>
     <section class="card"><h2>Your events</h2>${open.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Promote</th><th></th></tr></thead><tbody>
       ${open.map((e) => { const p = byEvent[e.id]; return html`<tr><td><a href="#/events/${e.id}/promote"><strong>${e.title}</strong></a></td><td>${fmtDate(e.starts_at)}</td>
-        <td>${p ? html`${badge("active")}${p.test ? html` <span class="badge amber">TEST</span>` : ""}<div class="tiny muted">until ${fmtDate(p.ends_at)}</div>` : html`<span class="badge plain">not promoted</span>`}</td>
+        <td>${p ? html`${badge("active")}${p.test ? html` <span class="badge amber">TEST</span>` : ""}<div class="tiny muted">until ${fmtDate(p.ends_at)}</div>` : html`<span class="badge plain">Not promoted</span>`}</td>
         <td><a class="btn ${p ? "btn-ghost" : "btn-primary"} btn-sm" href="#/events/${e.id}/promote">${p ? "Campaigns & results" : "Promote this event"}</a></td></tr>`; })}</tbody></table></div>`
       : empty("No events to promote yet. An event can be promoted once it is published or waiting to be published.", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}</section>`);
 }
@@ -1014,16 +1015,16 @@ async function finance() {
   if (!can("owner", "finance", "manager")) return render(main, html`${head("Finance")}<p class="muted">Your role can't view finance.</p>`);
   const f = await get(`${base()}/finance`);
   render(main, html`${head("Finance & payouts", `Revenue becomes available ${ORG.payoutHoldDays} day${ORG.payoutHoldDays === 1 ? "" : "s"} after each event ends, less refunds in progress.`)}
-    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${money(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts${f.promoteFromBalanceCents ? ` and ${money(f.promoteFromBalanceCents)} for Promote` : ""}</div></div>
-      <div class="kpi"><div class="k">Available now</div><div class="v">${money(f.availableCents)}</div><div class="s">can be paid out</div></div>
-      <div class="kpi"><div class="k">Payouts in progress</div><div class="v">${money(f.inFlightCents)}</div><div class="s">awaiting approval / transfer</div></div>
-      <div class="kpi"><div class="k">Refunds pending</div><div class="v">${money(f.pendingRefundsCents)}</div><div class="s">held back from payouts</div></div></div>
+    <div class="kpis"><div class="kpi"><div class="k">Total owed to you</div><div class="v">${moneyExact(f.totalCents)}</div><div class="s">ticket revenue less refunds & payouts${f.promoteFromBalanceCents ? ` and ${moneyExact(f.promoteFromBalanceCents)} for Promote` : ""}</div></div>
+      <div class="kpi"><div class="k">Available now</div><div class="v">${moneyExact(f.availableCents)}</div><div class="s">can be paid out</div></div>
+      <div class="kpi"><div class="k">Payouts in progress</div><div class="v">${moneyExact(f.inFlightCents)}</div><div class="s">awaiting approval / transfer</div></div>
+      <div class="kpi"><div class="k">Refunds pending</div><div class="v">${moneyExact(f.pendingRefundsCents)}</div><div class="s">held back from payouts</div></div></div>
     <div class="grid-2 mt"><section class="card"><h2>Request a payout</h2>
       ${!ORG.bank?.last4 ? html`<p class="callout warn">Add your bank details in Settings first.</p>` : html`<p class="small muted">Paid by EFT to ${ORG.bank.bankName} ••••${ORG.bank.last4} after TicketRoom finance approves it.</p>`}
       ${VERIF && !VERIF.gates.payouts.ok ? html`<p class="callout warn small">Payouts are blocked until your bank account is verified. Still needed: ${VERIF.gates.payouts.missing.join(", ")}. <a href="#/verification">Go to Verification</a></p>` : ""}
-      ${can("owner", "finance") ? html`<form class="stack" id="po"><div class="field"><label for="pa">Amount (R)</label><input id="pa" name="amount" inputmode="decimal" required value="${f.availableCents ? (f.availableCents / 100).toFixed(2) : ""}"><span class="hint">Minimum R100.</span></div><button class="btn btn-primary" ${raw(!f.availableCents || !ORG.bank?.last4 ? "disabled" : "")}>Request payout</button></form>` : html`<p class="muted">Only owners and finance members can request payouts.</p>`}</section>
+      ${can("owner", "finance") ? html`<form class="stack" id="po"><div class="field"><label for="pa">Amount (R)</label><input id="pa" name="amount" inputmode="decimal" required value="${f.availableCents ? (f.availableCents / 100).toFixed(2) : ""}"><span class="hint">Minimum R100.00.</span></div><button class="btn btn-primary" ${raw(!f.availableCents || !ORG.bank?.last4 ? "disabled" : "")}>Request payout</button></form>` : html`<p class="muted">Only owners and finance members can request payouts.</p>`}</section>
       <section class="card"><h2>By event</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Ends</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>
-        ${f.events.map((e) => html`<tr><td>${e.title}${e.desk_cash_cents || e.desk_card_cents ? html`<div class="tiny muted">Wristband top-ups collected at your desks: ${moneyExact(e.desk_cash_cents)} cash, ${moneyExact(e.desk_card_cents)} card.</div>` : ""}${e.door_cash_cents || e.door_card_cents ? html`<div class="tiny muted">Door ticket takings already collected: ${moneyExact(e.door_cash_cents)} cash, ${moneyExact(e.door_card_cents)} card / QR. These reduce TicketRoom's settlement. ${e.door_fees_due_cents ? `${moneyExact(e.door_fees_due_cents)} is due to TicketRoom and will be offset against future settlements.` : "No extra amount is currently due."}</div>` : ""}</td><td>${fmtDate(e.ends_at)}</td><td class="num">${moneyExact(e.balance_cents)}</td><td>${e.releasable ? badge("available") : e.status === "cancelled" ? badge("cancelled") : html`<span class="badge plain">on hold</span>`}</td></tr>`)}</tbody></table></div></section></div>
+        ${f.events.map((e) => html`<tr><td>${e.title}${e.desk_cash_cents || e.desk_card_cents ? html`<div class="tiny muted">Wristband top-ups collected at your desks: ${moneyExact(e.desk_cash_cents)} cash, ${moneyExact(e.desk_card_cents)} card.</div>` : ""}${e.door_cash_cents || e.door_card_cents ? html`<div class="tiny muted">Door ticket takings already collected: ${moneyExact(e.door_cash_cents)} cash, ${moneyExact(e.door_card_cents)} card / QR. These reduce TicketRoom's settlement. ${e.door_fees_due_cents ? `${moneyExact(e.door_fees_due_cents)} is due to TicketRoom and will be offset against future settlements.` : "No extra amount is currently due."}</div>` : ""}</td><td>${fmtDate(e.ends_at)}</td><td class="num">${moneyExact(e.balance_cents)}</td><td>${e.releasable ? badge("available") : e.status === "cancelled" ? badge("cancelled") : html`<span class="badge plain">On hold</span>`}</td></tr>`)}</tbody></table></div></section></div>
     <section class="card mt"><h2>Payout history</h2>${f.payouts.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>For</th><th class="num">Amount</th><th>Status</th><th>Requested</th><th>Bank ref</th></tr></thead><tbody>
       ${f.payouts.map((p) => html`<tr><td class="mono">${p.reference}</td><td>${p.vendor_name ? `Vendor: ${p.vendor_name}` : "You"}</td><td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td><td>${fmtDate(p.created_at)}</td><td class="mono">${p.bank_reference || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">No payouts yet.</p>`}</section>`);
   if ($("#po")) onSubmit($("#po"), async (v) => { const c = parseRand(v.amount); const r = await post(`${base()}/payouts`, { amountCents: c }); toast(`Payout ${r.payout.reference} requested.`, "good"); finance(); });
@@ -1056,7 +1057,7 @@ function kycItem(it, own, eventId = "") {
     : own && it.kind === "terms" && it.status !== "approved" ? html`<button class="btn btn-primary btn-sm" data-terms>Read and sign</button>`
     : own && it.key === "phone" && it.status === "missing" ? html`<button class="btn btn-primary btn-sm" data-phone>Confirm by SMS</button>` : "";
   return html`<li class="kyc-item" data-req="${it.key}"><div class="grow kyc-body">
-      <div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${!it.required && !it.recommended && it.key !== "phone" ? html`<span class="badge plain">optional</span>` : ""}</div>
+      <div class="row"><strong>${it.label}</strong>${badge(it.recommended ? "recommended" : it.status)}${!it.required && !it.recommended && it.key !== "phone" ? html`<span class="badge plain">Optional</span>` : ""}</div>
       <div class="small muted">${it.reason}</div>
       ${it.status === "rejected" ? (it.kind === "echeck" ? html`<div class="callout bad small mb-0">Not confirmed: ${it.rejectReason || "no reason given"} Fix the details above and the check runs again.</div>` : html`<div class="callout bad small mb-0">Not accepted: ${it.rejectReason || "no reason given"}. Please upload a new copy.</div>`) : ""}
       ${it.kind === "echeck" && it.detail && it.status !== "rejected" ? html`<div class="small">${it.detail}${it.check?.test ? html` <span class="badge warn">TEST</span>` : ""}</div>` : ""}
@@ -1161,14 +1162,14 @@ async function verification() {
     <section class="card mt"><h2>Event documents</h2>
       <p class="small muted">Asked for only when an event needs them: alcohol on sale, 2 000 or more people, a public space, someone else's show, or a high-risk event (very large, high value, festivals, or a new organiser selling a lot).</p>
       ${evItems.length ? evItems.map((e) => html`<div class="kyc-event"><div class="row between"><span><a href="#/events/${e.id}/checks"><strong>${e.title}</strong></a> <span class="small muted">${fmtDate(e.startsAt)}</span></span>
-          <span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : ""} ${badge(e.status_overall)}</span></div>
+          <span>${e.risk.level === "high" ? html`<span class="badge bad">High risk</span>` : ""} ${badge(e.status_overall)}</span></div>
           <ul class="small mb-0">${e.requirements.map((r) => html`<li>${r.label}: ${r.recommended ? "recommended" : r.status.replace(/_/g, " ")}</li>`)}</ul></div>`)
         : html`<p class="mb-0">None of your current events needs extra documents.</p>`}</section>
     ${own ? html`<section class="card mt"><h2>What we hold about you</h2>
-      <p class="small">We keep verification records for ${v.retention.years} years after your organiser account closes, as FICA requires, then delete them. Replaced or rejected copies are deleted after ${v.retention.discardRejectedDays} days. Documents are stored encrypted, outside the website, and only your organisation's owners and TicketRoom staff can open them.</p>
+      <p class="small">We keep verification records for ${v.retention.years} years after your organiser account closes, as FICA requires, then delete them. Replaced or rejected copies are deleted after ${plural(v.retention.discardRejectedDays, "day")}. Documents are stored encrypted, outside the website, and only your organisation's owners and TicketRoom staff can open them.</p>
       ${p.hasIdNumber ? html`<p class="small">ID or passport number: ${p.idNumberMasked}${p.dateOfBirth ? `, born ${p.dateOfBirth}` : ""}.</p>` : ""}
       ${v.held.length ? html`<div class="table-wrap"><table><thead><tr><th>Document</th><th>Status</th><th>Uploaded</th><th class="num">Size</th></tr></thead><tbody>
-        ${v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No documents yet.</p>`}
+        ${v.held.map((h) => html`<tr><td>${h.label}${h.event ? html`<div class="tiny muted">${h.event}</div>` : ""}</td><td>${h.deletedAt ? html`<span class="badge plain">Deleted</span>` : badge(h.status)}</td><td class="small">${fmtDate(h.uploadedAt)}</td><td class="num small">${kb(h.sizeBytes)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No documents yet.</p>`}
       <h3 class="mt">Who opened your documents</h3>
       ${v.accessLog.length ? html`<ul class="small">${v.accessLog.map((x) => html`<li>${fmtDateTime(x.at)}: ${x.who}, ${x.action.toLowerCase()}</li>`)}</ul>` : html`<p class="muted small mb-0">Nobody yet.</p>`}</section>` : ""}`);
   const f = $("#kp");
@@ -1208,7 +1209,7 @@ async function checksTab(el, d, reload) {
         <label class="check"><input type="checkbox" name="publicSpace" ${raw(dc.publicSpace ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>It is in a public space (a park, street or beach)</span></label>
         <label class="check"><input type="checkbox" name="thirdParty" ${raw(dc.thirdParty ? "checked" : "")} ${raw(edit ? "" : "disabled")}><span>It is someone else's show (I am promoting an artist or another owner's event)</span></label>
         ${edit ? html`<div><button class="btn btn-dark btn-sm">Save answers</button></div>` : ""}</form></section>
-    <section class="card mt"><div class="card-title"><h3>Documents for this event</h3><span>${e.risk.level === "high" ? html`<span class="badge bad">high risk</span>` : html`<span class="badge good">standard</span>`}</span></div>
+    <section class="card mt"><div class="card-title"><h3>Documents for this event</h3><span>${e.risk.level === "high" ? html`<span class="badge bad">High risk</span>` : html`<span class="badge good">Standard</span>`}</span></div>
       ${e.risk.reasons.length ? html`<p class="small">Why: ${e.risk.reasons.join("; ")}.</p>` : ""}
       ${e.requirements.length ? html`<ul class="kyc-list">${e.requirements.map((it) => kycItem(it, own, e.id))}</ul>
         <p class="small muted mb-0">Required documents must be uploaded before you submit the event, and approved before it goes live. Recommended ones never hold anything up.</p>` : html`<p class="mb-0">No extra documents are needed for this event.</p>`}
@@ -1227,7 +1228,7 @@ async function queries() {
   render(main, html`${head("Customer queries", "Questions from your ticket buyers that TicketRoom customer care has passed to you. Please reply within two working days.")}
     ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Customer</th><th>Question</th><th>Event</th><th>Status</th><th></th></tr></thead><tbody>
       ${list.map((q) => html`<tr><td class="mono">${q.reference}</td><td>${q.full_name || ""}<div class="tiny muted">${q.email}</div></td><td><strong>${q.subject}</strong></td><td class="small">${q.event_title || "–"}</td>
-        <td>${q.handled_by === "organiser" ? badge(q.status) : html`<span class="badge plain">back with TicketRoom</span>`}</td><td><a class="btn btn-ghost btn-sm" href="#/queries/${q.id}">Open</a></td></tr>`)}</tbody></table></div>`
+        <td>${q.handled_by === "organiser" ? badge(q.status) : html`<span class="badge plain">Back with TicketRoom</span>`}</td><td><a class="btn btn-ghost btn-sm" href="#/queries/${q.id}">Open</a></td></tr>`)}</tbody></table></div>`
       : empty("No customer queries. When TicketRoom passes you a question from a ticket buyer, it appears here and we email you.")}`);
 }
 async function query({ id }) {

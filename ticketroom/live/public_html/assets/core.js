@@ -46,6 +46,11 @@ export const fromLocalInput = (v) => {
 };
 export const parseRand = (s) => { const t = String(s || "").replace(/^R\s*/i, "").replace(/\s/g, "").replace(",", "."); if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null; const [w, f = ""] = t.split("."); return Number(w) * 100 + Number((f + "00").slice(0, 2)); };
 export const idem = () => (crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`);
+// Event categories as people read them (the database keeps the short key).
+export const CATEGORY_LABELS = { music: "Music", festival: "Festival", comedy: "Comedy", sport: "Sport", arts: "Arts & theatre", food: "Food & drink", business: "Business", family: "Family", nightlife: "Nightlife", other: "Other" };
+export const categoryLabel = (c) => CATEGORY_LABELS[c] || (c ? String(c).charAt(0).toUpperCase() + String(c).slice(1).replace(/_/g, " ") : "");
+// "1 ticket", "2 tickets"; pass the plural when it is not just an added "s".
+export const plural = (n, one, many = `${one}s`) => `${Number(n || 0).toLocaleString("en-ZA")} ${Number(n) === 1 ? one : many}`;
 export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 
 // ---------- edition features ----------
@@ -525,7 +530,8 @@ export const badge = (status) => {
     posted: "good", ended: "plain",
     // Waitlists and TicketRoom Exchange
     resold: "info", sold: "good", "paid to you": "good", "up for resale": "warn", "offered to waitlist": "warn", "being paid": "warn", waiting: "warn", offered: "warn", left: "plain", closed: "plain", "ticket offered": "info", manual_pending: "warn" };
-  return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
+  const text = String(status || "").replace(/_/g, " ");
+  return html`<span class="badge ${map[status] || ""}">${text.charAt(0).toUpperCase() + text.slice(1)}</span>`;
 };
 
 export function empty(text, action = "") {
@@ -535,7 +541,7 @@ export const spinner = () => html`<div class="spinner" role="status" aria-label=
 
 export function poster(ev, cls = "") {
   if (ev.image_upload_id) return html`<div class="poster ${cls}"><img src="/media/${ev.image_upload_id}" alt="" loading="lazy"></div>`;
-  return html`<div class="poster fallback cat-${ev.category || "other"} ${cls}"><span>${ev.title}</span></div>`;
+  return html`<div class="poster fallback cat-${ev.category || "other"} ${cls}"><span class="poster-mark"><img src="/assets/logo-mark.svg" alt="" width="56" height="42"><b>${categoryLabel(ev.category) || "Live event"}</b></span></div>`;
 }
 
 // ---------- brand chrome ----------
@@ -908,12 +914,12 @@ export function hoursText(hours) {
   return `${hours.holiday ? `Closed for ${hours.holiday}` : "We're closed right now"} · back ${when}`;
 }
 export function weekTable(hours) {
-  return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} – ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
+  return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} to ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
 }
 
 function footerHours(hours) {
   const days = Object.keys(DAY_NAMES);
-  if (!hours?.week) return "Weekdays · 9am–5pm";
+  if (!hours?.week) return "Weekdays, 9am to 5pm";
   const groups = [];
   for (let i = 0; i < days.length;) {
     const day = days[i], slot = hours.week[day];
@@ -925,7 +931,7 @@ function footerHours(hours) {
       end++;
     }
     const short = (d) => DAY_NAMES[d].slice(0, 3);
-    groups.push(`${i === end ? short(day) : `${short(day)}–${short(days[end])}`} · ${hm(slot.open)}–${hm(slot.close)}`);
+    groups.push(`${i === end ? short(day) : `${short(day)} to ${short(days[end])}`}, ${hm(slot.open)} to ${hm(slot.close)}`);
     i = end + 1;
   }
   return groups.length ? groups.join("  ·  ") : "Support hours vary";
@@ -950,7 +956,7 @@ function showBanner(s) {
 
 export async function callbackDialog({ topic = "callback", message = "", source = "web" } = {}) {
   const [s, u] = await Promise.all([siteInfo(), me()]);
-  const resp = s?.support?.responseTime || "24–48 hours";
+  const resp = s?.support?.responseTime || "24 to 48 hours";
   const d = dialog("Request a callback", html`<form class="stack" novalidate>
     <p class="muted mb-0">Leave your details and our team will get back to you within <strong>${resp}</strong>${s ? html` (${s.hours.note || "Monday to Friday, 9am to 5pm"})` : ""}.</p>
     ${s && !s.hours.openNow ? html`<p class="callout warn mb-0">${hoursText(s.hours)}. Your request is saved and handled first thing.</p>` : ""}
@@ -974,18 +980,20 @@ export function callbackFields(u, topic = "callback", message = "") {
     <div class="field"><label for="cb-msg">How can we help?</label><textarea id="cb-msg" name="message" required maxlength="2000" placeholder="Include your order reference if you have one.">${message}</textarea></div>`;
 }
 
+// Help and support: a support headset, in the same line style as the other icons.
+const HEADSET_ICON = '<svg class="ico" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><path d="M4 14h2.5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2v-3Z"/><path d="M20 14h-2.5a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1H18a2 2 0 0 0 2-2v-3Z"/><path d="M20 17v1a3 3 0 0 1-3 3h-3"/></svg>';
 function chatWidget(s) {
   const KEY = "tr_chat_v1";
   let state; try { state = JSON.parse(store.get(KEY) || "null"); } catch { state = null; }
   if (!state?.conversation) state = { conversation: idem().replace(/[^A-Za-z0-9]/g, "").slice(0, 24), log: [] };
   const save = () => store.set(KEY, JSON.stringify({ conversation: state.conversation, log: state.log.slice(-30) }));
   const fab = document.createElement("button");
-  fab.className = "chat-fab"; fab.setAttribute("aria-label", "Chat with the TicketRoom assistant"); fab.setAttribute("aria-expanded", "false"); fab.setAttribute("aria-controls", "chat-panel");
-  render(fab, html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span>Help</span>`);
+  fab.className = "chat-fab"; fab.setAttribute("aria-label", "Help and support"); fab.setAttribute("aria-expanded", "false"); fab.setAttribute("aria-controls", "chat-panel");
+  render(fab, html`${raw(HEADSET_ICON)}<span>Help</span>`);
   const panel = document.createElement("section");
-  panel.className = "chat-panel"; panel.id = "chat-panel"; panel.hidden = true; panel.setAttribute("aria-label", "TicketRoom assistant");
+  panel.className = "chat-panel"; panel.id = "chat-panel"; panel.hidden = true; panel.setAttribute("aria-label", "Help and support");
   const starters = ["Where are my tickets?", "How do I list a free event?", "What are your fees?", "How do refunds work?"];
-  render(panel, html`<header><div><strong>TicketRoom assistant</strong><span class="tiny" data-status>${hoursText(s.hours)}</span></div><button class="icon-btn" data-x aria-label="Close chat">×</button></header>
+  render(panel, html`<header><span class="chat-head">${raw(HEADSET_ICON)}<div><strong>Help and support</strong><span class="tiny" data-status>${hoursText(s.hours)}</span></div></span><button class="icon-btn" data-x aria-label="Close chat">×</button></header>
     <div class="chat-log" aria-live="polite"></div>
     <div class="chat-starters">${starters.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>
     <form class="chat-form"><label class="sr-only" for="chat-in">Your question</label><input id="chat-in" maxlength="500" autocomplete="off" placeholder="Ask a question…"><button class="btn btn-primary btn-sm">Send</button></form>
@@ -1012,7 +1020,7 @@ function chatWidget(s) {
   const lastQuestion = () => [...state.log].reverse().find((m) => m.role === "user")?.text || "";
   const draw = () => {
     log.textContent = "";
-    bubble({ role: "assistant", text: s.chatbot.greeting || "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds or selling tickets." });
+    bubble({ role: "assistant", text: s.chatbot.greeting || "Hi, I'm the TicketRoom assistant. Ask me about tickets, events, refunds or selling tickets." });
     state.log.forEach(bubble);
     $(".chat-starters", panel).hidden = state.log.length > 0;
   };
@@ -1657,3 +1665,34 @@ export const TICKET_KINDS = {
 export const AGE_GROUPS = { all: "All ages", kids: "Kids (under 13)", teens: "Teens (13 to 17)", "18_24": "18 to 24", "25_34": "25 to 34", "35_49": "35 to 49", "50_plus": "50 and over", families: "Families" };
 export const ageGroupList = (v) => String(v || "").split(",").filter((k) => AGE_GROUPS[k]);
 export const ageGroupText = (v) => ageGroupList(v).map((k) => AGE_GROUPS[k]).join(", ");
+
+// ---------- strips that scroll sideways show there is more ----------
+// Menu strips, tabs and chip rows on a phone: data-more says which edge has
+// more (tr.css fades that edge), and the current menu entry is scrolled into
+// view so the strip opens where the person is.
+const STRIPS = ".sidenav, .tabs, .chips, .cashless-rail, .artist-rail, .feature-rail";
+function scrollCue(el) {
+  const max = el.scrollWidth - el.clientWidth;
+  if (max > 2 && !el._cueSeen) {
+    el._cueSeen = true;
+    const cur = el.querySelector('[aria-current="page"], [aria-selected="true"]');
+    if (cur) {
+      const a = cur.getBoundingClientRect(), b = el.getBoundingClientRect();
+      if (a.right > b.right - 24 || a.left < b.left) el.scrollLeft += a.left - b.left - 24;
+    }
+  }
+  const v = max <= 2 ? "" : el.scrollLeft <= 2 ? "right" : el.scrollLeft >= max - 2 ? "left" : "both";
+  if ((el.getAttribute("data-more") || "") !== v) { if (v) el.setAttribute("data-more", v); else el.removeAttribute("data-more"); }
+  if (!el._cue) { el._cue = true; el.addEventListener("scroll", () => scrollCue(el), { passive: true }); }
+}
+let cueQueued = false;
+function scrollCues() {
+  if (cueQueued) return;
+  cueQueued = true;
+  requestAnimationFrame(() => { cueQueued = false; document.querySelectorAll(STRIPS).forEach(scrollCue); });
+}
+if (typeof window !== "undefined" && typeof MutationObserver !== "undefined") {
+  const startCues = () => { new MutationObserver(scrollCues).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-current", "aria-selected", "hidden"] }); scrollCues(); };
+  if (document.body) startCues(); else document.addEventListener("DOMContentLoaded", startCues);
+  window.addEventListener("resize", scrollCues);
+}
