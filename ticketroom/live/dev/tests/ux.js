@@ -469,9 +469,15 @@ async function crawl(F, sessions) {
     assert(c >= 3, `focus ring ${r.ring} on ${r.bg}: ${c.toFixed(2)}:1`);
   }));
 
-  await test("U11 the portal menu strip on a phone shows there is more", () => onPage(PHONE, sessions.customer, "/account#/tickets", async (p) => {
-    const r = await p.evaluate(() => { const n = document.querySelector("#sidenav"); const s = getComputedStyle(n); return { more: n.getAttribute("data-more"), mask: s.maskImage || s.webkitMaskImage, over: n.scrollWidth > n.clientWidth }; });
-    assert(r.over && ["right", "both", "left"].includes(r.more) && /gradient/.test(r.mask), JSON.stringify(r));
+  // The sideways menu strip became a bottom tab bar on phones (tests/app.js A3):
+  // nothing is hidden off the edge any more, and Account opens every section.
+  await test("U11 the portal menu on a phone shows everything there is (tab bar, then Account)", () => onPage(PHONE, sessions.customer, "/account#/tickets", async (p) => {
+    const r = await p.evaluate(() => ({ strip: getComputedStyle(document.querySelector(".side") || document.querySelector("#sidenav")).display, tabs: [...document.querySelectorAll(".tabbar a, .tabbar button")].map((e) => e.innerText.trim()), over: document.querySelector(".tabbar").scrollWidth > document.querySelector(".tabbar").clientWidth + 1 }));
+    assert(r.strip === "none" && r.tabs.length === 4 && r.tabs[3] === "Account" && !r.over, JSON.stringify(r));
+    await p.locator(".tabbar .tab-more").click();
+    const menu = await p.$$eval("dialog[open] .sheet-nav a", (as) => as.map((a) => a.getAttribute("href")));
+    const all = await p.$$eval("#sidenav a", (as) => as.map((a) => a.getAttribute("href")));
+    assert(all.every((h) => menu.includes(h)), `missing from Account: ${all.filter((h) => !menu.includes(h))}`);
   }));
 
   await test("U13 the preview bar stays below the sticky header", () => onPage(PHONE, [], preview, async (p) => {

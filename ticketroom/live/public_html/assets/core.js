@@ -412,9 +412,10 @@ export function toast(msg, kind = "") {
   setTimeout(() => t.remove(), kind === "bad" ? 6000 : 3500);
 }
 
-export function dialog(title, bodyTpl, { wide = false, onClose } = {}) {
+export function dialog(title, bodyTpl, { wide = false, sheet = false, onClose } = {}) {
   const d = document.createElement("dialog");
   if (wide) d.classList.add("wide");
+  if (sheet) d.classList.add("sheet");
   d.setAttribute("aria-labelledby", "dlg-title");
   render(d, html`<div class="dialog-head"><h2 id="dlg-title">${title}</h2><button class="icon-btn" data-close aria-label="Close">×</button></div><div class="dialog-body">${bodyTpl}</div>`);
   document.body.append(d);
@@ -537,7 +538,9 @@ export const badge = (status) => {
 export function empty(text, action = "") {
   return html`<div class="empty"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a3 3 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a3 3 0 0 0 0-6Z"/><path d="M14 5v14" stroke-dasharray="2 2"/></svg><p>${text}</p>${action}</div>`;
 }
-export const spinner = () => html`<div class="spinner" role="status" aria-label="Loading"></div>`;
+// Loading: grey placeholder blocks in the shape of the content (tr.css), not a
+// spinning wheel. The class stays "spinner" so pages know it is still loading.
+export const spinner = () => html`<div class="spinner skel" role="status" aria-label="Loading"></div>`;
 
 export function poster(ev, cls = "") {
   if (ev.image_upload_id) return html`<div class="poster ${cls}"><img src="/media/${ev.image_upload_id}" alt="" loading="lazy"></div>`;
@@ -717,6 +720,8 @@ export async function header(el, { portal, active, box: signInBox, authContext, 
   $("[data-signout]", el)?.addEventListener("click", async () => { await signOut(); location.href = "/"; });
   // A portal tab keeps an eye on who is signed in (see watchSession).
   if (here) watchSession(portal, u);
+  // On a phone the portal menu is a bar of tabs at the bottom of the screen.
+  if (here && u && TABS[portal] && $(".shell #sidenav")) tabBar(portal);
   if (u?.mustChangePassword && !$(".pw-nag")) {
     const nag = document.createElement("div");
     nag.className = "pw-nag";
@@ -1368,6 +1373,9 @@ export function router(routes, fallback) {
           a.toggleAttribute("aria-current", target === "/" ? path === "/" : path === target || path.startsWith(target + "/"));
           if (a.hasAttribute("aria-current")) a.setAttribute("aria-current", "page");
         });
+        syncTabBar(path);
+        // A new section comes in with a short fade (none with reduced motion, see tr.css).
+        if (toTop && main) { main.classList.remove("view-in"); void main.offsetWidth; main.classList.add("view-in"); }
         // A portal's home page that has no link of its own ("/" in the customer portal) is its first section.
         if (path === "/" && !document.querySelector('.sidenav a[aria-current="page"]')) document.querySelector('.sidenav a[href^="#/"]')?.setAttribute("aria-current", "page");
         // On a phone the menu is a sideways strip: keep the current page in view.
@@ -1576,6 +1584,11 @@ const ICONS = {
   chevron: '<path d="m6 9 6 6 6-6"/>',
   arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
   backspace: '<path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="m12 9 6 6M18 9l-6 6"/>',
+  more: '<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  download: '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
   facebook: '<path d="M13.5 22v-8h2.7l.4-3h-3.1V9.1c0-.9.3-1.5 1.6-1.5h1.7V4.9c-.3 0-1.4-.1-2.6-.1-2.6 0-4.4 1.6-4.4 4.5V11H7v3h2.8v8h3.7Z" fill="currentColor" stroke="none"/>',
 };
 export const svgIcon = (name, size = 18) => raw(`<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
@@ -1708,4 +1721,153 @@ if (typeof window !== "undefined" && typeof MutationObserver !== "undefined") {
   const startCues = () => { new MutationObserver(scrollCues).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-current", "aria-selected", "hidden"] }); scrollCues(); };
   if (document.body) startCues(); else document.addEventListener("DOMContentLoaded", startCues);
   window.addEventListener("resize", scrollCues);
+}
+
+// ---------- the app on a phone ----------
+// Portal pages keep their side menu on a computer. On a phone the menu is a
+// bar of tabs at the bottom of the screen with the most used sections, then
+// "More" ("Account" for customers) opening the whole menu as a bottom sheet.
+// The bar is drawn from the side menu, so counts and switched-off features
+// follow it.
+const TABS = {
+  customer: { tabs: [["#/tickets", "My tickets"], ["#/orders", "Orders"], ["#/transfers", "Transfers"]], more: ["Account", "user"], title: "Your account", home: "/tickets" },
+  organiser: { tabs: [["#/", "Dashboard"], ["#/events", "Events"], ["/scan", "Scanner"], ["#/finance", "Finance"], ["#/team", "Team"]], more: ["More", "more"], title: "Menu" },
+  admin: { tabs: [["#/", "Overview"], ["#/lookup", "Orders"], ["#/organisers", "Organisers"], ["#/events", "Events"], ["#/support", "Support"]], more: ["More", "more"], title: "Menu" },
+};
+let tabPortal = null;
+const shownLink = (a) => !!a && !a.hidden && getComputedStyle(a).display !== "none";
+const copyIcon = (from, to) => { const v = getComputedStyle(from).getPropertyValue("--ico"); if (v) to.style.setProperty("--ico", v); };
+function tabBar(portal) {
+  tabPortal = portal;
+  if (!$(".tabbar")) {
+    const bar = document.createElement("nav");
+    bar.className = "tabbar";
+    bar.setAttribute("aria-label", "Sections");
+    document.body.append(bar);
+    document.body.classList.add("has-tabbar");
+    new MutationObserver(drawTabBar).observe($("#sidenav"), { childList: true, subtree: true, characterData: true });
+    features().then(drawTabBar);
+  }
+  drawTabBar();
+}
+function drawTabBar() {
+  const bar = $(".tabbar"), side = $("#sidenav"), cfg = TABS[tabPortal];
+  if (!bar || !side || !cfg) return;
+  const tabs = cfg.tabs.map(([href, label]) => [side.querySelector(`a[href="${href}"]`), href, label]).filter(([a]) => shownLink(a)).slice(0, 4);
+  // Something waiting in a section that has no tab of its own: a dot on More.
+  const elsewhere = $$(".count", side).some((c) => shownLink(c.closest("a")) && !tabs.some(([a]) => a.contains(c)));
+  render(bar, html`${tabs.map(([a, href, label]) => { const n = a.querySelector(".count")?.textContent.trim(); return html`<a href="${href}"><span class="tab-ico" aria-hidden="true"></span><span class="tab-label">${label}</span>${n ? html`<span class="tab-badge">${n}</span>` : ""}</a>`; })}
+    <button type="button" class="tab-more" data-tab-more aria-haspopup="dialog">${svgIcon(cfg.more[1], 22)}<span class="tab-label">${cfg.more[0]}</span>${elsewhere ? html`<span class="tab-dot"><span class="sr-only">, something needs you</span></span>` : ""}</button>`);
+  $$("a", bar).forEach((t, i) => copyIcon(tabs[i][0], t));
+  $("[data-tab-more]", bar).addEventListener("click", menuSheet);
+  syncTabBar();
+}
+function syncTabBar(path = location.hash.replace(/^#/, "") || "/") {
+  const bar = $(".tabbar");
+  if (!bar) return;
+  const home = TABS[tabPortal]?.home;
+  let any = false;
+  for (const a of $$("a", bar)) {
+    const t = a.getAttribute("href").replace(/^#/, "");
+    const on = t === "/" ? path === "/" : path === t || path.startsWith(t + "/") || (path === "/" && t === home);
+    if (on) { a.setAttribute("aria-current", "page"); any = true; } else a.removeAttribute("aria-current");
+  }
+  $("[data-tab-more]", bar)?.classList.toggle("on", !any);
+}
+function menuSheet() {
+  const side = $("#sidenav"), cfg = TABS[tabPortal];
+  const d = dialog(cfg.title, html`<nav class="sheet-nav" aria-label="All sections"></nav>
+    <div class="sheet-foot"><a href="/">TicketRoom website</a><a href="/help" target="_blank" rel="noopener">Help centre</a><button type="button" class="btn btn-ghost btn-block" data-sheet-out>Sign out</button></div>`, { sheet: true });
+  const nav = $(".sheet-nav", d);
+  for (const el of side.children) {
+    const c = el.cloneNode(true);
+    c.removeAttribute("id");
+    nav.append(c);
+    if (el.matches("a")) copyIcon(el, c);
+    // The organisation picker works from the sheet too.
+    const sel = $("select", el), copy = $("select", c);
+    if (sel && copy) { copy.removeAttribute("id"); copy.value = sel.value; copy.addEventListener("change", () => { sel.value = copy.value; sel.dispatchEvent(new Event("change")); }); }
+  }
+  nav.addEventListener("click", (e) => { if (e.target.closest("a")) d.close(); });
+  $("[data-sheet-out]", d).addEventListener("click", async () => { await signOut(); location.href = "/"; });
+}
+
+// ---------- add to the home screen ----------
+// Customers and the event team get one quiet offer to add TicketRoom to the
+// home screen. Not now (or adding it) is remembered on this phone.
+const INSTALL_KEY = "tr_install_seen";
+let installEvent = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvent = e; dispatchEvent(new Event("tr:installable")); });
+}
+export function installPrompt() {
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  let seen = true;
+  try { seen = !!localStorage.getItem(INSTALL_KEY); } catch { /* storage blocked: never ask */ }
+  if (standalone || seen) return;
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
+  const show = () => {
+    if ($(".install-card") || sessionGone) return;
+    try { if (localStorage.getItem(INSTALL_KEY)) return; localStorage.setItem(INSTALL_KEY, String(Date.now())); } catch { return; }
+    const card = document.createElement("aside");
+    card.className = "install-card";
+    card.setAttribute("aria-label", "Add TicketRoom to your home screen");
+    render(card, html`<img src="/assets/app/icon-192.png" alt="" width="44" height="44"><div class="install-text"><strong>Add TicketRoom to your home screen</strong>
+      <span>${ios ? "Tap Share, then Add to Home Screen. Your tickets open even with poor signal." : "It opens like an app, and your tickets open even with poor signal."}</span></div>
+      <div class="install-actions">${ios ? "" : html`<button type="button" class="btn btn-primary btn-sm" data-install>Add</button>`}<button type="button" class="btn btn-ghost btn-sm" data-install-no>Not now</button></div>`);
+    document.body.append(card);
+    $("[data-install-no]", card).addEventListener("click", () => card.remove());
+    $("[data-install]", card)?.addEventListener("click", async () => {
+      card.remove();
+      try { await installEvent?.prompt(); } catch { /* the browser said no */ }
+      installEvent = null;
+    });
+  };
+  if (installEvent) setTimeout(show, 1200);
+  else if (ios) setTimeout(show, 2500);
+  else window.addEventListener("tr:installable", () => setTimeout(show, 1200), { once: true });
+}
+
+// ---------- pull to refresh ----------
+// My tickets and the scanner's counts: pull down from the top to load again.
+let pull = null;
+export function pullToRefresh(when, run) {
+  pull = { when, run };
+  if ($(".ptr")) return;
+  document.documentElement.classList.add("ptr-on");
+  const ind = document.createElement("div");
+  ind.className = "ptr";
+  ind.setAttribute("aria-hidden", "true");
+  render(ind, svgIcon("refresh", 20));
+  document.body.append(ind);
+  const READY = 120;
+  let y0 = null, dy = 0, busy = false;
+  const place = (d) => { ind.style.transform = d ? `translate(-50%, ${Math.min(d * 0.5, 72)}px) rotate(${Math.round(d * 1.5)}deg)` : ""; };
+  window.addEventListener("touchstart", (e) => {
+    y0 = null;
+    if (busy || e.touches.length !== 1 || window.scrollY > 0 || $("dialog[open], .scan-cam:not([hidden])") || !pull.when()) return;
+    y0 = e.touches[0].clientY; dy = 0;
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (y0 === null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    ind.classList.toggle("pulling", dy > 8);
+    ind.classList.toggle("ready", dy > READY);
+    place(dy);
+  }, { passive: true });
+  const end = async () => {
+    if (y0 === null) return;
+    const go = dy > READY;
+    y0 = null;
+    ind.classList.remove("ready");
+    if (!go) { ind.classList.remove("pulling"); place(0); return; }
+    busy = true;
+    ind.classList.add("busy");
+    try { await pull.run(); } catch (err) { toast(err.message || "Could not refresh. Try again.", "bad"); }
+    busy = false;
+    ind.classList.remove("busy", "pulling");
+    place(0);
+  };
+  window.addEventListener("touchend", end, { passive: true });
+  window.addEventListener("touchcancel", end, { passive: true });
 }

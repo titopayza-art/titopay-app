@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, plural, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile, walletBadges, phoneVerifyDialog, accountDeletionDialog } from "/assets/core.js?build=2026-10-22-phases";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, plural, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile, walletBadges, phoneVerifyDialog, accountDeletionDialog, svgIcon, installPrompt, pullToRefresh } from "/assets/core.js?build=2026-10-22-phases";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -9,6 +9,14 @@ const nav = () => render($("#sidenav"), html`
   <div class="sect">Tickets</div><a href="#/tickets">My tickets</a><a href="#/orders">Orders</a><a href="#/transfers">Transfers</a><a href="#/waitlists">Waitlists</a><a href="#/resale">Resale</a><a href="#/saved">Saved events</a>
   <div class="sect" data-feature="cashless">Cashless</div><a href="#/wallet" data-feature="cashless">Wallets</a><a href="#/tags" data-feature="cashless">Tags & wristbands</a>
   <div class="sect">Account</div><a href="#/refunds">Refunds & support</a><a href="#/payment-methods" data-feature="payments">Payment methods</a><a href="#/settings">Settings & privacy</a>`);
+
+// Tickets people have sent you and you haven't accepted yet: a count on Transfers.
+function transferCount(n) {
+  const a = $('#sidenav a[href="#/transfers"]');
+  if (!a) return;
+  a.querySelector(".count")?.remove();
+  if (n > 0) { const c = document.createElement("span"); c.className = "count"; c.textContent = String(n); a.append(c); }
+}
 
 function head(title, sub = "", actions = "") {
   return html`<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
@@ -94,13 +102,25 @@ async function tickets() {
     list = cached.tickets; offline = true;
   }
   const now = new Date();
-  const upcoming = list.filter((t) => new Date(t.ends_at) > now && !["refunded", "revoked"].includes(t.status));
+  // The next event's ticket first. On a phone the tickets sit side by side: swipe between them.
+  const upcoming = list.filter((t) => new Date(t.ends_at) > now && !["refunded", "revoked"].includes(t.status)).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
   const past = list.filter((t) => !upcoming.includes(t));
+  const many = upcoming.length > 1;
   render(main, html`${head("My tickets", "Your QR code gets you in. Keep it to yourself, because the first scan wins.", html`<a class="btn btn-primary" href="/">Find events</a>`)}
     ${offline ? html`<p class="callout warn">You're offline. These are the tickets saved on this phone, and they still scan at the gate.</p>` : ""}
-    ${upcoming.length ? html`<div class="stack-lg">${upcoming.map((t) => ticketCard(t, offline))}</div>` : empty("No upcoming tickets yet.", html`<a class="btn btn-primary" href="/">Browse events</a>`)}
+    ${upcoming.some((t) => t.status === "valid") ? html`<p class="tk-bright no-print">${svgIcon("sun", 18)}<span>At the gate, turn your screen brightness up so the code scans first time.</span></p>` : ""}
+    ${upcoming.length ? html`<div class="stack-lg tk-swipe ${many ? "many" : ""}" data-swipe>${upcoming.map((t) => ticketCard(t, offline))}</div>
+      ${many ? html`<div class="tk-dots no-print"><span class="dots" aria-hidden="true">${upcoming.map((_, i) => html`<i class="${i ? "" : "on"}"></i>`)}</span><span data-pos>Ticket 1 of ${upcoming.length}. Swipe for the next one.</span></div>` : ""}`
+      : empty("No upcoming tickets yet.", html`<a class="btn btn-primary" href="/">Browse events</a>`)}
     ${past.length ? html`<h2 class="mt-lg">Past & inactive</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Ticket</th><th>Status</th></tr></thead><tbody>
       ${past.map((t) => html`<tr><td>${t.title}</td><td>${fmtDate(t.starts_at)}</td><td class="mono">${t.code}</td><td>${badge(t.revoked_reason === "resold" ? "resold" : t.status)}</td></tr>`)}</tbody></table></div>` : ""}`);
+  const swipe = $("[data-swipe].many");
+  swipe?.addEventListener("scroll", () => {
+    const step = Math.max(1, swipe.children[1].offsetLeft - swipe.children[0].offsetLeft);
+    const i = Math.min(upcoming.length - 1, Math.round(swipe.scrollLeft / step));
+    $$(".tk-dots .dots i").forEach((d, n) => d.classList.toggle("on", n === i));
+    $(".tk-dots [data-pos]").textContent = `Ticket ${i + 1} of ${upcoming.length}.${i + 1 < upcoming.length ? " Swipe for the next one." : ""}`;
+  }, { passive: true });
   $$("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
   walletButtons();
   $$("[data-transfer]").forEach((b) => b.addEventListener("click", () => transferDialog(b.dataset.transfer)));
@@ -199,6 +219,7 @@ async function orders() {
 
 async function transfers() {
   const { outgoing, incoming, emailVerified } = await get("/api/me/transfers");
+  transferCount(incoming.length);
   render(main, html`${head("Transfers", "Send tickets to friends. Transfers are free while the organiser allows them.")}
     <section class="card"><h2>Incoming</h2>${!emailVerified ? html`<p class="callout">Confirm your email address to see tickets people have sent you, or open the link in the transfer email. <button class="btn-link" data-resend>Resend confirmation</button></p>` : ""}
       ${incoming.length ? html`<div class="stack">${incoming.map((t) => html`<div class="row between card flat"><div><strong>${t.title}</strong><div class="small muted">From ${t.from_name} · expires ${fmtDate(t.expires_at)}</div></div><button class="btn btn-primary btn-sm" data-accept="${t.id}">Accept</button></div>`)}</div>` : html`<p class="muted mb-0">No transfers waiting for you.</p>`}</section>
@@ -590,10 +611,20 @@ function welcome() {
   // Links from emails work signed out: choose a new password, confirm an email.
   if (emailLinkPage("customer")) return;
   const u = await me();
-  if (!u) return welcome();
+  if (!u) {
+    // Opened with no signal: the tickets saved on this phone, with their QR codes.
+    const reachable = navigator.onLine !== false && await fetch("/api/health", { cache: "no-store" }).then(() => true, () => false);
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { /* storage blocked */ }
+    if (!reachable && saved?.tickets?.length) return tickets();
+    return welcome();
+  }
   // One account, one portal: organisers and staff have their own.
   if (accountType(u) !== "customer") return wrongAccountPage(u, "customer");
   nav();
+  get("/api/me/transfers").then((r) => transferCount(r.incoming.length), () => {});
+  pullToRefresh(() => ["", "#/", "#/tickets"].includes(location.hash), () => tickets());
+  installPrompt();
   router([
     ["/", tickets], ["/tickets", tickets], ["/saved", saved], ["/orders", orders], ["/transfers", transfers], ["/waitlists", waitlists], ["/resale", resale], ["/claim/:token", claim], ["/pos-pay/:token", posQrPay], ["/tags", gate("cashless", tags)],
     ["/wallet", gate("cashless", wallets)], ["/wallet/:eventId", gate("cashless", wallet)], ["/refunds", refunds], ["/payment-methods", gate("payments", paymentMethods)], ["/settings", settings],

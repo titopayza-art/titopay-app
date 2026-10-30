@@ -1,5 +1,5 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { svgIcon, html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features } from "/assets/core.js";
+import { svgIcon, html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features, installPrompt, pullToRefresh } from "/assets/core.js";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
@@ -23,6 +23,7 @@ const ageRule = (a) => (a ? `${/^\d+$/.test(String(a)) ? `${a}+` : a} only: chec
 const unreachable = (err) => err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504;
 
 async function pickEvent() {
+  document.body.classList.remove("scan-live");
   const { events } = await get("/api/staff/events");
   if (!events.length) return render(main, html`<div class="card">${empty("You aren't assigned to any live events. Ask the organiser to add you as staff.")}</div>`);
   const chosen = TEST_EVENT && events.find((e) => e.id === TEST_EVENT);
@@ -38,33 +39,85 @@ function start(ev) {
   EVENT = ev; STATS = null;
   offline.forgetOthers(ev.id);
   if (!ev.can_scan && ev.can_sell_tickets) return boxOfficeApp(main, ev.id, { onBack: () => { localStorage.removeItem("tr_scan_event"); pickEvent(); }, backLabel: "Change event" });
-  render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1>${Number(ev.is_test) === 1 ? html`<p class="tk-test mt" role="note" data-test-event>TEST EVENT · scans here are practice, not a real event</p>` : ""}${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}</div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
-    <div class="tabs mt" role="tablist">${ev.can_scan ? html`<button role="tab" aria-selected="true" data-mode="gate">Gate</button>` : ""}${ev.can_manage_tags ? html`<button role="tab" aria-selected="false" data-mode="desk">Tag desk</button>` : ""}${DESK && ev.can_manage_tags && ev.cashless_enabled ? html`<button role="tab" aria-selected="false" data-topup>Top-up desk</button>` : ""}${ev.can_sell_tickets ? html`<button role="tab" aria-selected="false" data-boxoffice>Box office</button>` : ""}</div>
-    <div class="row between"><span id="stats" class="small muted"></span><span class="netbar on" id="net">Online</span></div>
+  mode = ev.can_scan ? "gate" : "desk";
+  // The tools this person has at this event; tabs only when there is a choice.
+  const tools = [ev.can_scan ? html`<button role="tab" aria-selected="${mode === "gate"}" data-mode="gate">Gate</button>` : "", ev.can_manage_tags ? html`<button role="tab" aria-selected="${mode === "desk"}" data-mode="desk">Tag desk</button>` : "",
+    DESK && ev.can_manage_tags && ev.cashless_enabled ? html`<button role="tab" aria-selected="false" data-topup>Top-up desk</button>` : "", ev.can_sell_tickets ? html`<button role="tab" aria-selected="false" data-boxoffice>Box office</button>` : ""].filter(Boolean);
+  // On a phone the scanner is a full-screen tool: a slim bar with the event, the
+  // counts under it, one big Scan button, and the camera over the whole screen.
+  document.body.classList.add("scan-live");
+  render(main, html`<div class="scan-top"><img src="/assets/logo-mark.svg" alt="" width="28" height="21"><div class="scan-ev"><span class="scan-team">Event team</span><h1 class="scan-title">${ev.title}</h1></div><button type="button" class="btn btn-link scan-change" data-change>Change</button></div>
+    ${Number(ev.is_test) === 1 ? html`<p class="tk-test mt" role="note" data-test-event>TEST EVENT · scans here are practice, not a real event</p>` : ""}${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}
+    ${tools.length > 1 ? html`<div class="tabs mt" role="tablist">${tools}</div>` : ""}
+    <div class="scan-counts" aria-live="polite"><span id="stats" class="small"></span><span class="netbar on" id="net">Online</span></div>
     <p class="small muted mb-0" id="offline-state" aria-live="polite"></p>
-    <div class="camera mt" id="cam"></div>
-    <div class="row mt"><button class="btn btn-primary grow" data-cam>Start camera</button>${nfcSupported() ? html`<button class="btn btn-ghost grow" data-nfc>Tap NFC</button>` : ""}</div>
-    <form class="row mt" id="manual"><label class="sr-only" for="mc">Ticket or tag code</label><input id="mc" class="grow mono" placeholder="Type ticket code" autocomplete="off" autocapitalize="characters"><button class="btn btn-ghost">Check</button></form>
+    <div class="row mt scan-actions"><button type="button" class="btn btn-primary grow scan-go" data-cam>${svgIcon("scan", 26)}<span>Scan</span></button>${nfcSupported() ? html`<button type="button" class="btn btn-ghost grow" data-nfc>Tap NFC</button>` : ""}</div>
+    <form class="scan-type mt" id="manual"><label for="mc">Type a code</label><input id="mc" class="grow mono" placeholder="Ticket or tag code" autocomplete="off" autocapitalize="characters" enterkeyhint="go"><button class="btn btn-ghost btn-sm">Check</button></form>
     <div id="desk"></div>
     <div class="verdict idle" id="verdict" role="status" aria-live="assertive"><div class="big">READY</div><div>Point the camera at a ticket QR code</div></div>
-    <h2 class="mt-lg">Recent</h2><div id="recent"></div>`);
-  $("[data-change]").addEventListener("click", () => { cam?.stop(); offline.stop(); localStorage.removeItem("tr_scan_event"); pickEvent(); });
-  $("[data-cam]").addEventListener("click", async (e) => {
-    if (cam?.running) { cam.stop(); e.target.textContent = "Start camera"; return; }
-    cam = new Camera($("#cam"), handle);
-    try { await cam.start(); e.target.textContent = "Stop camera"; } catch { toast("Camera unavailable. Allow camera access or type the code.", "bad"); }
-  });
+    <h2 class="mt-lg">Recent</h2><div id="recent"></div>
+    <div class="scan-cam" id="scan-cam" hidden role="dialog" aria-modal="true" aria-label="Camera">
+      <div class="scan-cam-bar"><span class="scan-cam-count" data-cam-count></span><button type="button" class="btn btn-ghost btn-sm" data-cam-close>Done</button></div>
+      <div class="camera" id="cam"></div>
+      <p class="scan-cam-hint">Hold the ticket's QR code inside the frame</p>
+    </div>
+    <div class="scan-flash" id="scan-flash" hidden aria-hidden="true"></div>`);
+  $("[data-change]").addEventListener("click", () => { closeCamera(); offline.stop(); localStorage.removeItem("tr_scan_event"); pickEvent(); });
+  $("[data-cam]").addEventListener("click", openCamera);
+  $("[data-cam-close]").addEventListener("click", closeCamera);
+  $("#scan-flash").addEventListener("click", endFlash);
   $("[data-nfc]")?.addEventListener("click", async () => {
     nfcAbort?.abort(); nfcAbort = new AbortController();
     try { await readNfc((v) => handle(v, true), nfcAbort.signal); toast("Hold the tag to the back of the phone."); } catch (err) { toast(`NFC: ${err.message}`, "bad"); }
   });
   $("#manual").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#mc").value.trim(); if (v) handle(v); $("#mc").value = ""; });
   // The top-up and cash-out desk takes the whole screen; "Back to scanning" returns here.
-  $("[data-topup]")?.addEventListener("click", () => { cam?.stop(); nfcAbort?.abort(); offline.stop(); deskApp(main, ev.id, { onBack: () => start(ev), backLabel: "Back to scanning" }); });
-  $("[data-boxoffice]")?.addEventListener("click", () => { cam?.stop(); nfcAbort?.abort(); offline.stop(); boxOfficeApp(main, ev.id, { onBack: () => start(ev), backLabel: "Back to event tools" }); });
+  const leave = () => { closeCamera(); nfcAbort?.abort(); offline.stop(); document.body.classList.remove("scan-live"); };
+  $("[data-topup]")?.addEventListener("click", () => { leave(); deskApp(main, ev.id, { onBack: () => start(ev), backLabel: "Back to scanning" }); });
+  $("[data-boxoffice]")?.addEventListener("click", () => { leave(); boxOfficeApp(main, ev.id, { onBack: () => start(ev), backLabel: "Back to event tools" }); });
   $$("[data-mode]").forEach((b) => b.addEventListener("click", () => { mode = b.dataset.mode; $$("[data-mode]").forEach((x) => x.setAttribute("aria-selected", String(x === b))); deskTicket = null; drawDesk(); idle(); }));
+  if (mode === "desk") { drawDesk(); idle(); }
   if (ev.can_scan) { offline.start(ev, drawOffline); refresh(true); }
 }
+
+// The camera fills the screen with a frame to aim at. After each scan the
+// result flashes over it, then it is ready for the next person.
+async function openCamera() {
+  const sheet = $("#scan-cam");
+  if (!sheet) return;
+  sheet.hidden = false;
+  document.documentElement.classList.add("scan-cam-open");
+  drawStats();
+  cam?.stop();
+  cam = new Camera($("#cam"), (v) => { if (!flashing) handle(v); });
+  try { await cam.start(); } catch { closeCamera(); toast("Camera unavailable. Allow camera access or type the code.", "bad"); }
+}
+function closeCamera() {
+  cam?.stop(); cam = null;
+  const sheet = $("#scan-cam");
+  if (sheet) sheet.hidden = true;
+  document.documentElement.classList.remove("scan-cam-open");
+}
+let flashing = false, flashTimer = 0;
+const FLASH_MS = 1500;
+function flash(kind, big, sub) {
+  const f = $("#scan-flash");
+  if (!f) return;
+  render(f, html`<div class="flash-card"><div class="big">${big}</div>${sub ? html`<div class="flash-sub">${sub}</div>` : ""}</div>`);
+  f.className = `scan-flash ${kind}`;
+  f.hidden = false;
+  flashing = true;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(endFlash, FLASH_MS);
+}
+function endFlash() {
+  clearTimeout(flashTimer);
+  flashing = false;
+  const f = $("#scan-flash");
+  if (f) f.hidden = true;
+}
+// The gate's answer: on the page, and as a full-screen flash.
+function result(kind, big, sub = "") { verdict(kind, big, sub); flash(kind, big, sub); }
 
 function drawOffline() {
   const el = $("#offline-state");
@@ -101,12 +154,12 @@ async function handle(value, fromNfc = false) {
     if (r.outcome === "admitted" && body.payload) offline.markUsed(body.payload).catch(() => {});
     setNet(true);
   } catch (err) {
-    if (!unreachable(err)) { verdict("no", "ERROR", err.message); beep(false); }
+    if (!unreachable(err)) { result("no", "ERROR", err.message); beep(false); }
     else {
       setNet(false);
       const r = body.payload ? await offline.check(body.payload, body.gate).catch(() => null) : null;
       if (r) show(r);
-      else { verdict("warn", "NO CONNECTION", body.payload ? "This ticket was NOT checked. Do not admit until it scans green." : "Tags can't be checked offline. Scan the ticket QR code."); beep(false); }
+      else { result("warn", "NO CONNECTION", body.payload ? "This ticket was NOT checked. Do not admit until it scans green." : "Tags can't be checked offline. Scan the ticket QR code."); beep(false); }
     }
   }
   refresh();
@@ -116,7 +169,7 @@ function show(r) {
   const [kind, word] = VERDICT[r.outcome] || ["no", r.outcome];
   // A couple or table ticket lets several people in: say so in big letters.
   const big = r.outcome === "admitted" && r.admits > 1 ? `ADMIT ${r.admits}` : r.outcome === "admitted" && r.pass ? "PASS OK" : word;
-  verdict(kind, r.offline ? `${big} (OFFLINE)` : big, [r.testEvent ? "TEST EVENT" : "", r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
+  result(kind, r.offline ? `${big} (OFFLINE)` : big, [r.testEvent ? "TEST EVENT" : "", r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
     ["admitted", "already_used"].includes(r.outcome) ? ageRule(r.ageRestriction) : ""].filter(Boolean).join(" · "));
   beep(r.outcome === "admitted");
 }
@@ -163,6 +216,8 @@ function drawStats() {
   const s = STATS;
   if (!s || !$("#stats")) return;
   $("#stats").textContent = `${s.admitted.toLocaleString("en-ZA")} of ${plural(s.issued, "ticket")} scanned in · ${s.mine.toLocaleString("en-ZA")} by you`;
+  const c = $("[data-cam-count]");
+  if (c) c.textContent = `${s.admitted.toLocaleString("en-ZA")} of ${s.issued.toLocaleString("en-ZA")} in`;
   render($("#recent"), s.recent.length ? html`<div class="table-wrap"><table><tbody>${s.recent.map((x) => html`<tr><td>${fmtTime(x.occurred_at)}</td><td>${(VERDICT[x.outcome] || [, x.outcome])[1]}</td><td>${x.holder_name || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No scans yet.</p>`);
 }
 // Show this scan in the counts and the Recent list straight away; the next
@@ -176,7 +231,7 @@ function countScan(r) {
 
 window.addEventListener("offline", () => setNet(false));
 // Signed out (or signed in as someone else) in another tab: stop the camera and the list refresh.
-window.addEventListener("tr:session-changed", () => { cam?.stop(); nfcAbort?.abort(); offline.stop(); EVENT = null; });
+window.addEventListener("tr:session-changed", () => { closeCamera(); endFlash(); document.body.classList.remove("scan-live"); nfcAbort?.abort(); offline.stop(); EVENT = null; });
 window.addEventListener("online", () => setNet(true));
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -187,7 +242,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   const reachable = navigator.onLine !== false && await fetch("/api/health", { cache: "no-store" }).then((r) => r.text()).then(() => true, () => false);
   if (!reachable && saved) {
     const ev = await offline.savedEvent(saved);
-    if (ev) { render($("#header"), html`<div class="wrap"><span class="wordmark">TICKET<b>ROOM</b></span></div>`); start(ev); return setNet(false); }
+    // Only someone who scans at this event has its ticket list on the phone.
+    if (ev) { render($("#header"), html`<div class="wrap"><span class="wordmark">TICKET<b>ROOM</b></span></div>`); start({ ...ev, can_scan: 1 }); return setNet(false); }
   }
   await header($("#header"), { portal: "scanner" });
   // A scanner's "set your password" link opens here.
@@ -198,6 +254,9 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   if (accountType(u) === "staff" && !TEST_EVENT) return wrongAccountPage(u, "scanner");
   await header($("#header"), { portal: "scanner" });
   render(main, spinner());
+  // Pull down on the gate to load the counts again.
+  pullToRefresh(() => !!EVENT && !!$("#stats"), async () => { lastRefresh = Date.now(); await loadStats(); });
+  installPrompt();
   DESK = !!(await features()).cashDesk;
   pickEvent();
 })();
