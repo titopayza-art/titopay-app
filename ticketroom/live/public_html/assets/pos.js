@@ -5,7 +5,7 @@
 //    looks up that same request key before anything else can be charged, so a
 //    retry can never charge twice.
 //  - No offline spending. When the server can't be reached, charging is off.
-import { html, render, $, $$, get, post, header, requireUser, toast, money, moneyExact, plural, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, onSubmit, api, features } from "/assets/core.js?build=2026-10-22-phases";
+import { svgIcon, html, render, $, $$, get, post, header, requireUser, toast, money, moneyExact, plural, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, onSubmit, api, features } from "/assets/core.js?build=2026-10-22-phases";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
 
 const main = $("#main");
@@ -29,7 +29,7 @@ window.addEventListener("online", () => setOnline(true));
 
 function activate(vendors) {
   render(main, html`<h1>Activate this device</h1>
-    <p class="muted">Each till needs a terminal key, created once by your manager or the organiser (Vendors & POS → Register terminal). The key stays on this device.</p>
+    <p class="muted">Each till needs a terminal key, created once by your manager or the organiser (Vendors & POS, then Register terminal). The key stays on this device.</p>
     ${vendors.length ? html`<p class="small">You're on the team for: ${vendors.map((v) => `${v.name} (${v.event_title})`).join(", ")}</p>` : html`<p class="callout warn">You aren't on any vendor's team yet. Ask the organiser to add you.</p>`}
     <form class="stack card" id="act"><div class="field"><label for="tk">Terminal key</label><input id="tk" name="key" required autocomplete="off" class="mono" placeholder="trk_…"></div><button class="btn btn-primary">Activate</button></form>`);
   $("#act").addEventListener("submit", async (e) => { e.preventDefault(); localStorage.setItem(KEY, $("#tk").value.trim()); boot(); });
@@ -117,7 +117,7 @@ function resolvePendingQr(intentId, note = "") {
 }
 
 function nav() {
-  return html`<div class="row between"><div><div class="small muted">${ctx.event.title} · ${ctx.terminal.label}</div><h1 class="mb-0">${ctx.vendor.name}</h1></div><span class="netbar ${online ? "on" : "off"}">● ${online ? "Online" : "Offline"}</span></div>
+  return html`<div class="row between"><div><div class="small muted">${ctx.event.title} · ${ctx.terminal.label}</div><h1 class="mb-0">${ctx.vendor.name}</h1></div><span class="netbar ${online ? "on" : "off"}"><i class="dot" aria-hidden="true"></i>${online ? "Online" : "Offline"}</span></div>
     <div class="tabs mt" role="tablist">${[["sell", "Sell"], ["history", "Sales"], ["summary", "Summary"]].map(([k, l]) => html`<button role="tab" data-view="${k}" aria-selected="${view === k}">${l}</button>`)}</div>`;
 }
 
@@ -236,12 +236,12 @@ async function createPhoneQr(expectedTotal) {
 function askPin(tagInput, total) {
   let pin = "";
   const d = dialog("Attendee PIN", html`<p class="center">Hand the device to the attendee to enter their spending PIN for <strong>${moneyExact(total)}</strong>.</p><div class="pin-dots" aria-live="polite" aria-label="PIN digits entered"></div>
-    <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9, "⌫", 0, "OK"].map((k) => html`<button type="button" data-k="${k}">${k}</button>`)}</div>`);
+    <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9, "del", 0, "OK"].map((k) => html`<button type="button" data-k="${k}" aria-label="${k === "del" ? "Delete" : k}">${k === "del" ? svgIcon("backspace", 22) : k}</button>`)}</div>`);
   const dots = () => render($(".pin-dots", d), html`${[0, 1, 2, 3, 4, 5].slice(0, Math.max(4, pin.length)).map((i) => html`<i class="${i < pin.length ? "on" : ""}"></i>`)}`);
   dots();
   $$("[data-k]", d).forEach((b) => b.addEventListener("click", () => {
     const k = b.dataset.k;
-    if (k === "⌫") pin = pin.slice(0, -1); else if (k === "OK") { if (pin.length >= 4) { d.close(); charge(tagInput, pin); } return; } else if (pin.length < 6) pin += k;
+    if (k === "del") pin = pin.slice(0, -1); else if (k === "OK") { if (pin.length >= 4) { d.close(); charge(tagInput, pin); } return; } else if (pin.length < 6) pin += k;
     dots();
   }));
 }

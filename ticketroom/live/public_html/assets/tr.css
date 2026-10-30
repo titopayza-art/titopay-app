@@ -44,7 +44,7 @@ p { margin: 0 0 1em; }
 .nav-group { position: relative; }
 .nav-group summary { color: #DCE5F5; padding: 8px 10px; border-radius: 8px; font-weight: 600; font-size: .94rem; cursor: pointer; list-style: none; }
 .nav-group summary::-webkit-details-marker { display: none; }
-.nav-group summary::after { content: "⌄"; margin-left: 7px; color: var(--amber-500); }
+.nav-group summary::after { content: ""; display: inline-block; width: 7px; height: 7px; margin: 0 2px 3px 9px; border: solid var(--amber-500); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .nav-group[open] summary, .nav-group summary:hover { color: #fff; background: rgba(255,255,255,.08); }
 .nav-submenu { position: absolute; z-index: 45; top: calc(100% + 4px); left: 0; display: grid; min-width: 200px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
 .nav .nav-submenu a { color: var(--ink); padding: 10px 12px; }
@@ -785,7 +785,7 @@ fieldset.field > .row { min-width: 0; flex-wrap: wrap; }
 .promote-ticks li + li { margin-top: 4px; }
 .promote-includes { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
 .promote-includes li { display: grid; gap: 2px; padding-left: 30px; position: relative; }
-.promote-includes li::before { content: "✓"; position: absolute; left: 0; top: 1px; width: 20px; height: 20px; border-radius: 50%; background: var(--amber-100); color: #7A4C00; font-size: .8rem; font-weight: 800; display: grid; place-items: center; }
+.promote-includes li::before { content: ""; position: absolute; left: 0; top: 1px; width: 20px; height: 20px; border-radius: 50%; background: var(--amber-100) url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%237A4C00%27 stroke-width=%273%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3E%3Cpath d=%27m5 12.5 4.5 4.5L19 7.5%27/%3E%3C/svg%3E") center / 13px no-repeat; }
 .promote-includes span { color: var(--ink-2); font-size: .92rem; }
 .promote-faq { margin: 0; }
 .promote-faq dt { font-weight: 700; margin-top: 12px; } .promote-faq dt:first-child { margin-top: 0; }
@@ -826,8 +826,7 @@ fieldset.field > .row { min-width: 0; flex-wrap: wrap; }
 .country-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 60vh; overflow-y: auto; }
 .country-row { display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .country-row:hover, .country-row:focus-visible { border-color: var(--navy-900); background: var(--line-2); }
-.country-row .flag { font-size: 1.4rem; line-height: 1; }
-.flag-lg { font-size: 3rem; line-height: 1; }
+.country-row .flag { font-size: .72rem; }
 .row.center { justify-content: center; flex-wrap: wrap; }
 @media (max-width: 460px) { .site-header .wrap { gap: 10px; } }
 
@@ -1240,3 +1239,14 @@ body.venue dialog .field .hint { color: var(--muted); }
 body.venue dialog input, body.venue dialog select { background: #fff; color: var(--ink); border-color: #CDD5E3; }
 body.venue dialog .btn-ghost { background: var(--card); color: var(--ink); border-color: var(--line); }
 body.venue dialog .card { background: var(--card); color: var(--ink); border-color: var(--line); }
+
+/* Status dot, bullets and icon alignment (real icons, not text symbols) */
+.netbar::before, .dot { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.netbar .dot { display: none; }
+.bullet { position: relative; padding-left: 16px; }
+.bullet::before { content: ""; position: absolute; left: 3px; top: .62em; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.ico { vertical-align: -3px; flex: none; }
+.tick .ico, .caret .ico, .country-chevron .ico { vertical-align: middle; }
+.flag, .flag-lg { display: inline-grid; place-items: center; min-width: 30px; height: 22px; padding: 0 5px; border-radius: 6px; background: var(--navy-950, #0B1D3F); color: #fff; font-size: .72rem; font-weight: 700; line-height: 1; letter-spacing: .04em; }
+.flag-lg { min-width: 56px; height: 40px; font-size: 1rem; border-radius: 10px; }
+.keypad button .ico { margin: auto; }

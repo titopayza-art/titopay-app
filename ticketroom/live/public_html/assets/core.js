@@ -653,7 +653,7 @@ export async function header(el, { portal, active, box: signInBox, authContext, 
       const top = document.createElement("div");
       top.className = "side-top";
       render(top, html`<a class="side-brand" href="${here.href}" aria-label="${here.name} home"><img src="/assets/logo-mark.svg" alt="" width="34" height="26"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="side-portal pb-${portal}">${here.name}</span></span></a>
-        <div class="side-me"><button type="button" class="side-profile" aria-haspopup="true" aria-expanded="false" data-me><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span><span class="who"><strong>${u.full_name}</strong><span>${who}</span></span><span class="caret" aria-hidden="true">▾</span></button>
+        <div class="side-me"><button type="button" class="side-profile" aria-haspopup="true" aria-expanded="false" data-me><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span><span class="who"><strong>${u.full_name}</strong><span>${who}</span></span><span class="caret">${svgIcon("chevron", 14)}</span></button>
           <div class="side-menu" role="menu" hidden><a role="menuitem" href="/">TicketRoom website</a>${shown.map((k) => html`<a role="menuitem" href="${PORTALS[k].href}">${PORTALS[k].name}</a>`)}<button type="button" role="menuitem" data-signout-side>Sign out</button></div></div>
         <label class="side-search"><span class="sr-only">Search the menu</span><input type="search" placeholder="Search" autocomplete="off" data-side-search></label>
         ${ACTION ? html`<a class="btn side-action ${portal === "organiser" ? "plus" : ""}" href="${ACTION[0]}">${ACTION[1]}</a>` : ""}`);
@@ -800,7 +800,7 @@ export function footer(el) {
       <details class="footer-links footer-sec" open><summary><h4>Organisers & vendors</h4></summary><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></details>
       <details class="footer-company footer-sec" open><summary><h4>Company</h4></summary><ul><li><a href="/about">About TicketRoom</a></li><li><a href="/partners">Retail &amp; Partners</a></li><li><a href="/careers">Careers</a></li></ul></details>
     </div><div class="footer-legal-row"><span class="footer-legal-title">Legal</span><ul class="footer-legal-links"><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li><li><button type="button" class="btn-link footer-link" data-cookie-settings>Cookie settings</button></li></ul></div>
-    <div class="legal-line"><div class="legal-details"><span class="legal-identity">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd <span class="legal-divider" aria-hidden="true">·</span> Reg. no. 2026/811077/07</span><span class="legal-rights">All rights reserved.</span></div><button type="button" class="country-btn footer-link" data-country><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span>${countryLabel()}</span><span class="country-chevron" aria-hidden="true">⌄</span></button></div></div>`);
+    <div class="legal-line"><div class="legal-details"><span class="legal-identity">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd <span class="legal-divider" aria-hidden="true">·</span> Reg. no. 2026/811077/07</span><span class="legal-rights">All rights reserved.</span></div><button type="button" class="country-btn footer-link" data-country><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span>${countryLabel()}</span><span class="country-chevron">${svgIcon("chevron", 14)}</span></button></div></div>`);
   $("[data-sub]", el).append(subscribeForm("footer"));
   // Phones: the link sections fold away (tap a heading to open). Wider screens show them all.
   const wide = matchMedia("(min-width: 800px)");
@@ -816,9 +816,9 @@ export function footer(el) {
 // TicketRoom runs in South Africa today; the rest of SADC is coming. Choosing
 // another country explains that and offers updates for it.
 export const SADC = [
-  ["ZA", "South Africa", "🇿🇦"], ["AO", "Angola", "🇦🇴"], ["BW", "Botswana", "🇧🇼"], ["KM", "Comoros", "🇰🇲"], ["CD", "DR Congo", "🇨🇩"],
-  ["SZ", "Eswatini", "🇸🇿"], ["LS", "Lesotho", "🇱🇸"], ["MG", "Madagascar", "🇲🇬"], ["MW", "Malawi", "🇲🇼"], ["MU", "Mauritius", "🇲🇺"],
-  ["MZ", "Mozambique", "🇲🇿"], ["NA", "Namibia", "🇳🇦"], ["SC", "Seychelles", "🇸🇨"], ["TZ", "Tanzania", "🇹🇿"], ["ZM", "Zambia", "🇿🇲"], ["ZW", "Zimbabwe", "🇿🇼"],
+  ["ZA", "South Africa"], ["AO", "Angola"], ["BW", "Botswana"], ["KM", "Comoros"], ["CD", "DR Congo"],
+  ["SZ", "Eswatini"], ["LS", "Lesotho"], ["MG", "Madagascar"], ["MW", "Malawi"], ["MU", "Mauritius"],
+  ["MZ", "Mozambique"], ["NA", "Namibia"], ["SC", "Seychelles"], ["TZ", "Tanzania"], ["ZM", "Zambia"], ["ZW", "Zimbabwe"],
 ];
 const LIVE_COUNTRIES = ["ZA"];
 function countryLabel() { return SADC[0][1]; }
@@ -826,13 +826,13 @@ export function countryDialog() {
   const d = dialog("Choose your country", html`<div class="stack">
     <p class="small muted mb-0">TicketRoom is live in South Africa. We're bringing it to the rest of the SADC region next.</p>
     <ul class="country-list">${SADC.map(([code, name, flag]) => html`<li><button type="button" class="country-row" data-pick="${code}">
-      <span class="flag" aria-hidden="true">${flag}</span><span class="grow">${name}</span>
+      <span class="flag" aria-hidden="true">${code}</span><span class="grow">${name}</span>
       ${LIVE_COUNTRIES.includes(code) ? html`<span class="badge good">Available</span>` : html`<span class="badge plain">Coming soon</span>`}</button></li>`)}</ul></div>`);
   $$("[data-pick]", d).forEach((b) => b.addEventListener("click", () => {
     const [code, name, flag] = SADC.find((c) => c[0] === b.dataset.pick);
     if (LIVE_COUNTRIES.includes(code)) { d.close(); return; }
     render($(".dialog-body", d), html`<div class="stack center">
-      <div class="flag-lg" aria-hidden="true">${flag}</div>
+      <div class="flag-lg" aria-hidden="true">${code}</div>
       <h3 class="mb-0">TicketRoom is coming to ${name}</h3>
       <p class="mb-0">We're not selling tickets in ${name} yet. Leave your email and we'll tell you the day we launch there. Until then you can browse and buy tickets for events in South Africa.</p>
       <div data-sub></div>
@@ -948,7 +948,7 @@ function showBanner(s) {
   if (s?.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
     const b = document.createElement("div");
     b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
-    render(b, html`<div class="wrap"><div class="announcement-card"><div class="announcement-copy"><span class="pill">New</span><p>${s.banner.text}</p></div>${s.banner.linkText && s.banner.linkUrl ? html`<a class="announcement-link" href="${s.banner.linkUrl}">${s.banner.linkText}<span aria-hidden="true">→</span></a>` : ""}<button class="icon-btn" data-hide aria-label="Dismiss announcement">×</button></div></div>`);
+    render(b, html`<div class="wrap"><div class="announcement-card"><div class="announcement-copy"><span class="pill">New</span><p>${s.banner.text}</p></div>${s.banner.linkText && s.banner.linkUrl ? html`<a class="announcement-link" href="${s.banner.linkUrl}">${s.banner.linkText}${svgIcon("arrow", 16)}</a>` : ""}<button class="icon-btn" data-hide aria-label="Dismiss announcement">×</button></div></div>`);
     $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
     document.body.prepend(b);
   }
@@ -1003,7 +1003,7 @@ function chatWidget(s) {
   const bubble = (m) => {
     const el = document.createElement("div");
     el.className = `msg ${m.role}`;
-    render(el, html`<p>${m.text}</p>${m.link ? html`<a class="small" href="${m.link}">Open this page →</a>` : ""}
+    render(el, html`<p>${m.text}</p>${m.link ? html`<a class="small" href="${m.link}">Open this page ${svgIcon("arrow", 14)}</a>` : ""}
       ${m.callback ? html`<button class="btn btn-dark btn-sm" data-cbq>Request a callback</button>` : ""}
       ${m.suggestions?.length ? html`<div class="chips">${m.suggestions.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>` : ""}
       ${m.id && m.helpful === undefined ? html`<div class="fb tiny">Helpful? <button class="btn-link" data-fb="1">Yes</button> <button class="btn-link" data-fb="0">No</button></div>` : ""}`);
@@ -1563,6 +1563,12 @@ const ICONS = {
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   instagram: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>',
   x: '<path d="M18.9 3h3l-6.6 7.5L23 21h-6.1l-4.8-6.3L6.5 21h-3l7.1-8.1L3 3h6.2l4.3 5.8L18.9 3z"/><path d="M7.2 5l10.7 14h2.3L9.5 5H7.2z" fill="currentColor" stroke="none"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  external: '<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
+  backspace: '<path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="m12 9 6 6M18 9l-6 6"/>',
   facebook: '<path d="M13.5 22v-8h2.7l.4-3h-3.1V9.1c0-.9.3-1.5 1.6-1.5h1.7V4.9c-.3 0-1.4-.1-2.6-.1-2.6 0-4.4 1.6-4.4 4.5V11H7v3h2.8v8h3.7Z" fill="currentColor" stroke="none"/>',
 };
 export const svgIcon = (name, size = 18) => raw(`<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);

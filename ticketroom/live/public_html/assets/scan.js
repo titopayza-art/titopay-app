@@ -1,5 +1,5 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features } from "/assets/core.js";
+import { svgIcon, html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features } from "/assets/core.js";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
@@ -30,7 +30,7 @@ async function pickEvent() {
   const saved = localStorage.getItem("tr_scan_event");
   const found = events.find((e) => e.id === saved);
   if (found && events.length === 1) return start(found);
-  render(main, html`<h1>Choose event</h1><div class="stack">${events.map((e) => html`<button class="card btn-block row between" data-ev="${e.id}"><span><strong>${e.title}</strong><br><span class="small muted">${e.venue_name} · ${fmtTime(e.starts_at)}</span></span><span>→</span></button>`)}</div>`);
+  render(main, html`<h1>Choose event</h1><div class="stack">${events.map((e) => html`<button class="card btn-block row between" data-ev="${e.id}"><span><strong>${e.title}</strong><br><span class="small muted">${e.venue_name} · ${fmtTime(e.starts_at)}</span></span>${svgIcon("arrow", 18)}</button>`)}</div>`);
   $$("[data-ev]").forEach((b) => b.addEventListener("click", () => { const ev = events.find((e) => e.id === b.dataset.ev); localStorage.setItem("tr_scan_event", ev.id); start(ev); }));
 }
 
@@ -40,7 +40,7 @@ function start(ev) {
   if (!ev.can_scan && ev.can_sell_tickets) return boxOfficeApp(main, ev.id, { onBack: () => { localStorage.removeItem("tr_scan_event"); pickEvent(); }, backLabel: "Change event" });
   render(main, html`<div class="row between"><div><div class="small muted">Event team</div><h1 class="mb-0">${ev.title}</h1>${Number(ev.is_test) === 1 ? html`<p class="tk-test mt" role="note" data-test-event>TEST EVENT · scans here are practice, not a real event</p>` : ""}${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}</div><button class="btn btn-ghost btn-sm" data-change>Change</button></div>
     <div class="tabs mt" role="tablist">${ev.can_scan ? html`<button role="tab" aria-selected="true" data-mode="gate">Gate</button>` : ""}${ev.can_manage_tags ? html`<button role="tab" aria-selected="false" data-mode="desk">Tag desk</button>` : ""}${DESK && ev.can_manage_tags && ev.cashless_enabled ? html`<button role="tab" aria-selected="false" data-topup>Top-up desk</button>` : ""}${ev.can_sell_tickets ? html`<button role="tab" aria-selected="false" data-boxoffice>Box office</button>` : ""}</div>
-    <div class="row between"><span id="stats" class="small muted"></span><span class="netbar on" id="net">● Online</span></div>
+    <div class="row between"><span id="stats" class="small muted"></span><span class="netbar on" id="net">Online</span></div>
     <p class="small muted mb-0" id="offline-state" aria-live="polite"></p>
     <div class="camera mt" id="cam"></div>
     <div class="row mt"><button class="btn btn-primary grow" data-cam>Start camera</button>${nfcSupported() ? html`<button class="btn btn-ghost grow" data-nfc>Tap NFC</button>` : ""}</div>
@@ -136,7 +136,7 @@ function setNet(on) {
   const n = $("#net");
   if (!n) return;
   n.className = `netbar ${on ? "on" : "off"}`;
-  n.textContent = on ? "● Online" : offline.status().ready ? "● Offline: checking against this phone's list" : "● Offline: scans cannot be checked";
+  n.textContent = on ? "Online" : offline.status().ready ? "Offline: checking against this phone's list" : "Offline: scans cannot be checked";
   if (on) offline.sync();
 }
 

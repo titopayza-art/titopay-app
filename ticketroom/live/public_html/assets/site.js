@@ -178,7 +178,7 @@ async function home() {
       <div><span class="cat-label">For organisers</span><h2>Putting on an event? List it with us.</h2>
         <ul><li>QR tickets and a live view of who has booked</li><li>Your staff scan tickets at the gate on their own phones</li><li>Email the people who asked to hear from you</li><li>Cashless wristbands, vendor POS and transparent payouts</li><li>Free events cost nothing to list</li></ul></div>
       <div class="promo-actions"><div class="row"><a class="btn btn-primary" href="/sell">Start selling</a><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div>
-        <a class="promo-partner" href="/partners">Planning an event or representing a venue or brand? <span>Partner with us <span aria-hidden="true">→</span></span></a></div>
+        <a class="promo-partner" href="/partners">Planning an event or representing a venue or brand? <span>Partner with us ${svgIcon("arrow", 16)}</span></a></div>
     </div></div></section>
     <section class="section pt-0"><div class="wrap"><div class="ad-band">
       <div><span class="cat-label">Advertising</span><h2>Advertise your business on TicketRoom</h2>
@@ -188,7 +188,7 @@ async function home() {
     <section class="section pt-0"><div class="wrap"><a class="safety-teaser" href="/safety">
       <span class="safety-teaser-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/></svg></span>
       <span class="safety-teaser-copy"><span class="cat-label">Before you head out</span><strong>Event safety</strong><span>Simple ways to look after yourself and your friends.</span></span>
-      <span class="safety-teaser-link">Read the guide <span aria-hidden="true">→</span></span>
+      <span class="safety-teaser-link">Read the guide ${svgIcon("arrow", 16)}</span>
     </a></div></section>`);
 
   const syncQuick = () => {
@@ -935,7 +935,7 @@ async function careersPage() {
         <div><span class="cat-label">${job.department}</span><h2>${job.title}</h2><p class="muted mb-0">${job.location} · ${job.employment_type}</p></div>
         <p class="lead mb-0">${job.summary}</p><div class="job-description">${job.description}</div>
         <div class="row between job-actions"><span class="small muted">${job.closes_at ? `Applications close ${fmtDate(`${job.closes_at}T12:00:00+02:00`, { day: "numeric", month: "long", year: "numeric" })}` : "Applications are open"}</span>
-          <a class="btn btn-primary" href="${job.application_url}" target="_blank" rel="noopener noreferrer">Apply for this role <span aria-hidden="true">→</span></a></div>
+          <a class="btn btn-primary" href="${job.application_url}" target="_blank" rel="noopener noreferrer">Apply for this role ${svgIcon("arrow", 16)}</a></div>
       </article>`)}</div>` : html`<div class="card pad-lg stack"><span class="cat-label">No open roles</span><h2>Nothing available right now</h2><p class="muted mb-0">There are no current vacancies. Check back here for future opportunities.</p></div>`}
       <p class="small muted mb-0">For questions about a role, <a href="/contact">contact us</a>.</p>
     </div></section>`);
@@ -1334,7 +1334,7 @@ function unsubscribe() {
     render(main, html`<div class="wrap section"><div class="card pad-lg stack"><h1>Unsubscribe from marketing</h1>
       <p>Enter your email and we'll send you a one-click link to stop <strong>all</strong> marketing emails and SMSes from TicketRoom and every organiser.</p>
       <form class="stack" id="ur"><div class="field"><label for="u-email">Email</label><input id="u-email" name="email" type="email" required autocomplete="email"></div><button class="btn btn-dark">Send unsubscribe link</button></form>
-      <p class="small muted mb-0">Signed in? You can also switch marketing off in <a href="/account#/settings">Account → Settings &amp; privacy</a>. Messages about tickets you bought (receipts, event changes) are still sent.</p></div></div>`);
+      <p class="small muted mb-0">Signed in? You can also switch marketing off in <a href="/account#/settings">Account, then Settings &amp; privacy</a>. Messages about tickets you bought (receipts, event changes) are still sent.</p></div></div>`);
     me().then((u) => { if (u) $("#u-email").value = u.email; });
     onSubmit($("#ur"), async (v, f) => { const r = await post("/api/site/unsubscribe-request", v); render(f, html`<p class="callout good mb-0">${r.message}</p>`); });
     return;

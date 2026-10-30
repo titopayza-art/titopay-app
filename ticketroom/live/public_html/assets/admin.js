@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { features, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, plural, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError, toLocalInput, fromLocalInput, fmtTime } from "/assets/core.js";
+import { features, svgIcon, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, plural, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError, toLocalInput, fromLocalInput, fmtTime } from "/assets/core.js";
 import { deskPicker } from "/assets/cashdesk.js";
 
 const main = $("#main");
@@ -333,7 +333,7 @@ async function eventChangeRequests() {
           <label class="check"><input type="checkbox" name="attendeeImpactReviewed"><span>Ticket-holder impact has been reviewed, with an appropriate notice and customer-support plan for material changes.</span></label>
           <label class="check"><input type="checkbox" name="complianceAndOperationsChecked"><span>Safety, permits, age restrictions and event operations remain appropriate after the change.</span></label>
           <div class="field"><label for="review-note-${r.id}">Review note <span class="muted">(required for approval or rejection)</span></label><textarea id="review-note-${r.id}" name="reviewNote" required minlength="10" maxlength="1500" rows="3" placeholder="Record what you checked and why you are approving or rejecting this request."></textarea></div>
-          <div class="row"><button type="button" class="btn btn-good" data-change-review-action="approve" data-id="${r.id}">Approve and apply</button><button type="button" class="btn btn-ghost" data-change-review-action="reject" data-id="${r.id}">Reject request</button><a class="btn btn-link" href="/events/${r.event_slug}" target="_blank">View current public event ↗</a></div></form>` : html`<div class="card flat"><p class="small mb-0"><strong>Admin note:</strong> ${r.review_note || "No note recorded."}${r.reviewed_at ? ` · ${fmtDateTime(r.reviewed_at)}` : ""}</p></div>`}
+          <div class="row"><button type="button" class="btn btn-good" data-change-review-action="approve" data-id="${r.id}">Approve and apply</button><button type="button" class="btn btn-ghost" data-change-review-action="reject" data-id="${r.id}">Reject request</button><a class="btn btn-link" href="/events/${r.event_slug}" target="_blank">View current public event ${svgIcon("external", 14)}</a></div></form>` : html`<div class="card flat"><p class="small mb-0"><strong>Admin note:</strong> ${r.review_note || "No note recorded."}${r.reviewed_at ? ` · ${fmtDateTime(r.reviewed_at)}` : ""}</p></div>`}
       </section>`;
     })}</div>` : empty(filter === "pending" ? "No event change requests are awaiting review." : "No event change requests found.")}`);
   $$('[data-change-filter]').forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_event_changes", b.dataset.changeFilter); eventChangeRequests(); }));
@@ -1044,7 +1044,7 @@ async function emailsPage() {
   const groups = ["Attendee", "Everyone", "Organiser", "Subscriber", "Staff"];
   const auto = (e) => e.setting ? (st[e.setting] ? html`<span class="badge good">Automatic · on</span>` : html`<span class="badge">Automatic · off</span>`) : html`<span class="badge info">Sent when it happens</span>`;
   render(main, html`${head("Email templates", "Every email TicketRoom sends. Each is sent as a branded HTML email with a plain-text version.")}
-    ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Set up the mailbox under <a href="#/integrations">Integrations</a> → Email, then send yourself a test.</p>` : ""}
+    ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Set up the mailbox under <a href="#/integrations">Integrations</a>, then Email, then send yourself a test.</p>` : ""}
     <section class="card stack"><h2>Automatic emails</h2>
       <form class="stack" id="f-em">
         <label class="check"><input type="checkbox" name="reminderDayBefore" ${raw(st.reminderDayBefore ? "checked" : "")} ${ro}><span><strong>Day-before reminder</strong> to every ticket holder, about 24 hours before the event</span></label>

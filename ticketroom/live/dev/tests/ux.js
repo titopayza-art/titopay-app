@@ -46,8 +46,9 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 const stamp = Date.now().toString(36);
 const uuid = () => crypto.randomUUID();
 const WIDTHS = [[390, 844], [1366, 900]];
-// Words and phrases that read as generic filler, plus emoji (country flags and tick marks are fine).
-const HYPE = /\b(?:seamless(?:ly)?|elevate[sd]?|unlock (?:your|the|new)|effortless(?:ly)?|empower(?:s|ing)?|robust|world-class|game-chang\w*|next-level|cutting-edge|journey|vibrant|curated|unforgettable|hassle-free|one-stop|whether you're|in today's|lorem|ipsum|dummy|todo|no surprises|in seconds|look no further|like never before)\b|[\u{1F300}-\u{1F5FF}\u{1F600}-\u{1FAFF}\u{2600}-\u{26FF}]/giu;
+// Words and phrases that read as generic filler, plus emoji, flags and text symbols used as icons
+// (icons must be real SVG line icons; arrows in written menu paths are fine).
+const HYPE = /\b(?:seamless(?:ly)?|elevate[sd]?|unlock (?:your|the|new)|effortless(?:ly)?|empower(?:s|ing)?|robust|world-class|game-chang\w*|next-level|cutting-edge|journey|vibrant|curated|unforgettable|hassle-free|one-stop|whether you're|in today's|lorem|ipsum|dummy|todo|no surprises|in seconds|look no further|like never before)\b|[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1F5FF}\u{1F600}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}]/giu;
 
 // ---------------------------------------------------------------- accounts and data
 async function signUp(name, email, password) {

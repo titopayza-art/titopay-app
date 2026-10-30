@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
+import { svgIcon, html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 
@@ -71,7 +71,7 @@ function setupChecklist(events) {
   if (done === steps.length || !can("owner", "manager")) return "";
   return html`<section class="card checklist mb"><div class="card-title"><h2 class="mb-0">Get your first event live</h2><span class="small muted">${done} of ${steps.length} done</span></div>
     <div class="meter amber mt"><i data-pct="${(done / steps.length) * 100}"></i></div>
-    <ol class="steps-list">${steps.map(([label, ok, href]) => html`<li class="${ok ? "done" : ""}"><span class="tick" aria-hidden="true">${ok ? "✓" : ""}</span>
+    <ol class="steps-list">${steps.map(([label, ok, href]) => html`<li class="${ok ? "done" : ""}"><span class="tick" aria-hidden="true">${ok ? svgIcon("check", 14) : ""}</span>
       ${!ok && href.startsWith("#") ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`}${!ok && href && !href.startsWith("#") ? html`<span class="small muted"> · ${href}</span>` : ""}<span class="sr-only">${ok ? " (done)" : " (to do)"}</span></li>`)}</ol></section>`;
 }
 
@@ -245,7 +245,7 @@ async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);
   const e = d.event;
   const actions = [];
-  if (e.status === "published") actions.push(html`<a class="btn btn-ghost" href="/events/${e.slug}" target="_blank">View public page ↗</a>`);
+  if (e.status === "published") actions.push(html`<a class="btn btn-ghost" href="/events/${e.slug}" target="_blank">${svgIcon("external", 14)}</a>`);
   else if (!["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-preview>Preview</button>`);
   if (can("owner", "manager") && !["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-duplicate>Use as template</button>`);
   if (e.status === "draft" && can("owner", "manager")) actions.push(html`<button class="btn btn-primary" data-submit>Publish</button>`);
@@ -750,7 +750,7 @@ async function detailsTab(el, d, reload) {
   const history = (d.eventChangeRequests || []).filter((r) => r.status !== "pending").slice(0, 5);
   const fields = { title: "Event name", summary: "Summary", description: "Description", category: "Category", venueName: "Venue", address: "Street address", city: "City", province: "Province", startsAt: "Starts", endsAt: "Ends", capacity: "Capacity", salesStartAt: "Sales open", salesEndAt: "Sales close", doorsOpenAt: "Doors open", parkRideInfo: "Park and ride details", parkRideUrl: "Park and ride link", prohibitedItems: "Prohibited items", ticketGroups: "Ticket groups", refundPolicy: "Refund policy", accessibilityInfo: "Accessibility", ageRestriction: "Age restriction", transfersEnabled: "Ticket transfers", resaleEnabled: "Fan resale", cashlessEnabled: "Cashless", isFree: "Free event", serviceFeePayer: "Service fee payer", ageGroups: "Audience", lineup: "Line-up", presaleQueueEnabled: "Presale queue", imageUploadId: "Poster image" };
   const changeValue = (v) => typeof v === "string" ? v : JSON.stringify(v);
-  const changesList = (r) => html`<ul class="small">${Object.entries(r.changes?.event || {}).map(([k, v]) => html`<li><strong>${fields[k] || k}:</strong> ${changeValue(r.before?.event?.[k]) || "none"} → ${changeValue(v) || "none"}</li>`)}${r.changes?.ticketType ? html`<li><strong>${r.changes.ticketType.id ? "Ticket type" : "New ticket type"}:</strong> ${Object.entries(r.changes.ticketType.changes || {}).map(([k, v]) => `${k}: ${changeValue(r.before?.ticketType?.fields?.[k]) || "none"} → ${changeValue(v)}`).join(" · ")}</li>` : ""}</ul>`;
+  const changesList = (r) => html`<ul class="small">${Object.entries(r.changes?.event || {}).map(([k, v]) => html`<li><strong>${fields[k] || k}:</strong> ${changeValue(r.before?.event?.[k]) || "none"} to ${changeValue(v) || "none"}</li>`)}${r.changes?.ticketType ? html`<li><strong>${r.changes.ticketType.id ? "Ticket type" : "New ticket type"}:</strong> ${Object.entries(r.changes.ticketType.changes || {}).map(([k, v]) => `${k}: ${changeValue(r.before?.ticketType?.fields?.[k]) || "none"} to ${changeValue(v)}`).join(" · ")}</li>` : ""}</ul>`;
   render(el, html`${reviewRequired && pending ? html`<section class="card stack"><div class="row between"><h3 class="mb-0">Change request awaiting review</h3>${badge("pending")}</div><p class="mb-0">${pending.request_reason}</p>${changesList(pending)}<p class="small muted mb-0">The live event remains unchanged until an admin completes the review.</p><button class="btn btn-ghost btn-sm" data-withdraw>Withdraw request</button></section>` : ""}
     ${reviewRequired && !pending ? html`<div class="card stack"><p class="callout mb-0">Changes to this live event are reviewed by TicketRoom before they appear publicly. We check the event details, ticket inventory, buyer impact and compliance. If a date or venue changes after tickets have been issued, holders are emailed after approval.</p><div class="field"><label for="event-change-reason">Why do these changes need to be made?</label><textarea id="event-change-reason" required minlength="10" maxlength="1000" rows="3" placeholder="Explain the change and give relevant supporting details for the admin review."></textarea></div>${eventForm(d.event, "Submit changes for admin review")}</div>` : ""}
     ${!reviewRequired ? html`<div class="card">${eventForm(d.event, "Save changes")}</div>` : ""}
@@ -1098,7 +1098,7 @@ function vnConsentDialog(consent) {
   return new Promise((resolve) => {
     let given = false;
     const d = dialog("Permission to check your details", html`<form class="stack" id="vnc">
-      <div class="small">${consent.text.split("\n").map((l) => (l.startsWith("- ") ? html`<div>• ${l.slice(2)}</div>` : html`<p class="mb-0">${l}</p>`))}</div>
+      <div class="small">${consent.text.split("\n").map((l) => (l.startsWith("- ") ? html`<div class="bullet">${l.slice(2)}</div>` : html`<p class="mb-0">${l}</p>`))}</div>
       <label class="check"><input type="checkbox" name="accept" required><span>I agree that TicketRoom may check these details with VerifyNow, for myself and for the organisation I act for.</span></label>
       <div class="row end"><button type="button" class="btn btn-ghost" data-close>Not now</button><button class="btn btn-primary">Give permission</button></div></form>`, { onClose: () => resolve(given) });
     onSubmit($("#vnc", d), async (v) => { await post(`${base()}/verification/consent`, { accept: !!v.accept, version: consent.version }); given = true; d.close(); toast("Thank you. We'll check your details in the background.", "good"); });
@@ -1117,7 +1117,7 @@ function kycWire(root, done) {
   });
 }
 function gateRow(ok, title, text) {
-  return html`<li class="${ok ? "ok" : "no"}"><span class="tick" aria-hidden="true">${ok ? "✓" : "✕"}</span><span><strong>${title}</strong><br><span class="small muted">${text}</span></span><span class="sr-only">${ok ? " (allowed)" : " (blocked)"}</span></li>`;
+  return html`<li class="${ok ? "ok" : "no"}"><span class="tick" aria-hidden="true">${svgIcon(ok ? "check" : "close", 14)}</span><span><strong>${title}</strong><br><span class="small muted">${text}</span></span><span class="sr-only">${ok ? " (allowed)" : " (blocked)"}</span></li>`;
 }
 async function verification() {
   await loadVerif();

@@ -2,7 +2,7 @@
 // the organiser's event workspace and the admin portal. Made for a phone in
 // one hand: find the guest, pick an amount, cash or card, confirm, done.
 // Every amount, balance and outcome comes from the server.
-import { html, render, $, $$, get, post, toast, moneyExact, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, parseRand } from "/assets/core.js";
+import { svgIcon, html, render, $, $$, get, post, toast, moneyExact, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, parseRand } from "/assets/core.js";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
 
 const rand = (c) => moneyExact(c).replace(/\.00$/, "");
@@ -182,7 +182,7 @@ export async function deskPicker(el, { title = "Wristbands & wallets", intro } =
   render(el, spinner());
   const { events } = await get("/api/cashdesk/events");
   const pick = () => render(el, html`<h1>${title}</h1>${intro ? html`<p class="muted">${intro}</p>` : ""}
-    ${events.length ? html`<div class="stack">${events.map((e) => html`<button class="card btn-block row between" data-ev="${e.id}"><span><strong>${e.title}</strong><br><span class="small muted">${e.organiser_name} · ${fmtDateTime(e.starts_at)}${e.ended ? " · over" : ""}${e.cashoutDeskOpen ? " · cash-out desk open" : ""}</span></span><span>→</span></button>`)}</div>`
+    ${events.length ? html`<div class="stack">${events.map((e) => html`<button class="card btn-block row between" data-ev="${e.id}"><span><strong>${e.title}</strong><br><span class="small muted">${e.organiser_name} · ${fmtDateTime(e.starts_at)}${e.ended ? " · over" : ""}${e.cashoutDeskOpen ? " · cash-out desk open" : ""}</span></span>${svgIcon("arrow", 18)}</button>`)}</div>`
       : empty("No cashless events to run a desk for.")}`);
   pick();
   el.onclick = (e) => {
