@@ -3,6 +3,7 @@
 import { svgIcon, html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
+import { teamSection, teamActivity } from "/assets/team.js";
 
 const main = $("#main");
 let ORG = null;
@@ -239,7 +240,7 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);
@@ -254,7 +255,7 @@ async function eventWorkspace({ id, tab = "" }) {
     ${e.status === "pending_approval" ? html`<p class="callout">Waiting to be published. TicketRoom checks new events, usually within one business day, and emails you when it is live. <button class="btn-link" data-preview>Preview it</button></p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
-    <div class="tabs" role="tablist">${TABS.filter(([k]) => (k !== "vendors" || FEATURES.cashless) && (k !== "promote" || FEATURES.promote) && (k !== "box-office" || can("owner", "manager"))).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
+    <div class="tabs" role="tablist">${TABS.filter(([k]) => (k !== "vendors" || FEATURES.cashless) && (k !== "promote" || FEATURES.promote) && (k !== "box-office" || can("owner", "manager")) && (k !== "team" || can("owner", "manager", "finance"))).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
     <div id="tab"></div>`);
   $(`[data-duplicate]`)?.addEventListener("click", () => {
     const d = dialog("Use this event as a template", html`<form class="stack" data-template-form>
@@ -311,7 +312,7 @@ async function eventWorkspace({ id, tab = "" }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, team: teamTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
   render(el, spinner());
   await fns[tab](el, d, () => eventWorkspace({ id, tab }));
 }
@@ -550,23 +551,11 @@ async function attendeesTab(el, d) {
   await draw();
 }
 
-async function staffTab(el, d, reload) {
-  const { staff } = await get(`${base()}/events/${d.event.id}/staff`);
+async function staffTab(el, d) {
   render(el, html`<section class="card" aria-labelledby="live-h"><div class="card-title"><h3 id="live-h">Live check-ins</h3><span class="badge good" data-live>Live</span></div><div id="live">${spinner()}</div></section>
-    <section class="card mt"><div class="card-title"><h3>Ticket scanners & desk staff</h3></div>
-    <p class="small muted">Add your team by email and choose what each person can do. They sign in at <strong>ticketroom.co.za/scan</strong> and only see this event. New people get an email invite to set a password.</p>
-    ${staff.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scan tickets</th><th>Manage tags</th><th>Sell tickets</th><th class="num">Admitted</th><th></th></tr></thead><tbody>
-      ${staff.map((s) => html`<tr><td>${s.full_name}<div class="small muted">${s.email}</div></td><td>${s.can_scan ? "Yes" : "No"}</td><td>${s.can_manage_tags ? "Yes" : "No"}</td><td>${s.can_sell_tickets ? "Yes" : "No"}</td><td class="num">${s.admitted}</td><td>${can("owner", "manager") ? html`<button class="btn btn-ghost btn-sm" data-rm="${s.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No event staff yet. Add your first team member below.</p>`}
-    ${can("owner", "manager") ? html`<form class="stack mt" id="sf"><div class="grid-2"><div class="field"><label for="sn">Name <span class="muted">(for new people)</span></label><input id="sn" name="fullName" maxlength="120" autocomplete="off"></div>
-      <div class="field"><label for="se">Email</label><input id="se" name="email" type="email" required autocomplete="off"></div></div>
-      <label class="check"><input type="checkbox" name="canScan" checked><span>Can scan tickets at the gate</span></label><label class="check" data-feature="tags"><input type="checkbox" name="canManageTags"><span>Can link, replace and block tags (registration desk)</span></label><label class="check"><input type="checkbox" name="canSellTickets"><span>Can sell tickets and cash up at the door</span></label>
-      <button class="btn btn-dark">Add team member</button></form>` : ""}</section>`);
-  if ($("#sf")) onSubmit($("#sf"), async (v) => {
-    const r = await post(`${base()}/events/${d.event.id}/staff`, v);
-    toast(r.invited ? `Invite emailed to ${v.email}. They can use their assigned event tools once they set a password.` : "Event permissions updated.", "good");
-    reload();
-  });
-  $$("[data-rm]", el).forEach((b) => b.addEventListener("click", async () => { await del(`${base()}/events/${d.event.id}/staff/${b.dataset.rm}`); reload(); }));
+    <section class="card mt" aria-labelledby="team-h" data-team></section>`);
+  // The same Event team card as the admin portal: people TicketRoom added are marked.
+  await teamSection($("[data-team]", el), { base: `${base()}/events/${d.event.id}`, canEdit: can("owner", "manager"), viewer: "organiser" });
 
   const live = $("#live", el);
   const tick = async () => {
@@ -587,6 +576,13 @@ async function staffTab(el, d, reload) {
     setTimeout(tick, document.hidden ? 15000 : 5000);
   };
   tick();
+}
+
+// What each person on the event team did: scans, wristbands, top-ups,
+// cash-outs and box office sales, with each person's full timeline.
+async function teamTab(el, d) {
+  render(el, html`<section class="card" data-activity></section>`);
+  await teamActivity($("[data-activity]", el), { base: `${base()}/events/${d.event.id}` });
 }
 
 // Gate passes: crew, artists, media, vendors and guests get in without a

@@ -1,6 +1,7 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
 import { features, svgIcon, html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, plural, parseRand, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, emailLinkPage, qrPanel, ApiError, toLocalInput, fromLocalInput, fmtTime } from "/assets/core.js";
+import { teamSection, teamActivity } from "/assets/team.js";
 import { deskPicker } from "/assets/cashdesk.js";
 
 const main = $("#main");
@@ -277,7 +278,7 @@ async function events() {
   const { events: list } = await get(`/api/admin/events${query.size ? `?${query}` : ""}`);
   render(main, html`${head(filter === "featured" ? "Featured events" : "All events", filter === "featured" ? "Only staff can choose which events appear in TicketRoom’s featured rail. Add placements from All events; remove them here." : "Every event on TicketRoom, from every organiser. Approve, suspend or handle cancellation requests.")}
     ${searchBox("eq", q, "Search by event ID (EV-…), organiser ID, event or organiser name")}<div class="chips ${q ? "hidden" : ""}">${[["pending_approval", "Awaiting approval"], ["cancel_requests", "Cancellation requests"], ["published", "Published"], ["suspended", "Suspended"], ["featured", "Featured"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
-    <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong><div class="tiny muted mono">${e.ref || ""}</div>${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">Featured</span>` : ""}</td><td>${e.organiser_name}<div class="tiny muted mono">${e.organiser_ref || ""}</div></td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
+    <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong><div class="tiny muted mono">${e.ref || ""}</div>${isA() || isF() ? html`<a class="btn btn-link btn-sm" href="#/events/${e.id}">Event team and activity</a>` : ""}${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">Featured</span>` : ""}</td><td>${e.organiser_name}<div class="tiny muted mono">${e.organiser_ref || ""}</div></td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
       <td>${isA() ? html`<div class="row">
         ${e.status === "pending_approval" ? html`<button class="btn btn-good btn-sm" data-a="publish" data-id="${e.id}">Publish</button><button class="btn btn-ghost btn-sm" data-a="reject" data-id="${e.id}">Request changes</button>` : ""}
         ${e.status === "published" ? html`<button class="btn btn-ghost btn-sm" data-a="${e.featured ? "unfeature" : "feature"}" data-id="${e.id}">${e.featured ? "Unfeature" : "Feature"}</button><button class="btn btn-ghost btn-sm" data-a="suspend" data-id="${e.id}">Suspend</button>` : ""}
@@ -297,6 +298,19 @@ async function events() {
     if (!why) return;
     try { const r = await post(`/api/admin/events/${b.dataset.cancel}/cancel`, { reason: why }); toast(`Event cancelled. ${r.refundsRaised} refunds raised for finance.${r.unpaidCancelled ? ` ${r.unpaidCancelled} unpaid order${r.unpaidCancelled === 1 ? "" : "s"} cancelled.` : ""}${r.skipped?.length ? ` Not raised yet: ${r.skipped.map((x) => `${x.reference} (${x.reason})`).join("; ")}` : ""}`, r.skipped?.length ? "bad" : "good"); events(); } catch (err) { toast(err.message, "bad"); }
   }));
+}
+
+// One event's page: its Event team (admins add, change and remove people
+// with the organiser's own rules and emails) and Team activity.
+async function eventPage({ id }) {
+  const d = await get(`/api/admin/events/${id}/team`);
+  const e = d.event;
+  const base = `/api/admin/events/${id}`;
+  render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city} · ${e.organiser_name}${e.ref ? html` · Event ID <span class="mono">${e.ref}</span>` : ""}`, html`<a class="btn btn-ghost" href="#/events">All events</a>`)}
+    <section class="card" aria-labelledby="team-h" data-team></section>
+    <section class="card mt" data-activity></section>`);
+  await teamSection($("[data-team]"), { base, list: d.staff, canEdit: d.canManage, viewer: "admin" });
+  await teamActivity($("[data-activity]"), { base });
 }
 
 async function eventChangeRequests() {
@@ -1470,6 +1484,6 @@ function practiceTickets(e, tickets) {
   await header($("#header"), { portal: "admin" });
   document.title = "Admin portal | TicketRoom";
   nav();
-  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/event-changes", eventChangeRequests], ["/promo-codes", promoCodes], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/wallets", gate("cashDesk", wallets)], ["/support", support], ["/promotions", promotions],
+  router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/events/:id", (p) => eventPage(p)], ["/event-changes", eventChangeRequests], ["/promo-codes", promoCodes], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/wallets", gate("cashDesk", wallets)], ["/support", support], ["/promotions", promotions],
     ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/retail-partners", retailPartners], ["/audit", audit], ["/outbox", outbox], ["/backups", backups], ["/site", siteSettings], ["/posters", posters], ["/careers", careersAdmin], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/test-event", testEventPage], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();

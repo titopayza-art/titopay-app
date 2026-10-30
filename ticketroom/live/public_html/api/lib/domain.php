@@ -729,10 +729,30 @@ function admit(array $staff, array $b): array
 function admit_scan(array $staff, array $b): array
 {
     return tx(function () use ($staff, $b) {
+        $logged = null;
+        $r = admit_decide($staff, $b, $logged);
+        // One line per scan, with what the gate was told (the reason) next to
+        // its broad outcome, so every refusal can be counted by reason.
+        if ($logged) admission_record($staff, $b, $logged, (string) ($r['outcome'] ?? $logged['outcome']));
+        return $r;
+    });
+}
+// The scan log line. Offline scans synced later keep the person who scanned
+// and the phone's time; synced_by and synced_at record who sent them, when.
+function admission_record(array $staff, array $b, array $logged, string $reason): void
+{
+    $offline = !empty($b['offline']);
+    q('INSERT INTO admission_log (event_id, ticket_id, pass_id, scanned_by, outcome, reason, gate, occurred_at, offline, synced_by, synced_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [$b['eventId'], $logged['ticket'], $logged['pass'], $staff['id'], $logged['outcome'], $reason, $b['gate'] ?? null, $b['at'] ?? now_iso(),
+         $offline ? 1 : 0, $offline ? ($b['syncedBy'] ?? $staff['id']) : null, $offline ? now_iso() : null]);
+}
+function admit_decide(array $staff, array $b, ?array &$logged): array
+{
+    {
         $eventId = $b['eventId'];
         $ev = row('SELECT id, title, status, starts_at, ends_at, age_restriction FROM events WHERE id = ?', [$eventId]);
-        $log = function (string $outcome, ?string $ticketId = null) use ($eventId, $staff, $b) {
-            q('INSERT INTO admission_log (event_id, ticket_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$eventId, $ticketId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
+        $log = function (string $outcome, ?string $ticketId = null) use (&$logged) {
+            $logged = ['outcome' => $outcome, 'ticket' => $ticketId, 'pass' => null];
         };
         $notLive = function () use ($log) { $log('event_not_live'); return ['outcome' => 'event_not_live', 'message' => 'This event is not open for entry right now.']; };
         $replaced = function (?string $ticketId) use ($log) {
@@ -763,16 +783,16 @@ function admit_scan(array $staff, array $b): array
             if (!$t || $t['owner_user_id'] !== $tag['user_id']) { $log('invalid', $t['id'] ?? null); return ['outcome' => 'invalid', 'message' => 'This tag no longer matches its ticket. Send the guest to the registration desk.']; }
             q('UPDATE tags SET last_used_at = ? WHERE id = ?', [now_iso(), $tag['id']]);
         } else {
-            if ($isPass) return admit_pass($staff, $b, $ev);
+            if ($isPass) return admit_pass($staff, $b, $ev, $logged);
             $p = qr_parse($b['payload']);
             if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom ticket, or the code has been altered.']; }
             $t = row('SELECT * FROM tickets WHERE code = ?', [$p['code']]);
             if (!$t) {
                 // A typed code may belong to a gate pass.
-                if (!$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev);
+                if (!$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev, $logged);
                 // The old code of a ticket or pass that was transferred or reissued.
                 $old = row('SELECT kind, ref_id FROM replaced_codes WHERE code = ?', [$p['code']]);
-                if ($old && $old['kind'] === 'pass') return admit_pass($staff, $b + ['replacedPass' => $old['ref_id']], $ev);
+                if ($old && $old['kind'] === 'pass') return admit_pass($staff, $b + ['replacedPass' => $old['ref_id']], $ev, $logged);
                 if ($old) return $replaced($old['ref_id']);
                 $log('invalid');
                 return ['outcome' => 'invalid', 'message' => 'Ticket not found.'];
@@ -816,14 +836,14 @@ function admit_scan(array $staff, array $b): array
         }
         $log('admitted', $t['id']);
         return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $t['holder_name'], 'ticketType' => $type, 'code' => $t['code'], 'admits' => (int) $tt['admits'], 'ageRestriction' => $age];
-    });
+    }
 }
 // Runs inside admit()'s transaction. Re-entry passes are let in every time
 // (each entry is logged); single-entry passes work once, like a ticket.
-function admit_pass(array $staff, array $b, array $ev): array
+function admit_pass(array $staff, array $b, array $ev, ?array &$logged = null): array
 {
-    $log = function (string $outcome, ?string $passId = null) use ($ev, $staff, $b) {
-        q('INSERT INTO admission_log (event_id, pass_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$ev['id'], $passId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
+    $log = function (string $outcome, ?string $passId = null) use (&$logged) {
+        $logged = ['outcome' => $outcome, 'ticket' => null, 'pass' => $passId];
     };
     $replaced = function (?string $passId) use ($log) { $log('invalid', $passId); return ['outcome' => 'replaced', 'message' => 'This pass was replaced. Ask for the current pass.']; };
     if (isset($b['replacedPass'])) return $replaced($b['replacedPass']);

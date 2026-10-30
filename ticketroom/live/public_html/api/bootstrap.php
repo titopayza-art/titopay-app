@@ -29,11 +29,12 @@ require TR_APP . '/lib/promote.php';
 require TR_APP . '/lib/exchange.php';
 require TR_APP . '/lib/ops.php';
 require TR_APP . '/lib/testevent.php';
+require TR_APP . '/lib/team.php';
 
 // The API's route files, loaded by name. A file left behind by an older
 // upload (one no longer in this list) is never run. A new route file must be
 // added here.
-const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'testevent', 'verification'];
+const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
 function tr_load_routes(): void
 {
     foreach (TR_ROUTE_FILES as $f) require_once TR_APP . "/routes/$f.php";
@@ -227,7 +228,7 @@ const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT
 const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 53;
+const SCHEMA_VERSION = 54;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -578,6 +579,17 @@ const UPGRADES = [
         'CREATE INDEX IF NOT EXISTS wallet_passes_state_idx ON wallet_passes (state, expires_at)',
         'CREATE INDEX IF NOT EXISTS wallet_passes_ticket_idx ON wallet_passes (ticket_id)',
         WALLET_DEVICES_SQL,
+    ],
+    // Event team accountability: the reason each scan was refused, offline
+    // scans kept with their own scanner (and who synced them, when), and
+    // indexes for the per-person Team activity view.
+    54 => [
+        'ALTER TABLE admission_log ADD COLUMN reason TEXT',
+        'ALTER TABLE admission_log ADD COLUMN offline INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE admission_log ADD COLUMN synced_by TEXT REFERENCES users(id)',
+        'ALTER TABLE admission_log ADD COLUMN synced_at TEXT',
+        'CREATE INDEX IF NOT EXISTS door_tenders_event_idx ON door_tenders (event_id, cashier_id)',
+        'CREATE INDEX IF NOT EXISTS wallet_cashouts_paid_idx ON wallet_cashouts (event_id, paid_by)',
     ],
 ];
 // Promote's tables and columns (version 13), each only if missing.

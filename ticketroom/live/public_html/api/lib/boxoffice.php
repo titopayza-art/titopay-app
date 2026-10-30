@@ -34,7 +34,7 @@ function door_current_shift(string $eventId, string $cashierId): ?array
     $s = row("SELECT id FROM door_shifts WHERE event_id = ? AND retail_partner_id IS NULL AND cashier_id = ? AND status = 'open'", [$eventId, $cashierId]);
     return $s ? door_shift_view($s['id']) : null;
 }
-function door_create_order(array $u, array $event, ?array $retailPartner = null): array
+function door_create_order(array $u, array $event, ?array $retailPartner = null): Response
 {
     limit('doororder', 30, 60, $u['id']);
     if ($event['status'] !== 'published') throw conflict('Door sales are available only for published events.', 'event_not_live');

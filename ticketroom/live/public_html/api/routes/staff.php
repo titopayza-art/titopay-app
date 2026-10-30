@@ -198,7 +198,8 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
 route('POST', '/api/staff/scan/sync', function () {
     $u = require_auth();
     limit('scansync', 120, 60, $u['id']);
-    $b = check(body(), ['eventId' => R::uuid(), 'scans' => R::arr(R::obj(['id' => R::str(['max' => 40]), 'payload' => R::str(['max' => 120]), 'gate' => R::str(['optional' => true, 'max' => 40]), 'at' => R::str(['optional' => true, 'max' => 40])]), ['min' => 1, 'max' => 500])]);
+    $b = check(body(), ['eventId' => R::uuid(), 'scans' => R::arr(R::obj(['id' => R::str(['max' => 40]), 'payload' => R::str(['max' => 120]), 'gate' => R::str(['optional' => true, 'max' => 40]), 'at' => R::str(['optional' => true, 'max' => 40]),
+        'by' => R::uuid(['optional' => true])]), ['min' => 1, 'max' => 500])]);
     event_staff_access($u, $b['eventId'], 'can_scan');
     $out = [];
     $oldest = microtime(true) - 2 * 86400;
@@ -206,7 +207,11 @@ route('POST', '/api/staff/scan/sync', function () {
         // The phone's scan time, if it is believable (not in the future, not days old).
         $t = isset($s['at']) ? parse_iso($s['at']) : null;
         $at = $t && to_unix($t) <= microtime(true) + 60 && to_unix($t) > $oldest ? $t : null;
-        $r = admit($u, ['eventId' => $b['eventId'], 'payload' => $s['payload'], 'gate' => trim(($s['gate'] ?? '') . ' (offline)'), 'at' => $at]);
+        // A phone keeps its unsent scans when one person signs out and the
+        // next signs in. Each scan stays with the person who made it (while
+        // they are still on this event's gate team); who sent it is recorded too.
+        $scanner = !empty($s['by']) && $s['by'] !== $u['id'] && team_can_scan($s['by'], $b['eventId']) ? ['id' => $s['by']] : $u;
+        $r = admit($scanner, ['eventId' => $b['eventId'], 'payload' => $s['payload'], 'gate' => trim(($s['gate'] ?? '') . ' (offline)'), 'at' => $at, 'offline' => true, 'syncedBy' => $u['id']]);
         $out[] = ['id' => $s['id'], 'outcome' => $r['outcome']];
     }
     return ['results' => $out];
