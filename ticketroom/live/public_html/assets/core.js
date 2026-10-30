@@ -46,6 +46,11 @@ export const fromLocalInput = (v) => {
 };
 export const parseRand = (s) => { const t = String(s || "").replace(/^R\s*/i, "").replace(/\s/g, "").replace(",", "."); if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null; const [w, f = ""] = t.split("."); return Number(w) * 100 + Number((f + "00").slice(0, 2)); };
 export const idem = () => (crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`);
+// Event categories as people read them (the database keeps the short key).
+export const CATEGORY_LABELS = { music: "Music", festival: "Festival", comedy: "Comedy", sport: "Sport", arts: "Arts & theatre", food: "Food & drink", business: "Business", family: "Family", nightlife: "Nightlife", other: "Other" };
+export const categoryLabel = (c) => CATEGORY_LABELS[c] || (c ? String(c).charAt(0).toUpperCase() + String(c).slice(1).replace(/_/g, " ") : "");
+// "1 ticket", "2 tickets"; pass the plural when it is not just an added "s".
+export const plural = (n, one, many = `${one}s`) => `${Number(n || 0).toLocaleString("en-ZA")} ${Number(n) === 1 ? one : many}`;
 export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 
 // ---------- edition features ----------
@@ -525,7 +530,8 @@ export const badge = (status) => {
     posted: "good", ended: "plain",
     // Waitlists and TicketRoom Exchange
     resold: "info", sold: "good", "paid to you": "good", "up for resale": "warn", "offered to waitlist": "warn", "being paid": "warn", waiting: "warn", offered: "warn", left: "plain", closed: "plain", "ticket offered": "info", manual_pending: "warn" };
-  return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
+  const text = String(status || "").replace(/_/g, " ");
+  return html`<span class="badge ${map[status] || ""}">${text.charAt(0).toUpperCase() + text.slice(1)}</span>`;
 };
 
 export function empty(text, action = "") {
@@ -535,7 +541,7 @@ export const spinner = () => html`<div class="spinner" role="status" aria-label=
 
 export function poster(ev, cls = "") {
   if (ev.image_upload_id) return html`<div class="poster ${cls}"><img src="/media/${ev.image_upload_id}" alt="" loading="lazy"></div>`;
-  return html`<div class="poster fallback cat-${ev.category || "other"} ${cls}"><span>${ev.title}</span></div>`;
+  return html`<div class="poster fallback cat-${ev.category || "other"} ${cls}"><span class="poster-mark"><img src="/assets/logo-mark.svg" alt="" width="56" height="42"><b>${categoryLabel(ev.category) || "Live event"}</b></span></div>`;
 }
 
 // ---------- brand chrome ----------
@@ -908,12 +914,12 @@ export function hoursText(hours) {
   return `${hours.holiday ? `Closed for ${hours.holiday}` : "We're closed right now"} · back ${when}`;
 }
 export function weekTable(hours) {
-  return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} – ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
+  return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} to ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
 }
 
 function footerHours(hours) {
   const days = Object.keys(DAY_NAMES);
-  if (!hours?.week) return "Weekdays · 9am–5pm";
+  if (!hours?.week) return "Weekdays, 9am to 5pm";
   const groups = [];
   for (let i = 0; i < days.length;) {
     const day = days[i], slot = hours.week[day];
@@ -925,7 +931,7 @@ function footerHours(hours) {
       end++;
     }
     const short = (d) => DAY_NAMES[d].slice(0, 3);
-    groups.push(`${i === end ? short(day) : `${short(day)}–${short(days[end])}`} · ${hm(slot.open)}–${hm(slot.close)}`);
+    groups.push(`${i === end ? short(day) : `${short(day)} to ${short(days[end])}`}, ${hm(slot.open)} to ${hm(slot.close)}`);
     i = end + 1;
   }
   return groups.length ? groups.join("  ·  ") : "Support hours vary";
@@ -950,7 +956,7 @@ function showBanner(s) {
 
 export async function callbackDialog({ topic = "callback", message = "", source = "web" } = {}) {
   const [s, u] = await Promise.all([siteInfo(), me()]);
-  const resp = s?.support?.responseTime || "24–48 hours";
+  const resp = s?.support?.responseTime || "24 to 48 hours";
   const d = dialog("Request a callback", html`<form class="stack" novalidate>
     <p class="muted mb-0">Leave your details and our team will get back to you within <strong>${resp}</strong>${s ? html` (${s.hours.note || "Monday to Friday, 9am to 5pm"})` : ""}.</p>
     ${s && !s.hours.openNow ? html`<p class="callout warn mb-0">${hoursText(s.hours)}. Your request is saved and handled first thing.</p>` : ""}
@@ -1636,3 +1642,34 @@ export const TICKET_KINDS = {
 export const AGE_GROUPS = { all: "All ages", kids: "Kids (under 13)", teens: "Teens (13 to 17)", "18_24": "18 to 24", "25_34": "25 to 34", "35_49": "35 to 49", "50_plus": "50 and over", families: "Families" };
 export const ageGroupList = (v) => String(v || "").split(",").filter((k) => AGE_GROUPS[k]);
 export const ageGroupText = (v) => ageGroupList(v).map((k) => AGE_GROUPS[k]).join(", ");
+
+// ---------- strips that scroll sideways show there is more ----------
+// Menu strips, tabs and chip rows on a phone: data-more says which edge has
+// more (tr.css fades that edge), and the current menu entry is scrolled into
+// view so the strip opens where the person is.
+const STRIPS = ".sidenav, .tabs, .chips, .cashless-rail, .artist-rail, .feature-rail";
+function scrollCue(el) {
+  const max = el.scrollWidth - el.clientWidth;
+  if (max > 2 && !el._cueSeen) {
+    el._cueSeen = true;
+    const cur = el.querySelector('[aria-current="page"], [aria-selected="true"]');
+    if (cur) {
+      const a = cur.getBoundingClientRect(), b = el.getBoundingClientRect();
+      if (a.right > b.right - 24 || a.left < b.left) el.scrollLeft += a.left - b.left - 24;
+    }
+  }
+  const v = max <= 2 ? "" : el.scrollLeft <= 2 ? "right" : el.scrollLeft >= max - 2 ? "left" : "both";
+  if ((el.getAttribute("data-more") || "") !== v) { if (v) el.setAttribute("data-more", v); else el.removeAttribute("data-more"); }
+  if (!el._cue) { el._cue = true; el.addEventListener("scroll", () => scrollCue(el), { passive: true }); }
+}
+let cueQueued = false;
+function scrollCues() {
+  if (cueQueued) return;
+  cueQueued = true;
+  requestAnimationFrame(() => { cueQueued = false; document.querySelectorAll(STRIPS).forEach(scrollCue); });
+}
+if (typeof window !== "undefined" && typeof MutationObserver !== "undefined") {
+  const startCues = () => { new MutationObserver(scrollCues).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-current", "aria-selected", "hidden"] }); scrollCues(); };
+  if (document.body) startCues(); else document.addEventListener("DOMContentLoaded", startCues);
+  window.addEventListener("resize", scrollCues);
+}

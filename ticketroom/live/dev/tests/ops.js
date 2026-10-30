@@ -27,7 +27,9 @@ const DATA = path.join(DIR, "ticketroom-data");
 const PUB = path.join(DIR, "public_html");
 const TR = path.resolve(__dirname, "../../..");          // ticketroom/
 const SRC = path.join(TR, "live", "public_html");          // the package source
-const MOCK = { lease: 8800, plain: 8801, codes: 8802, closed: 8804 };
+// TR_OPS_MOCK_BASE moves the stand-ins (base, +1, +2 and +4) when 8800-8804 are taken.
+const MOCK_BASE = Number(process.env.TR_OPS_MOCK_BASE || 8800);
+const MOCK = { lease: MOCK_BASE, plain: MOCK_BASE + 1, codes: MOCK_BASE + 2, closed: MOCK_BASE + 4 };
 
 let failures = 0;
 const ok = (name, detail = "") => console.log(`PASS  ${name}${detail ? "  " + detail : ""}`);

@@ -5,7 +5,7 @@
 //    looks up that same request key before anything else can be charged, so a
 //    retry can never charge twice.
 //  - No offline spending. When the server can't be reached, charging is off.
-import { html, render, $, $$, get, post, header, requireUser, toast, money, moneyExact, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, onSubmit, api, features } from "/assets/core.js?build=2026-10-22-phases";
+import { html, render, $, $$, get, post, header, requireUser, toast, money, moneyExact, plural, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, onSubmit, api, features } from "/assets/core.js?build=2026-10-22-phases";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
 
 const main = $("#main");
@@ -132,7 +132,7 @@ function draw() {
     ${ctx.products.length ? html`<div class="products">${ctx.products.map((p) => html`<button class="product" data-add="${p.id}"><b>${p.name}</b><span class="p">${moneyExact(p.price_cents)}</span>${cart.get(p.id) ? html`<span class="qty">${cart.get(p.id)}</span>` : ""}</button>`)}</div>`
       : empty("No products yet. A vendor manager adds them below.")}
     ${ctx.vendor.role !== "cashier" ? html`<details class="card mt"><summary><strong>Manage products</strong></summary><form class="row mt" id="np"><input name="name" required placeholder="Product name" class="grow" aria-label="Product name"><input name="price" required inputmode="decimal" placeholder="Price (R)" aria-label="Price in rand"><button class="btn btn-ghost btn-sm">Add</button></form></details>` : ""}
-    <div class="cart-bar"><div class="row between"><div><div class="small muted">${[...cart.values()].reduce((a, b) => a + b, 0)} items</div><div class="cart-total">${moneyExact(total)}</div></div>
+    <div class="cart-bar"><div class="row between"><div><div class="small muted">${plural([...cart.values()].reduce((a, b) => a + b, 0), "item")}</div><div class="cart-total">${moneyExact(total)}</div></div>
       <div class="row">${cart.size ? html`<button class="btn btn-ghost" data-clear ${qrBlocked ? "disabled" : ""}>Clear</button>` : ""}<button class="btn btn-primary" data-charge ${cart.size && online && ctx.event.cashlessOpen && !qrBlocked ? "" : "disabled"}>Charge</button></div></div>
       ${cart.size ? html`<div class="small muted mt">${[...cart.entries()].map(([id, q]) => `${q}× ${ctx.products.find((p) => p.id === id).name}`).join(" · ")} <button class="btn-link" data-minus>remove last</button></div>` : ""}</div>`);
   $$("[data-view]").forEach((b) => b.addEventListener("click", () => { view = b.dataset.view; draw(); }));
@@ -313,8 +313,8 @@ async function history() {
 
 async function summary() {
   const s = await tget("/api/pos/summary");
-  render(main, html`${nav()}<div class="kpis"><div class="kpi card"><div class="k">Sales</div><div class="v">${s.confirmed_count}</div></div><div class="kpi card"><div class="k">Gross</div><div class="v">${money(s.gross_cents)}</div></div>
-    <div class="kpi card"><div class="k">Commission</div><div class="v">${money(s.commission_cents)}</div></div><div class="kpi card"><div class="k">Owed to you</div><div class="v">${money(s.payableCents)}</div></div></div>
+  render(main, html`${nav()}<div class="kpis"><div class="kpi card"><div class="k">Sales</div><div class="v">${s.confirmed_count}</div></div><div class="kpi card"><div class="k">Gross</div><div class="v">${moneyExact(s.gross_cents)}</div></div>
+    <div class="kpi card"><div class="k">Commission</div><div class="v">${moneyExact(s.commission_cents)}</div></div><div class="kpi card"><div class="k">Owed to you</div><div class="v">${moneyExact(s.payableCents)}</div></div></div>
     <h2 class="mt-lg">Top products</h2>${s.byProduct.length ? html`<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Sales</th></tr></thead><tbody>${s.byProduct.map((p) => html`<tr><td>${p.name}</td><td class="num">${p.qty}</td><td class="num">${moneyExact(p.cents)}</td></tr>`)}</tbody></table></div>` : empty("No sales yet.")}
     <p class="small muted mt">${s.declined_count} declined attempts · ${moneyExact(s.reversed_cents)} reversed</p>
     <button class="btn btn-ghost mt" data-deact>Deactivate this device</button>`);

@@ -89,6 +89,8 @@ STILL APPLIES with severity HIGH or CRITICAL: **T1, T2, T3, O1, O2, O3, O4, M3**
 
 ## UX and copy (U)
 
+Fixed on the `live-ux` branch: every U item marked STILL APPLIES below, and N2. Each has a test in `tests/ux.js`, alongside a crawler over every portal page at 390 and 1366 px.
+
 | ID | Verdict | Evidence (live) |
 | --- | --- | --- |
 | U1 | STILL APPLIES | `scroll-padding-top` is `auto` on the live pages (browser probe); `assets/tr.css` sets `scroll-margin-top` only for two blocks (`:250,498`). |

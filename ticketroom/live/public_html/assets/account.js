@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile , phoneVerifyDialog, accountDeletionDialog } from "/assets/core.js?build=2026-10-22-phases";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, plural, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile , phoneVerifyDialog, accountDeletionDialog } from "/assets/core.js?build=2026-10-22-phases";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -172,7 +172,7 @@ async function resale() {
   const st = (l) => l.status === "sold" ? (l.payout?.status === "paid" ? "paid to you" : "sold") : l.status === "active" ? "up for resale" : l.status === "offered" ? "offered to waitlist" : l.status === "held" ? "being paid" : l.status;
   render(main, html`${head("Resale", "Tickets you put up on TicketRoom Exchange. You never get more than you paid, and nobody pays more than face value.")}
     ${listings.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Ticket</th><th class="num">Price</th><th>Status</th><th>Paid to you</th><th></th></tr></thead><tbody>
-      ${listings.map((l) => html`<tr><td>${l.event.title}<div class="tiny muted mono">${l.reference}</div></td><td>${l.ticketType}${l.test ? html` <span class="badge warn">test</span>` : ""}</td><td class="num">${moneyExact(l.priceCents)}</td><td>${badge(st(l))}</td>
+      ${listings.map((l) => html`<tr><td>${l.event.title}<div class="tiny muted mono">${l.reference}</div></td><td>${l.ticketType}${l.test ? html` <span class="badge warn">Test</span>` : ""}</td><td class="num">${moneyExact(l.priceCents)}</td><td>${badge(st(l))}</td>
         <td class="small">${l.payout ? html`${l.payout.method === "card" ? "To your card" : "By EFT"}<div class="tiny muted">${l.payout.status === "paid" ? `Paid ${fmtDate(l.payout.paidAt)}` : "On its way"}</div>` : ""}</td>
         <td>${["active", "offered"].includes(l.status) || (l.status === "held" && !l.withdrawRequested) ? html`<button class="btn btn-ghost btn-sm" data-unlist="${l.id}">Take it off</button>` : ""}</td></tr>`)}</tbody></table></div>`
       : empty("Nothing up for resale. Can't make an event? Open My tickets and tap Sell on the ticket.", html`<a class="btn btn-primary" href="#/tickets">My tickets</a>`)}`);
@@ -361,21 +361,21 @@ async function wallet({ eventId }) {
           <div class="chips" role="radiogroup" aria-label="Who is it for?"><button type="button" class="chip" role="radio" data-for="me" aria-pressed="true">For me</button><button type="button" class="chip" role="radio" data-for="friend" aria-pressed="false">For a friend</button></div>
           <div class="field" id="friend" hidden><label for="fe">Your friend's email</label><input id="fe" name="friendEmail" type="email" autocomplete="off"><span class="hint">They need a TicketRoom account. The money goes on their balance for this event.</span></div>
           <div id="invite"></div>
-          <div class="row">${[10000, 20000, 50000].map((c) => html`<button type="button" class="chip" data-amt="${c}">${money(c)}</button>`)}</div>
-          <div class="field"><label for="amt">Amount (R)</label><input id="amt" name="amount" inputmode="decimal" required placeholder="e.g. 150"><span class="hint">Between ${money(w.limits.minTopupCents)} and ${money(w.limits.maxTopupCents)}. Max balance ${money(w.limits.maxBalanceCents)}.</span></div>
+          <div class="row">${[10000, 20000, 50000].map((c) => html`<button type="button" class="chip" data-amt="${c}">${moneyExact(c)}</button>`)}</div>
+          <div class="field"><label for="amt">Amount (R)</label><input id="amt" name="amount" inputmode="decimal" required placeholder="e.g. 150"><span class="hint">Between ${moneyExact(w.limits.minTopupCents)} and ${moneyExact(w.limits.maxTopupCents)}. Max balance ${moneyExact(w.limits.maxBalanceCents)}.</span></div>
           <button class="btn btn-primary">Top up</button></form>`}
         ${w.cashout ? "" : w.balanceCents > 0 ? html`<button class="btn btn-link" id="rf">Request refund of unused balance</button>` : ""}</section></div>
     ${w.cashout ? cashoutSection(w) : ""}
-    ${!u.has_pin ? html`<p class="callout warn mt">Purchases of ${money(w.limits.pinThresholdCents || 20000)} or more need a spending PIN. <a href="#/settings">Set your PIN</a>.</p>` : ""}
+    ${!u.has_pin ? html`<p class="callout warn mt">Purchases of ${moneyExact(w.limits.pinThresholdCents || 20000)} or more need a spending PIN. <a href="#/settings">Set your PIN</a>.</p>` : ""}
     <h2 class="mt-lg">Activity</h2>
     ${w.history.length ? html`<ul class="activity card flat">${w.history.map((h) => {
       const out = h.amount_cents < 0;
-      if (h.kind === "gift") return html`<li><div class="grow"><strong>Top-up for ${h.vendor}</strong>${h.test ? html` <span class="badge warn">test</span>` : ""}
+      if (h.kind === "gift") return html`<li><div class="grow"><strong>Top-up for ${h.vendor}</strong>${h.test ? html` <span class="badge warn">Test</span>` : ""}
         <div class="small muted">${fmtDate(h.created_at, { day: "numeric", month: "short" })}, ${fmtTime(h.created_at)} · <span class="mono">${h.reference}</span> · on their balance</div></div>
         <div class="right"><div class="amt">${moneyExact(h.amount_cents)}</div>${h.status === "confirmed" ? "" : badge(h.status)}</div></li>`;
       const what = h.kind === "purchase" ? h.vendor || "Purchase" : h.kind === "topup" ? (h.vendor ? `Top-up from ${h.vendor}` : "Top-up") : h.kind === "desk_topup" ? `Top-up at the desk (${h.vendor === "cash" ? "cash" : "card"})`
         : h.kind === "cashout" ? (h.vendor === "eft" ? "Cash-out by EFT" : "Cash-out at the venue") : out ? "Refund to your card" : "Purchase refunded";
-      return html`<li><div class="grow"><strong>${what}</strong>${h.test ? html` <span class="badge warn">test</span>` : ""}
+      return html`<li><div class="grow"><strong>${what}</strong>${h.test ? html` <span class="badge warn">Test</span>` : ""}
         <div class="small muted">${fmtDate(h.created_at, { day: "numeric", month: "short" })}, ${fmtTime(h.created_at)} · <span class="mono">${h.reference}</span></div></div>
         <div class="right"><div class="amt ${out ? "out" : "in"}">${out ? "−" : "+"}${moneyExact(Math.abs(h.amount_cents))}</div>${h.status === "confirmed" ? "" : badge(h.status)}</div></li>`; })}</ul>` : empty("No activity yet.")}`);
   $$("[data-amt]").forEach((b) => b.addEventListener("click", () => { $("#amt").value = String(Number(b.dataset.amt) / 100); }));
@@ -485,10 +485,10 @@ async function settings() {
       <section class="card"><h2>Profile</h2><form class="stack" id="prof">
         <div class="field"><label for="fn">Full name</label><input id="fn" name="fullName" value="${u.full_name}" required></div>
         <div class="field"><label>Email</label><input value="${u.email}" disabled></div>
-        <div class="field"><label for="ph">Mobile ${u.phone_verified_at ? html`<span class="badge good">confirmed</span>` : ""}</label><input id="ph" name="phone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567">
+        <div class="field"><label for="ph">Mobile ${u.phone_verified_at ? html`<span class="badge good">Confirmed</span>` : ""}</label><input id="ph" name="phone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567">
           <span class="hint" data-feature="sms">${u.phone_verified_at ? "Confirmed by SMS. Changing it means confirming the new number." : html`Not confirmed yet. <button type="button" class="btn-link" data-phone>Confirm by SMS</button>`}</span></div>
         <button class="btn btn-dark">Save profile</button></form></section>
-      <section class="card" data-feature="cashless"><h2>Spending PIN</h2><p class="muted small">Needed for cashless purchases of R200 or more, so a lost wristband can't be used for big spends. ${u.has_pin ? "A PIN is set." : "No PIN set yet."}</p>
+      <section class="card" data-feature="cashless"><h2>Spending PIN</h2><p class="muted small">Needed for cashless purchases of R200.00 or more, so a lost wristband can't be used for big spends. ${u.has_pin ? "A PIN is set." : "No PIN set yet."}</p>
         <form class="stack" id="pin"><div class="field"><label for="pn">New PIN (4–6 digits)</label><input id="pn" name="pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" required autocomplete="off"></div>
         <div class="field"><label for="pp">Your password</label><input id="pp" name="password" type="password" required autocomplete="current-password"></div><button class="btn btn-dark">${u.has_pin ? "Change PIN" : "Set PIN"}</button></form></section>
       <section class="card"><h2>Password</h2><form class="stack" id="pw">

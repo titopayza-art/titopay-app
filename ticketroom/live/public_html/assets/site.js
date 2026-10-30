@@ -1,4 +1,4 @@
-import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
+import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js?build=2026-10-22-phases";
 
 const main = $("#main");
@@ -10,7 +10,7 @@ const fromPrice = (e) => e.from_price_cents === null ? "" : e.from_price_cents =
 function card(e) {
   return html`<a class="event-card" href="/events/${e.slug}">
     <div class="poster">${poster(e, "fill")}${datebadge(e.starts_at)}${e.cashless_enabled ? html`<span class="cashless-flag" title="Cashless event"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 7.5a6.5 6.5 0 0 1 0 9M12.5 5a10 10 0 0 1 0 14M5.5 10a2.8 2.8 0 0 1 0 4"/></svg>Cashless</span>` : ""}${e.remaining === 0 ? html`<span class="badge bad sold-flag">Sold out</span>` : e.remaining < 30 ? html`<span class="badge amber sold-flag">Selling fast</span>` : ""}</div>
-    <div class="body"><span class="cat-label">${e.category}</span><h3>${e.title}</h3>
+    <div class="body"><span class="cat-label">${categoryLabel(e.category)}</span><h3>${e.title}</h3>
       <span class="muted small">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })} · ${fmtTime(e.starts_at)}</span>
       <span class="muted small">${e.venue_name}, ${e.city}${e.distance_km != null ? html` · <strong class="dist">${e.distance_km < 1 ? "under 1" : e.distance_km} km away</strong>` : ""}</span>
       <div class="foot">${fromPrice(e)}<span class="small muted">${e.likes ? html`<span class="likes-count" aria-label="${e.likes} likes">${svgIcon("heart", 14)} ${e.likes}</span> · ` : ""}${e.organiser_name}</span></div></div></a>`;
@@ -227,7 +227,10 @@ async function home() {
       render(chunk, html`${events.map(card)}`);
       $("#grid").append(...chunk.childNodes);
     } else {
-      render($("#grid"), events.length ? html`${events.map(card)}` : html`<div class="empty-filters card flat center"><h3>No events match those filters</h3><p class="muted">Try a wider distance, other dates, or fewer filters.</p><button type="button" class="btn btn-primary" data-filters-again>Change filters</button></div>`);
+      render($("#grid"), events.length ? html`${events.map(card)}` : state.q && FILTER_KEYS.every((k) => k === "q" || !state[k])
+        ? html`<div class="empty-filters card flat center" data-no-results><h3>No events found for "${state.q}"</h3><p class="muted">Check the spelling, or search for an artist, venue or town.</p><button type="button" class="btn btn-primary" data-clear-search>Clear search</button></div>`
+        : html`<div class="empty-filters card flat center"><h3>No events match those filters</h3><p class="muted">Try a wider distance, other dates, or fewer filters.</p><button type="button" class="btn btn-primary" data-filters-again>Change filters</button></div>`);
+      $("[data-clear-search]")?.addEventListener("click", () => { state.q = ""; if ($("#q")) $("#q").value = ""; load(); });
     }
     eventOffset = offset + events.length;
     $("[data-result-count]").textContent = total ? `Showing ${eventOffset} of ${total} events` : "";
@@ -282,9 +285,8 @@ async function home() {
   get("/api/public/artists/trending").then(({ artists }) => {
     if (!artists.length) return;
     $("#trending").classList.remove("hidden");
-    const initials = (n) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
     render($("#artist-rail"), html`${artists.map((a) => html`<button type="button" class="artist" data-artist="${a.name}">
-      <span class="artist-pic">${a.next.image_upload_id ? html`<img src="/media/${a.next.image_upload_id}" alt="" loading="lazy">` : html`<span>${initials(a.name)}</span>`}</span>
+      <span class="artist-pic">${a.next.image_upload_id ? html`<img src="/media/${a.next.image_upload_id}" alt="" loading="lazy">` : raw('<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>')}</span>
       <strong>${a.name}</strong><span class="small muted">${a.eventCount > 1 ? `${a.eventCount} events` : `${fmtDate(a.next.starts_at, { day: "numeric", month: "short" })}, ${a.next.city}`}</span></button>`)}`);
     $$("[data-artist]").forEach((b) => b.addEventListener("click", () => { state.q = b.dataset.artist; $("#q").value = state.q; load(); $("#grid").scrollIntoView({ behavior: "smooth", block: "start" }); }));
   }).catch(() => {});
@@ -353,10 +355,10 @@ async function eventPage(slug, opts = {}) {
         <div class="row between tix-head-row"><div><h1>${e.title}</h1><p class="mb-0">${dateLine} · ${fmtTime(e.starts_at)} · ${e.venue_name}, ${e.city}</p></div>
           <a class="btn btn-ghost btn-sm tix-cancel" href="${eventHref}">Cancel</a></div></div></section>
       <div class="wrap tix-page">
-        <ol class="tix-steps" aria-label="Checkout steps">
+        <ol class="tix-steps ${e.is_free ? "three" : ""}" aria-label="Checkout steps">
           <li data-step="0">${icon("ticket")}<span>Select tickets</span></li>
           <li data-step="1">${icon("user")}<span>Your details</span></li>
-          <li data-step="2">${icon("card")}<span>Pay</span></li>
+          ${e.is_free ? "" : html`<li data-step="2">${icon("card")}<span>Pay</span></li>`}
           <li data-step="3">${icon("check")}<span>Done</span></li></ol>
         ${e.status === "cancelled" ? html`<p class="callout bad"><strong>This event has been cancelled.</strong> Ticket holders are refunded automatically.</p>` : ""}
         <div id="box" class="tix-box" aria-labelledby="tix-h"></div>
@@ -371,14 +373,14 @@ async function eventPage(slug, opts = {}) {
       e.accessibility_info ? ["Accessibility", html`<span class="prose">${e.accessibility_info}</span>`] : null,
       ["Ticket transfers", e.transfers_enabled ? "Free ticket transfers until the event starts" : "Tickets are not transferable"],
       e.cashless_enabled ? ["Cashless", "This is a cashless event. Link a wristband and top up in your account."] : null,
-      ["Refund policy", html`${e.refund_policy} <a class="ev-more" href="/legal/terms">View policy</a>`],
+      e.is_free ? null : ["Refund policy", html`${e.refund_policy} <a class="ev-more" href="/legal/terms">View policy</a>`],
     ].filter(Boolean);
     render(main, html`${previewBar}
       <div class="ev2">
         <div class="wrap ev2-top">
           <div class="ev2-banner">${e.image_upload_id ? html`<img class="ev2-banner-bg" src="/media/${e.image_upload_id}" alt=""><img class="ev2-banner-img" src="/media/${e.image_upload_id}" alt="${e.title} poster">` : poster(e, "fill")}</div>
           <section class="ev2-title card">
-            <span class="cat-badge">${e.category}</span><h1>${e.title}</h1>
+            <span class="cat-badge">${categoryLabel(e.category)}</span><h1>${e.title}</h1>
             ${e.summary ? html`<p class="lead">${e.summary}</p>` : ""}
             <div class="event-facts"><span>${icon("calendar")}${dateLine}</span>
               <span>${icon("clock")}${fmtTime(e.starts_at)} to ${fmtTime(e.ends_at)} SAST${e.doors_open_at ? ` · doors ${fmtTime(e.doors_open_at)}` : ""}</span>
@@ -393,11 +395,10 @@ async function eventPage(slug, opts = {}) {
           </section>
         </div>
         <div class="wrap ev2-body">
-          <section class="ev2-sec card"><h2>Details</h2><div class="ev2-main prose">${e.description || e.summary || ""}</div></section>
+          ${e.description ? html`<section class="ev2-sec card"><h2>Details</h2><div class="ev2-main prose">${e.description}</div></section>` : ""}
           ${lineup.length ? html`<section class="ev2-sec card"><h2>Lineup</h2><div class="ev2-main"><ul class="ev2-lineup">${lineup.map((a, i) => html`<li class="${i === 0 ? "headliner" : ""}"><span class="ev2-avatar" aria-hidden="true">${initials(a.name)}</span><span><a href="/?q=${encodeURIComponent(a.name)}">${a.name}</a>${a.time ? html`<span class="ev2-time">${a.time}</span>` : ""}</span></li>`)}</ul></div></section>` : ""}
-          <section class="ev2-sec card"><h2>Information</h2><dl class="ev2-main ev2-info">${info.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}
-            ${e.ref ? html`<div><dt>Event ID</dt><dd class="mono">${e.ref}</dd></div>` : ""}</dl></section>
-          <section class="ev2-sec card"><h2>Organiser</h2><div class="ev2-main ev2-org"><div><p class="ev2-org-name">${e.organiser_name}${e.organiser_ref ? html` <span class="small muted mono nowrap">${e.organiser_ref}</span>` : ""}</p>
+          <section class="ev2-sec card"><h2>Information</h2><dl class="ev2-main ev2-info">${info.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl></section>
+          <section class="ev2-sec card"><h2>Organiser</h2><div class="ev2-main ev2-org"><div><p class="ev2-org-name">${e.organiser_name}</p>
             ${e.organiser_about ? html`<p class="small muted">${e.organiser_about}</p>` : ""}
             <a class="ev-more" href="/?q=${encodeURIComponent(e.organiser_name)}">All events by this organiser</a></div>
             ${e.organiser_logo ? html`<span class="ev2-org-mark has-logo"><img src="/media/${e.organiser_logo}" alt="${e.organiser_name} logo"></span>` : html`<span class="ev2-org-mark" aria-hidden="true">${initials(e.organiser_name)}</span>`}</div></section>
@@ -433,7 +434,7 @@ async function eventPage(slug, opts = {}) {
     return;
   }
   // The ticket page: steps along the top (Select tickets, Your details, Pay, Done).
-  const setStep = (n) => $$(".tix-steps li").forEach((li, i) => { li.classList.toggle("done", i < n); if (i === n) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current"); });
+  const setStep = (n) => $$(".tix-steps li").forEach((li) => { const i = Number(li.dataset.step); li.classList.toggle("done", i < n); if (i === n) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current"); });
   setStep(0);
   const box = $("#box");
   const queueStorageKey = `tr_presale_${slug}`;
@@ -534,8 +535,8 @@ async function eventPage(slug, opts = {}) {
       <aside class="tix-cart card" aria-label="Your cart"><h2 class="tix-cart-h">${icon("cart")}Cart</h2>
         ${picked.length ? html`<div class="tix-lines">${picked.map((t) => html`<div class="line"><span>${qty[t.id]} × ${t.name}</span><span>${moneyExact(t.price_cents * qty[t.id])}</span></div>`)}</div>` : html`<p class="muted small">Your cart is empty.</p>`}
         <div class="totals"><div class="line"><span>${count} ticket${count === 1 ? "" : "s"}</span><span>${moneyExact(sub)}</span></div>
-          <div class="line"><span>Booking fee</span><span>${moneyExact(fee)}</span></div>
-          <div class="line total"><span>Total</span><span>${moneyExact(sub + fee)}</span></div></div>
+          ${e.is_free && !fee ? "" : html`<div class="line"><span>Booking fee</span><span>${moneyExact(fee)}</span></div>`}
+          <div class="line total"><span>Total</span><span>${e.is_free && !sub && !fee ? "Free" : moneyExact(sub + fee)}</span></div></div>
         ${!cfg.cardPaymentsEnabled && sub > 0 ? html`<p class="callout warn mt">Paid tickets go on sale soon. Free tickets are available now.</p>` : ""}
         <button class="btn btn-primary btn-block mt" data-continue ${raw(disabled ? "disabled" : "")}>Continue</button>
         <p class="trust mt mb-0">${e.is_free ? "This event is free. Choose how many tickets you need and register." : html`${icon("lock")}${e.service_fee_payer === "organiser" ? "The organiser covers the service fee. Got a promo code or voucher? Add it on the next step." : "The service fee is shown beside each ticket before checkout. Got a promo code or voucher? Add it on the next step."}`}</p>
@@ -604,16 +605,18 @@ async function eventPage(slug, opts = {}) {
     let quote;
     try { quote = (await post("/api/public/checkout/quote", { eventSlug: slug, items: selection(), promoCode: promo || undefined })).quote; }
     catch (err) { if (promo) { toast(err.message, "bad"); return drawCheckout(u, ""); } throw err; }
+    // A free event booked at no charge: no payment step, fees or promo codes.
+    const freeOrder = !!e.is_free && quote.totalCents === 0;
     const key = sessionStorage.getItem(`tr_idem_${slug}`) || idem();
     sessionStorage.setItem(`tr_idem_${slug}`, key);
     setStep(1);
     render(box, html`<div class="tix-single card"><h2 id="tix-h">Your details</h2>
       <div class="totals">${quote.lines.map((l) => html`<div class="line"><span>${l.quantity} × ${l.name}</span><span>${moneyExact(l.unitPriceCents * l.quantity)}</span></div>`)}</div>
-      <div class="totals"><div class="line"><span>Subtotal</span><span>${moneyExact(quote.subtotalCents)}</span></div>
+      ${freeOrder ? html`<div class="totals"><div class="line total"><span>Total</span><span>Free</span></div></div>` : html`<div class="totals"><div class="line"><span>Subtotal</span><span>${moneyExact(quote.subtotalCents)}</span></div>
         ${quote.discountCents ? html`<div class="line"><span>Code ${quote.promoCode}</span><span>−${moneyExact(quote.discountCents)}</span></div>` : ""}
         <div class="line"><span>Service fee</span><span>${moneyExact(quote.feeCents)}</span></div>
-        <div class="line total"><span>Total</span><span>${moneyExact(quote.totalCents)}</span></div></div>
-      <form class="row mt" id="promo"><label class="sr-only" for="pc">Promo code or voucher</label><input id="pc" name="code" placeholder="Promo code or voucher" class="grow" value="${quote.promoCode || ""}" maxlength="40" autocomplete="off"><button class="btn btn-ghost btn-sm">Apply</button></form>
+        <div class="line total"><span>Total</span><span>${moneyExact(quote.totalCents)}</span></div></div>`}
+      ${freeOrder ? "" : html`<form class="row mt" id="promo"><label class="sr-only" for="pc">Promo code or voucher</label><input id="pc" name="code" placeholder="Promo code or voucher" class="grow" value="${quote.promoCode || ""}" maxlength="40" autocomplete="off"><button class="btn btn-ghost btn-sm">Apply</button></form>`}
       <form class="stack mt" id="pay">
         ${u ? html`<p class="small mb-0">Tickets go to <strong>${u.email}</strong>.</p>
         <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>`
@@ -635,10 +638,11 @@ async function eventPage(slug, opts = {}) {
         <p class="callout warn mb-0" id="pay-wait" role="status" hidden></p>
         <button class="btn btn-primary btn-block" type="submit">${quote.totalCents === 0 ? "Get free tickets" : `Pay ${moneyExact(quote.totalCents)}`}</button>
         <button class="btn btn-link btn-block" type="button" data-back>Change tickets</button>
-        <p class="tiny muted mb-0">By paying you agree to the <a href="/legal/terms">Terms</a> and the event's refund policy. Your tickets are reserved for a few minutes while you pay. Payment is confirmed by the payment provider, not by your browser.</p>
+        ${freeOrder ? html`<p class="tiny muted mb-0">By registering you agree to the <a href="/legal/terms">Terms</a>. Your tickets are held for a few minutes while you finish.</p>`
+          : html`<p class="tiny muted mb-0">By paying you agree to the <a href="/legal/terms">Terms</a> and the event's refund policy. Your tickets are reserved for a few minutes while you pay. Payment is confirmed by the payment provider, not by your browser.</p>`}
       </form></div>`);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    $("#promo").addEventListener("submit", (ev) => { ev.preventDefault(); drawCheckout(u, $("#pc").value.trim()); });
+    $("#promo")?.addEventListener("submit", (ev) => { ev.preventDefault(); drawCheckout(u, $("#pc").value.trim()); });
     $("[data-signin]", box)?.addEventListener("click", () => authDialog("signin", { portal: "customer", onDone: async () => { header($("#header")); drawCheckout(await me(true), promo); } }));
     $("[data-back]", box).addEventListener("click", drawSelect);
     onSubmit($("#pay"), async (v) => {
@@ -788,7 +792,7 @@ async function sellPage() {
   const cashlessCommissionPct = (Number(fees.cashlessVendorCommissionBps ?? 0) / 100).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
   const tile = (icon, t, s) => html`<div class="card flat center"><div aria-hidden="true">${raw(icon)}</div><h3 class="mt">${t}</h3><p class="muted mb-0">${s}</p></div>`;
   const ic = (d) => `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0B1D3F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-  render(main, html`<section class="hero"><div class="wrap"><span class="cat-label">For organisers</span><h1>Your event, <b>sorted</b></h1>
+  render(main, html`<section class="hero"><div class="wrap"><span class="cat-label">For organisers</span><h1>Tickets, entry and payouts <b>in one place</b></h1>
       <p class="lead">List your event, sell or give away tickets, scan people in at the door and see who came. Built in South Africa, for South African events.</p>
       <div class="row"><button class="btn btn-primary" data-apply>Create an organiser account</button><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div></div></section>
     <section class="section"><div class="wrap stack-lg">
@@ -796,8 +800,7 @@ async function sellPage() {
         ${tile(ic('<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a3 3 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a3 3 0 0 0 0-6Z"/><path d="M12 9v1M12 14v1"/>'), "Tickets", "Free or paid tickets, early-bird releases, promo codes, and a limit on how many each person can book.")}
         ${tile(ic('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>'), "Your event page", "Poster, line-up, venue and times on one page you can share on WhatsApp and socials. Preview it before it goes live.")}
         ${tile(ic('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/>'), "At the door", "Your team scans tickets on their own phones, even offline. Each ticket gets in once, and you watch the count go up live.")}
-        ${tile(ic('<rect x="2" y="8" width="20" height="8" rx="4"/><path d="M7 12h.01M17 12a5 5 0 0 0-1.5-3.5M19.5 12a7.5 7.5 0 0 0-2.2-5.3"/>'), "Cashless wristbands", "No cash, no card machines at the bar. Guests tap their wristband to pay and top up on their phones.")}
-        ${tile(ic('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>'), "Vendor POS", "Bars and food stalls sell from any phone. Each vendor sees their own sales; you see them all.")}
+        ${tile(ic('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>'), "Box office", "Sell at the door for cash or card, with a cash-up at the end of each shift.")}
         ${tile(ic('<path d="M3 20h18M6 16v-3M10 16V9M14 16v-5M18 16V6M4 11l5-5 4 3 7-6"/>'), "Get paid", "Live sales and analytics, then your money paid to your verified bank account after the event.")}
         <div class="card flat center" data-feature="promote"><div aria-hidden="true">${raw(ic('<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 0 0 13"/>'))}</div><h3 class="mt">Promote</h3><p class="muted mb-0">Email and SMS campaigns to the people who want to hear from you, plus a post on our socials. <span data-promote-price>R1 600</span> once off per event.</p></div>
       </div>
@@ -808,17 +811,17 @@ async function sellPage() {
         <div class="stack"><h3 class="mb-0">How it works</h3>
           <ol class="cl-steps"><li><strong>You</strong> switch on cashless for the event and add your vendors and their menus.</li>
             <li><strong>Guests</strong> collect a wristband at the gate and link it to their ticket by the code printed on it.</li>
-            <li><strong>They top up</strong> on their phone in seconds and see their balance and every purchase live.</li>
+            <li><strong>They top up</strong> on their phone and see their balance and every purchase live.</li>
             <li><strong>Vendors</strong> sell by tapping or scanning the wristband on any phone, no card machine needed.</li>
             <li><strong>After the event</strong> vendors are settled and leftover balances go back to guests.</li></ol>
           <button class="btn btn-primary" data-apply>Plan a cashless event</button></div></div></section>
       <section class="promote-offer" aria-labelledby="pr-h" data-feature="promote"><div class="promote-pitch stack"><span class="tk-label">Promote</span><h2 id="pr-h" class="mb-0">Email and SMS for your event</h2>
-          <p class="mb-0">Our email and SMS campaign tools bring the right people to your event in the right numbers. One payment promotes one event until it ends. No contracts, no per-email charges, no surprises.</p>
+          <p class="mb-0">Our email and SMS campaign tools bring the right people to your event in the right numbers. One payment promotes one event until it ends. No contracts and no per-email charges.</p>
           <ul class="promote-ticks"><li><strong>Unlimited email campaigns</strong> to everyone who booked with you and opted in, until your event ends</li><li><strong>SMS campaigns</strong> to the same opted-in crowd</li><li><strong>A post on TicketRoom's socials:</strong> send us your caption and dates, we tell you when it is live</li><li><strong>Clear results:</strong> messages sent, clicks, tickets and revenue for every campaign</li><li><strong>Quick cash-out:</strong> pay by card or straight from your ticket balance</li></ul></div>
         <div class="promote-price"><div class="promote-amount" data-promote-price>R1 600</div><div class="small">once off, per event</div><p class="tiny mb-0">Buy it from your event's Promote tab in the organiser portal, once the event is published or waiting to be published.</p><button class="btn btn-primary btn-block" data-apply>Promote my event</button></div></section>
       <div class="card"><h2>What you get</h2><div class="grid-2">
         <ul><li>A live dashboard of bookings and sales, day by day</li><li>Tracking links, so you know whether Instagram or WhatsApp brought people in</li><li>Email campaigns to people who opted in, with unsubscribe built in (POPIA)</li><li>Ticket transfers that cancel the old QR code, so one ticket can never get two people in</li></ul>
-        <ul><li>RFID/NFC wristbands and QR tags for cashless events</li><li>Vendor POS on any phone, with per-vendor reporting</li><li>Refunds with dual approval and a full audit trail</li><li>Payouts to your verified bank account once your event has run</li></ul></div>
+        <ul><li>Team access for scanners and box office staff, event by event</li><li>Waitlists and fair resale at face value when you sell out</li><li>Refunds with dual approval and a full audit trail</li><li>Payouts to your verified bank account once your event has run</li></ul></div>
       </div>
       <div class="card" id="pricing"><h2>What it costs</h2><div class="grid-3">
         <div><div class="kpi"><div class="k">Commission</div><div class="v">${commissionPct}% + ${moneyExact(fees.organiserCommissionFixedCents ?? 250)}</div><div class="s">per paid ticket, deducted from your payout</div></div></div>
@@ -986,7 +989,7 @@ const FAQ = [
 
 async function supportPanel(site, { topic = "callback" } = {}) {
   const u = await me();
-  const resp = site?.support?.responseTime || "24–48 hours";
+  const resp = site?.support?.responseTime || "24 to 48 hours";
   return html`<div class="grid-2">
     <section class="card stack"><h2>Request a callback</h2>
       <p class="muted mb-0">Fill in the form and our team will resolve your query within <strong>${resp}</strong>.</p>
@@ -1116,7 +1119,7 @@ async function advertisePage() {
           <p class="small muted mt mb-0">We confirm the price, dates and poster with you before anything goes live. Nothing is charged online.</p></div>
         <div class="card"><h2>How it works</h2><ol class="mb-0">
           <li>Send us your details below.</li>
-          <li>We reply within ${site?.support?.responseTime || "24–48 hours"} (Monday to Friday) with a quote and available dates.</li>
+          <li>We reply within ${site?.support?.responseTime || "24 to 48 hours"} (Monday to Friday) with a quote and available dates.</li>
           <li>Send us your poster image and the link it should open. It goes live on your first day.</li></ol></div>
       </div>
       <section class="card stack" id="get-a-spot"><div><span class="cat-label">Tell us about your campaign</span><h2 class="mb-0">Get a spot</h2><p class="small muted mb-0 mt-sm">We’ll email you a reference and follow up with available dates and a quote.</p></div>
@@ -1154,7 +1157,7 @@ async function contact() {
   const partnershipMode = params.get("topic") === "partnership";
   document.title = partnershipMode ? "Partnership enquiry | TicketRoom" : "Contact us | TicketRoom";
   const [site, u] = await Promise.all([siteInfo(), me()]);
-  const resp = site?.support?.responseTime || "24–48 hours";
+  const resp = site?.support?.responseTime || "24 to 48 hours";
   let audience = partnershipMode || params.get("as") === "organiser" || params.get("topic") === "organiser" || u?.account_type === "organiser" ? "organiser" : "customer";
   render(main, html`<div class="wrap section stack-lg"><div><h1>${partnershipMode ? "Partnership enquiry" : "Contact us"}</h1><p class="lead mb-0">${partnershipMode ? `Tell us about your organisation and the partnership you have in mind. We’ll email you a reference and reply within ${resp}.` : `Tell us what you need and we'll reply within ${resp}.`}</p></div>
     <div class="grid-2 contact-grid"><section class="card stack">

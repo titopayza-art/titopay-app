@@ -2,10 +2,10 @@
    No inline styles anywhere: the Content-Security-Policy forbids them. */
 :root {
   --navy-950: #071330; --navy-900: #0B1D3F; --navy-800: #11285A; --navy-700: #1B3770; --navy-600: #2A4A8A;
-  --amber-500: #F2A93B; --amber-600: #DB8F1C; --amber-100: #FDF0D9; --amber-50: #FFF8EC;
+  --amber-500: #F2A93B; --amber-600: #DB8F1C; --amber-700: #8A5200; --amber-100: #FDF0D9; --amber-50: #FFF8EC;
   --ink: #0E1A30; --ink-2: #3B4A63; --muted: #5E6C84; --line: #E2E7F0; --line-2: #EEF1F6;
   --surface: #F5F7FB; --card: #FFFFFF;
-  --good: #17804A; --good-bg: #E5F5EC; --bad: #B8322A; --bad-bg: #FBE9E7; --warn: #9A6200; --warn-bg: #FFF3DA; --info: #1D5FBF; --info-bg: #E7F0FD;
+  --good: #157443; --good-bg: #E5F5EC; --bad: #B8322A; --bad-bg: #FBE9E7; --warn: #9A6200; --warn-bg: #FFF3DA; --info: #1D5FBF; --info-bg: #E7F0FD;
   --radius: 14px; --radius-sm: 10px; --shadow: 0 1px 2px rgba(11,29,63,.06), 0 8px 24px rgba(11,29,63,.07);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --gutter: 16px; --max: 1180px;
@@ -193,9 +193,9 @@ dialog[open] .dialog-body { flex: 1 1 auto; }
 .poster.cat-festival { background: linear-gradient(135deg, #B6661A, #0B1D3F); } .poster.cat-sport { background: linear-gradient(135deg, #116149, #0B1D3F); }
 .poster.cat-business { background: linear-gradient(135deg, #1B3770, #071330); } .poster.cat-family { background: linear-gradient(135deg, #1F7A8C, #0B1D3F); }
 .datebadge { position: absolute; top: 10px; left: 10px; background: #fff; color: var(--navy-900); border-radius: 10px; padding: 4px 8px; text-align: center; line-height: 1.05; box-shadow: var(--shadow); }
-.datebadge b { display: block; font-size: 1.15rem; } .datebadge span { font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--amber-600); }
+.datebadge b { display: block; font-size: 1.15rem; } .datebadge span { font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--amber-700); }
 .sold-flag { position: absolute; top: 10px; right: 10px; }
-.cat-label { font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; color: var(--amber-600); }
+.cat-label { font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; color: var(--amber-700); }
 .event-hero { position: relative; color: #fff; background: var(--navy-950); }
 .event-hero .poster { position: absolute; inset: 0; opacity: .45; }
 .event-hero .shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(7,19,48,.95) 10%, rgba(7,19,48,.55)); }
@@ -708,7 +708,7 @@ body:has(> .shell) > .shell { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .lineup a:hover { text-decoration: underline; }
 .lineup .headliner a { font-size: 1.2rem; font-weight: 800; }
 .lineup-time { min-width: 3.2em; font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 650; }
-.preview-bar { position: sticky; top: 0; z-index: 30; background: var(--amber-500); color: var(--navy-950); padding: 10px 0; font-size: .92rem; }
+.preview-bar { position: sticky; top: 64px; z-index: 30; background: var(--amber-500); color: var(--navy-950); padding: 10px 0; font-size: .92rem; }
 /* Trending artists */
 .artist-rail { display: grid; grid-auto-flow: column; grid-auto-columns: 132px; gap: 16px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
 .artist { display: grid; justify-items: center; gap: 4px; text-align: center; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; scroll-snap-align: start; }
@@ -938,7 +938,7 @@ body:has(> .shell) .site-header .wrap, body:has(> .shell) .portal-bar .wrap { ma
   .shell { grid-template-columns: 272px minmax(0, 1fr); }
   .side { background: linear-gradient(180deg, #0B1D3F 0%, #102C5E 100%); padding: 16px 12px 24px; position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.2) transparent; }
   .side .sidenav { background: none; border: 0; padding: 0; }
-  .side .sidenav .sect { color: #7F95BD; padding: 16px 12px 6px; }
+  .side .sidenav .sect { color: #9AAED0; padding: 16px 12px 6px; }
   .side .sidenav a { color: #DCE5F5; font-weight: 600; padding: 10px 12px; margin: 1px 0; }
   .side .sidenav a:hover { background: rgba(255,255,255,.08); color: #fff; }
   .side .sidenav a[aria-current="page"] { background: #fff; color: var(--navy-900); box-shadow: 0 6px 18px rgba(0,0,0,.18); }
@@ -980,7 +980,7 @@ body:has(> .shell) .site-header .wrap, body:has(> .shell) .portal-bar .wrap { ma
 .side-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: #fff; padding: 4px 6px 6px; }
 .side-brand .wordmark { display: block; font-size: 1.15rem; }
 .side-portal { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: #fff; background: rgba(255,255,255,.14); }
-.side-portal.pb-admin { background: #C0392B; } .side-portal.pb-organiser { background: #1F5FC4; } .side-portal.pb-customer { background: #1E8E4E; }
+.side-portal.pb-admin { background: #C0392B; } .side-portal.pb-organiser { background: #1F5FC4; } .side-portal.pb-customer { background: #157443; }
 .side-me { position: relative; }
 button.side-profile { width: 100%; margin: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 button.side-profile:hover { background: rgba(255,255,255,.13); }
@@ -1089,7 +1089,8 @@ button.side-profile:hover { background: rgba(255,255,255,.13); }
 .tix-steps li::after { content: ""; position: absolute; bottom: 0; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line); background: #fff; }
 .tix-steps li::before { content: ""; position: absolute; bottom: 4px; left: 50%; width: 100%; height: 2px; background: var(--line); }
 .tix-steps li:last-child::before { display: none; }
-.tix-steps li[aria-current="step"] { color: var(--amber-600); }
+.tix-steps.three { grid-template-columns: repeat(3, 1fr); }
+.tix-steps li[aria-current="step"] { color: var(--amber-700); }
 .tix-steps li[aria-current="step"]::after { background: var(--amber-500); border-color: var(--amber-500); }
 .tix-steps li.done { color: var(--navy-900); }
 .tix-steps li.done::after { background: var(--navy-900); border-color: var(--navy-900); }
@@ -1135,8 +1136,8 @@ button.side-profile:hover { background: rgba(255,255,255,.13); }
 .org-logo-prev img { width: 100%; height: 100%; object-fit: contain; }
 /* ticket phases */
 .tt-locked .name, .tt-locked .tt-price { color: var(--muted); }
-.tt-next { color: var(--amber-600); font-weight: 700; }
-.tt-phase { color: var(--amber-600); font-weight: 600; }
+.tt-next { color: var(--amber-700); font-weight: 700; }
+.tt-phase { color: var(--amber-700); font-weight: 600; }
 .phase-ed { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 14px; margin: 0; display: grid; gap: 10px; }
 .phase-ed legend { padding: 0 6px; }
 .phase-ed select { width: 100%; }
@@ -1169,3 +1170,65 @@ button.side-profile:hover { background: rgba(255,255,255,.13); }
   .legal-rights { display: none; }
   .legal-line .country-btn { padding: 6px 9px; }
 }
+
+/* ---------- polish pass: focus, scrolling, phones, venue screens ---------- */
+/* A page button that repeats the side panel's main action shows only where the panel is folded away. */
+@media (min-width: 980px) { body.has-side .side-dup { display: none; } }
+/* Anchors and focused fields stop below the sticky header (U1). */
+html { scroll-padding-top: 80px; }
+@media (max-width: 979px) { html:has(body > .shell) { scroll-padding-top: 136px; } }
+@media (min-width: 980px) { html:has(body.has-side) { scroll-padding-top: 16px; } }
+/* Amber controls get a navy ring with a white gap, visible on light and dark pages (U9). */
+.btn-primary:focus-visible, .side-action:focus-visible, .skip:focus-visible, .portal-tag:focus-visible, .cat-badge:focus-visible, .desk-amt[aria-pressed="true"]:focus-visible, .pw-nag a:focus-visible { outline: 3px solid var(--navy-950); outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
+/* Strips that scroll sideways fade at the edge that has more (U11; data-more is set in core.js). */
+[data-more="right"] { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent); }
+[data-more="left"] { -webkit-mask-image: linear-gradient(270deg, #000 calc(100% - 44px), transparent); mask-image: linear-gradient(270deg, #000 calc(100% - 44px), transparent); }
+[data-more="both"] { -webkit-mask-image: linear-gradient(90deg, transparent, #000 44px, #000 calc(100% - 44px), transparent); mask-image: linear-gradient(90deg, transparent, #000 44px, #000 calc(100% - 44px), transparent); }
+/* File pickers styled like the other buttons (U18). */
+input[type="file"] { padding: 8px; cursor: pointer; }
+input[type="file"]::file-selector-button { font: inherit; font-weight: 700; font-size: .9rem; margin-right: 12px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+input[type="file"]:hover::file-selector-button { border-color: var(--navy-600); }
+/* Amber labels stay bright on the dark bands; links there are light. */
+.promo-band a:not(.btn) { color: var(--amber-500); }
+.welcome .tk-label { color: var(--amber-700); }
+.hero .cat-label, .promo-band .cat-label, .sub-band .cat-label, .event-hero .cat-label, .tix-head .cat-label, body.venue .cat-label { color: var(--amber-500); }
+/* An event with no poster shows the TicketRoom mark and its category, not an empty box (U6). */
+.poster.fallback .poster-mark { display: grid; justify-items: center; gap: 8px; padding: 0; color: #fff; font-size: .74rem; letter-spacing: .14em; text-transform: uppercase; }
+.poster.fallback .poster-mark img { width: 56px; height: auto; opacity: .9; }
+.poster.fallback .poster-mark b { font-weight: 800; }
+/* Phones: every control is at least 40px tall. */
+@media (max-width: 640px) {
+  .btn-sm, .chip, .chip-select, .sidenav a, .legal-line .country-btn, .tabs button, .tabs a { min-height: 40px; }
+  .chip, .chip-select { display: inline-flex; align-items: center; }
+  .btn-link:not(p .btn-link, li .btn-link, td .btn-link, .small .btn-link, .tiny .btn-link) { min-height: 40px; }
+  .site-banner .icon-btn, .cookie-banner .icon-btn, .dialog-head .icon-btn { width: 40px; height: 40px; }
+}
+/* Phones: the ticket fits one screen and the Help button never sits on it (U8, N2). */
+@media (max-width: 640px) {
+  .ticket .tk-head { padding: 18px 18px 16px; }
+  .ticket .tk-head h3 { font-size: 1.35rem; margin: 6px 0; }
+  .tk-body { padding: 14px 18px 4px; }
+  .tk-rows { margin-bottom: 12px; gap: 4px; }
+  .ticket .t-qr { width: 208px; border-radius: 16px; }
+  .ticket .t-qr img { width: 188px; height: auto; }
+  .tk-scan { margin-top: 6px; }
+  .tk-perf { height: 24px; margin: 2px 0; }
+  .tk-foot { padding: 4px 18px 18px; }
+  .tk-code { font-size: 1.5rem; margin-top: 2px; }
+  .tk-note { margin-top: 6px; }
+  body:has(.tk-wrap) .chat-fab { position: static; display: flex; width: max-content; margin: 8px 16px 16px auto; align-self: flex-end; }
+  body:has(.tk-wrap) .chat-fab span { display: inline; }
+}
+/* Venue screens (scanner, box office, till): readable labels, cards and dialogs (U3). */
+body.venue .field label, body.venue .label, body.venue legend { color: #C8D4EA; }
+body.venue .field .hint { color: #A9B8D3; }
+body.venue .kpi { background: var(--navy-900); border-color: rgba(255,255,255,.1); color: #fff; }
+body.venue .kpi .k, body.venue .kpi .s, body.venue .empty { color: #A9B8D3; }
+body.venue dialog { background: #fff; color: var(--ink); }
+body.venue dialog .muted { color: var(--muted); }
+body.venue dialog .btn-link { color: var(--navy-700); }
+body.venue dialog .field label, body.venue dialog .label, body.venue dialog legend { color: var(--ink-2); }
+body.venue dialog .field .hint { color: var(--muted); }
+body.venue dialog input, body.venue dialog select { background: #fff; color: var(--ink); border-color: #CDD5E3; }
+body.venue dialog .btn-ghost { background: var(--card); color: var(--ink); border-color: var(--line); }
+body.venue dialog .card { background: var(--card); color: var(--ink); border-color: var(--line); }

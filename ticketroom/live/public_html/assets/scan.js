@@ -1,5 +1,5 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { html, render, $, $$, get, post, header, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features } from "/assets/core.js";
+import { html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features } from "/assets/core.js";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
@@ -67,7 +67,7 @@ function drawOffline() {
   if (!el) return;
   const s = offline.status();
   if (!s.available) { el.textContent = ""; return; }
-  const parts = [s.ready ? `Offline ready: ${s.count.toLocaleString("en-ZA")} tickets, updated ${fmtClock(s.updatedAt)}` : "Downloading the ticket list for offline scanning…"];
+  const parts = [s.ready ? `Offline ready: ${plural(s.count, "ticket")}, updated ${fmtClock(s.updatedAt)}` : "Downloading the ticket list for offline scanning…"];
   if (s.pending) parts.push(`${s.pending} offline scan${s.pending === 1 ? "" : "s"} waiting to send`);
   if (offline.doubleEntries()) parts.push(`${offline.doubleEntries()} offline scan${offline.doubleEntries() === 1 ? " was" : "s were"} already used at another gate`);
   el.textContent = parts.join(" · ");
@@ -150,7 +150,7 @@ async function loadStats() {
   if (!EVENT) return;
   try {
     const s = await get(`/api/staff/events/${EVENT.id}/stats`);
-    $("#stats").textContent = `${s.admitted.toLocaleString("en-ZA")} of ${s.issued.toLocaleString("en-ZA")} in · you: ${s.mine}`;
+    $("#stats").textContent = `${s.admitted.toLocaleString("en-ZA")} of ${plural(s.issued, "ticket")} scanned in · ${s.mine.toLocaleString("en-ZA")} by you`;
     setNet(true);
     render($("#recent"), s.recent.length ? html`<div class="table-wrap"><table><tbody>${s.recent.map((x) => html`<tr><td>${fmtTime(x.occurred_at)}</td><td>${(VERDICT[x.outcome] || [, x.outcome])[1]}</td><td>${x.holder_name || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">No scans yet.</p>`);
   } catch (err) { if (unreachable(err)) setNet(false); }
