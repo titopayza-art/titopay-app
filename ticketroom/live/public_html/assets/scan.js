@@ -1,5 +1,5 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { svgIcon, html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features, installPrompt, pullToRefresh } from "/assets/core.js";
+import { portalsFor, svgIcon, html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features, installPrompt, pullToRefresh } from "/assets/core.js";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
@@ -252,6 +252,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   if (!u) return render(main, empty("Sign in to scan."));
   // TicketRoom staff use the scanner only for a test event, opened from the admin portal.
   if (accountType(u) === "staff" && !TEST_EVENT) return wrongAccountPage(u, "scanner");
+  // Not on any event team (and not an organiser): this page is not for them.
+  if (!TEST_EVENT && !portalsFor(u).includes("scanner")) return wrongAccountPage(u, "scanner");
   await header($("#header"), { portal: "scanner" });
   render(main, spinner());
   // Pull down on the gate to load the counts again.

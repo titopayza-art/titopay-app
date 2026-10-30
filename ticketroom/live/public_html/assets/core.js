@@ -955,7 +955,11 @@ function showBanner(s) {
     b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
     render(b, html`<div class="wrap"><div class="announcement-card"><div class="announcement-copy"><span class="pill">New</span><p>${s.banner.text}</p></div>${s.banner.linkText && s.banner.linkUrl ? html`<a class="announcement-link" href="${s.banner.linkUrl}">${s.banner.linkText}${svgIcon("arrow", 16)}</a>` : ""}<button class="icon-btn" data-hide aria-label="Dismiss announcement">×</button></div></div>`);
     $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
-    document.body.prepend(b);
+    // Straight into the page, under its opening section; never above the site header.
+    const main = $("#main");
+    const hero = main && $(".hero", main);
+    if (hero) hero.after(b);
+    else if (main) main.prepend(b);
   }
 }
 

@@ -1223,8 +1223,6 @@ input[type="file"]:hover::file-selector-button { border-color: var(--navy-600); 
   .tk-foot { padding: 4px 18px 18px; }
   .tk-code { font-size: 1.5rem; margin-top: 2px; }
   .tk-note { margin-top: 6px; }
-  body:has(.tk-wrap) .chat-fab { position: static; display: flex; width: max-content; margin: 8px 16px 16px auto; align-self: flex-end; }
-  body:has(.tk-wrap) .chat-fab span { display: inline; }
 }
 /* Venue screens (scanner, box office, till): readable labels, cards and dialogs (U3). */
 body.venue .field label, body.venue .label, body.venue legend { color: #C8D4EA; }
