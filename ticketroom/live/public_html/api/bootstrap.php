@@ -221,9 +221,13 @@ const TEST_SCANS_TRIGGER = "CREATE TRIGGER IF NOT EXISTS admission_log_no_delete
   BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END";
 const TEST_EVENTS_TRIGGER = "CREATE TRIGGER IF NOT EXISTS events_delete_only_test BEFORE DELETE ON events WHEN COALESCE(OLD.is_test, 0) <> 1
   BEGIN SELECT RAISE(ABORT, 'only test events can be deleted'); END";
+// Wallet passes (upgrade 53). No foreign key on ticket_id: a test event's
+// tickets are deleted with it, and its passes simply read as void.
+const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('apple','google')), ticket_id TEXT NOT NULL, qr_version INTEGER NOT NULL, snapshot TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','void')), fingerprint TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)";
+const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 52;
+const SCHEMA_VERSION = 53;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -566,6 +570,15 @@ const UPGRADES = [
         TEST_SCANS_TRIGGER,
         TEST_EVENTS_TRIGGER,
     ],
+    // Apple Wallet and Google Wallet: every pass handed out (so a transfer,
+    // resale, reissue or refund can void it) and the Apple devices that hold
+    // each one (for the push that makes them fetch the new version).
+    53 => [
+        WALLET_PASSES_SQL,
+        'CREATE INDEX IF NOT EXISTS wallet_passes_state_idx ON wallet_passes (state, expires_at)',
+        'CREATE INDEX IF NOT EXISTS wallet_passes_ticket_idx ON wallet_passes (ticket_id)',
+        WALLET_DEVICES_SQL,
+    ],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -728,6 +741,8 @@ function jobs(): array
         ['end-promotions', 300, fn() => promo_expire()],
         // Test events (Admin portal, Test event) are deleted 7 days after they end.
         ['test-events', 3600, fn() => test_events_cleanup()],
+        // Wallet passes of tickets that were transferred, resold, reissued or refunded are voided.
+        ['wallet-updates', 60, fn() => wallet_sync()],
         ['scheduled-campaigns', 60, fn() => function_exists('org_due_scheduled_campaigns') ? org_due_scheduled_campaigns() : 0],
         ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];
@@ -820,7 +835,8 @@ function tr_handle(): void
         }
         // Payment providers post their notifications as JSON (Yoco) or a form
         // (PayFast), with no session: they are checked by signature instead.
-        $isHook = str_starts_with($path, '/api/webhooks/');
+        // Apple Wallet's pass web service is checked by each pass's own token.
+        $isHook = str_starts_with($path, '/api/webhooks/') || str_starts_with($path, '/api/passkit/');
         if (!$isHook) csrf_check($method, $path);
         $body = [];
         if ($raw !== '' && !$isHook) {

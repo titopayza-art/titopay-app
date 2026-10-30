@@ -88,6 +88,16 @@ const INTEGRATION_FIELDS = [
         'checkBank' => ['label' => 'Bank account check (before payouts)', 'options' => ['on' => 'On: replaces the bank confirmation letter', 'off' => 'Off: ask for a bank confirmation letter']],
         'checkFace' => ['label' => 'Face match (selfie against Home Affairs photo)', 'options' => ['off' => 'Off', 'on' => 'On: organisers also upload a selfie']],
     ],
+    // Apple Wallet and Google Wallet tickets (lib/wallet.php). The certificate
+    // and the service account key are uploaded as files (base64 for the .p12).
+    'wallet' => [
+        'applePassTypeId' => ['label' => 'Apple pass type ID', 'placeholder' => 'pass.za.co.ticketroom.ticket', 'hint' => 'Apple Developer site → Certificates, IDs & Profiles → Identifiers → Pass Type IDs.'],
+        'appleTeamId' => ['label' => 'Apple team ID', 'placeholder' => 'ABCDE12345', 'hint' => 'Apple Developer site → Membership details. 10 letters and numbers.'],
+        'appleCertificate' => ['label' => 'Apple pass certificate (.p12)', 'secret' => true, 'file' => '.p12,.pfx,.pem', 'max' => 60000, 'hint' => 'The Pass Type ID certificate exported from Keychain Access together with its private key.'],
+        'appleCertificatePassword' => ['label' => 'Certificate password', 'secret' => true, 'hint' => 'The password you chose when exporting the .p12 file.'],
+        'googleIssuerId' => ['label' => 'Google Wallet issuer ID', 'placeholder' => '3388000000012345678', 'hint' => 'Google Pay and Wallet Console → Google Wallet API. A long number.'],
+        'googleServiceAccount' => ['label' => 'Google service account key (.json)', 'secret' => true, 'file' => '.json', 'max' => 20000, 'hint' => 'Google Cloud → IAM & Admin → Service accounts → Keys → Add key → JSON.'],
+    ],
     // Sign in with Google, for customer and organiser accounts (never staff).
     'google' => [
         'enabled' => ['label' => 'Sign in with Google', 'options' => ['off' => 'Off', 'on' => 'On: customers and organisers can continue with Google']],
@@ -136,7 +146,7 @@ function integration_save(string $group, array $in, array $clear, string $userId
         if (!empty($f['secret']) && $val === '') continue;
         if (isset($f['options']) && !isset($f['options'][$val])) throw invalid([$k => 'Choose one of the options.']);
         if (!empty($f['int']) && $val !== '' && !ctype_digit((string) $val)) throw invalid([$k => 'Numbers only.']);
-        if (strlen((string) $val) > 300) throw invalid([$k => 'Too long.']);
+        if (strlen((string) $val) > ($f['max'] ?? 300)) throw invalid([$k => 'Too long.']);
         if (isset($f['prefix']) && $val !== '' && !str_starts_with((string) $val, $f['prefix'])) {
             $swapped = strtr($f['prefix'], ['_test_' => '_live_', '_live_' => '_test_']);
             throw invalid([$k => str_starts_with((string) $val, $swapped)
@@ -163,7 +173,7 @@ function integration_form(string $group): array
         if (!empty($f['hidden'])) continue;
         $effective = cfg("$group.$k");
         $row = ['name' => $k, 'label' => $f['label'], 'secret' => !empty($f['secret']), 'hint' => $f['hint'] ?? null, 'placeholder' => $f['placeholder'] ?? null,
-            'provider' => $f['provider'] ?? null, 'options' => $f['options'] ?? null, 'auto' => !empty($f['auto']), 'fromConfigFile' => !array_key_exists($k, $saved) && $effective !== null && $effective !== ''];
+            'provider' => $f['provider'] ?? null, 'options' => $f['options'] ?? null, 'auto' => !empty($f['auto']), 'file' => $f['file'] ?? null, 'fromConfigFile' => !array_key_exists($k, $saved) && $effective !== null && $effective !== ''];
         if (!empty($f['secret'])) { $row['set'] = $effective !== null && $effective !== ''; $row['plain'] = !empty($f['plain']); }
         else $row['value'] = $effective === null ? '' : (string) $effective;
         $out[] = $row;

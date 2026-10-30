@@ -1211,6 +1211,7 @@ const INTEG_HELP = {
   verifynow: "Electronic checks on organisers by VerifyNow: SA ID numbers with Home Affairs (always), and the checks you choose below. They run in the background after the organiser gives permission, and anything VerifyNow cannot confirm comes to Verification for a person to decide.",
   identity: "How organisers' ID documents are checked (FICA). Staff review works now. The sandbox simulates a provider for testing. Your own provider is called with the ID number when an ID document is uploaded; anything it does not confirm goes to staff.",
   google: "Optional. Lets customers and organisers sign in or sign up with their Google account, no password needed. Staff always use the admin password sign-in.",
+  wallet: "Optional. Customers can add their tickets to Apple Wallet and Google Wallet, with the same QR code the gate scans. Each button shows only once its side is set up. A transferred, resold, reissued or refunded ticket's pass stops working by itself.",
 };
 // Write-only boxes: never pre-filled, and kept out of the browser's password
 // filling (they open for typing only when tapped).
@@ -1220,6 +1221,9 @@ function integrationCard(i) {
     ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label}</label><select id="ig-${i.key}-${f.name}" name="${f.name}" ${raw(isA() ? "" : "disabled")}>${Object.entries(f.options).map(([v, l]) => html`<option value="${v}" ${raw(v === f.value ? "selected" : "")}>${l}</option>`)}</select>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
     : f.auto
       ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><span class="label">${f.label}</span><p class="mb-0">${f.set ? html`<span class="badge good">connected</span>` : html`<span class="badge plain">not connected yet</span>`}</p>${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
+    : f.file
+      ? html`<div class="field"><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">saved</span>` : html`<span class="badge plain">not set</span>`}</label>
+          <input id="ig-${i.key}-${f.name}" type="file" accept="${f.file}" data-file="${f.name}" ${raw(isA() ? "" : "disabled")}><input type="hidden" name="${f.name}" value="">${f.hint ? html`<span class="hint">${f.hint}${f.set ? " Choose a new file only to replace the saved one." : ""}</span>` : ""}</div>`
     : f.secret
       ? html`<div class="field"${raw(f.provider ? ` data-for="${f.provider}"` : "")}><label for="ig-${i.key}-${f.name}">${f.label} ${f.set ? html`<span class="badge good">saved</span>` : html`<span class="badge plain">not set</span>`}</label>
           ${writeOnly(`ig-${i.key}-${f.name}`, f.name, f.plain, f.set)}${f.hint ? html`<span class="hint">${f.hint}</span>` : ""}</div>`
@@ -1236,11 +1240,12 @@ function integrationCard(i) {
     ${i.key === "verifynow" && i.problem ? html`<p class="callout bad small mb-0"><strong>Problem:</strong> ${i.problem}</p>` : ""}
     ${i.key === "verifynow" ? html`<p class="small mb-0" data-vn-credits>Credits: ${i.credits && i.credits.credits != null ? html`<strong>${i.credits.credits}</strong> <span class="tiny muted">(at ${fmtDateTime(i.credits.at)})</span>` : "press Test connection to see the balance"}.${i.running ? ` ${i.running} check${i.running === 1 ? "" : "s"} running.` : ""}${i.waiting ? html` <a href="#/verification">${i.waiting} check${i.waiting === 1 ? "" : "s"} waiting for a person</a>.` : ""}</p>
       <p class="small mb-0">Bank check results arrive at <span class="mono">${i.notifyUrl}</span>, signed with the secret TicketRoom made. Nothing to set up in VerifyNow: the address is sent with each check.</p>` : ""}
+    ${i.key === "wallet" ? html`<p class="small mb-0">Apple Wallet: ${i.apple ? html`<span class="badge good">ready</span>` : html`<span class="badge plain">not set up</span>`} · Google Wallet: ${i.google ? html`<span class="badge good">ready</span>` : html`<span class="badge plain">not set up</span>`}${i.webServiceUrl ? html`. Apple Wallet asks for updates at <span class="mono">${i.webServiceUrl}</span>` : ""}</p>` : ""}
     ${i.redirectUrl ? html`<p class="small mb-0">In Google Cloud, create an OAuth client ID (Web application) and add this under Authorised redirect URIs: <span class="mono">${i.redirectUrl}</span></p>` : ""}
     ${i.key === "payouts" && i.provider === "peach" ? html`<p class="callout warn small mb-0"><strong>Sandbox and production are separate.</strong> Sandbox lets finance submit test payouts against Peach’s sandbox after approval; these never settle or reduce real organiser balances. Production transfers are irreversible, must be pre-funded, and require careful beneficiary checks. Configure this URL in Peach’s Payouts webhook settings and request a source-of-funds review before your first live payout.</p>` : ""}
     ${i.notifyUrl && i.key !== "verifynow" ? html`<p class="small mb-0">${i.key === "payouts" ? "Payout status webhook:" : "Payment notifications arrive at"} <span class="mono">${i.notifyUrl}</span>${i.provider === "yoco" ? " (registered with Yoco for you when you save)." : i.provider === "peach" && i.key === "payments" ? " Configure this URL on your Peach Checkout profile and add the custom header X-TicketRoom-Peach-Secret using the saved webhook secret." : i.provider === "peach" ? " Configure this endpoint in Peach Payouts and provide the signing secret from Peach." : ". PayFast is told this address with every payment."}</p>` : ""}
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
-      ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button><button type="button" class="btn btn-ghost" data-health="${i.key}">${i.key === "verifynow" ? "Test connection" : "Check connection"}</button>
+      ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button>${i.key === "wallet" ? html`<button type="button" class="btn btn-ghost" data-test="wallet">Test</button>` : html`<button type="button" class="btn btn-ghost" data-health="${i.key}">${i.key === "verifynow" ? "Test connection" : "Check connection"}</button>`}
           ${i.key === "payments" && i.provider === "yoco" ? html`<button type="button" class="btn btn-ghost" data-yoco-page="test">Test payment page (Test)</button><button type="button" class="btn btn-ghost" data-yoco-page="live">Test payment page (Live)</button>` : ""}
           ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : i.key === "identity" ? html`<button type="button" class="btn btn-ghost" data-test="identity">Try a check</button>` : ""}</div>
         <p class="tiny muted mb-0">Saving asks for your password. Saved keys and passwords are encrypted and never shown again, not even to admins.</p>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
@@ -1261,6 +1266,15 @@ async function integrations() {
   // Write-only boxes open for typing only when tapped, so browsers never fill saved logins into them.
   // Opened on touch-down, so the phone keyboard appears on the first tap; keyboard users open it on focus.
   $$("[data-unlock]").forEach((el) => { const open = () => el.removeAttribute("readonly"); for (const ev of ["pointerdown", "touchstart", "focus"]) el.addEventListener(ev, open, { once: true, passive: true }); });
+  // Certificate and key files are read here and sent with Save: a .p12 as base64, a .json or .pem as text.
+  $$("[data-file]").forEach((el) => el.addEventListener("change", async () => {
+    const file = el.files[0];
+    const box = el.form.elements[el.dataset.file];
+    if (!file) { box.value = ""; return; }
+    if (file.size > 40000) { toast("That file is too big for a certificate or key. Check you chose the right one.", "bad"); el.value = ""; box.value = ""; return; }
+    const buf = new Uint8Array(await file.arrayBuffer());
+    box.value = /\.(json|pem)$/i.test(file.name) ? new TextDecoder().decode(buf) : btoa(Array.from(buf, (c) => String.fromCharCode(c)).join(""));
+  }));
   // Show only the fields for the chosen provider.
   $$("[data-form]").forEach((f) => {
     const sel = f.elements.provider || f.elements.payoutProvider;
@@ -1305,7 +1319,8 @@ async function integrations() {
   }));
   $$("[data-test]").forEach((b) => b.addEventListener("click", async () => {
     let body = {};
-    if (b.dataset.test === "identity") { const number = await confirmDialog("Try an identity check", "Type a test SA ID or passport number. It is checked on this server first, then sent to the provider you saved. Nothing is stored.", { confirm: "Check", input: { label: "ID or passport number", required: true } }); if (!number) return; body = { number }; }
+    if (b.dataset.test === "wallet") body = {};
+    else if (b.dataset.test === "identity") { const number = await confirmDialog("Try an identity check", "Type a test SA ID or passport number. It is checked on this server first, then sent to the provider you saved. Nothing is stored.", { confirm: "Check", input: { label: "ID or passport number", required: true } }); if (!number) return; body = { number }; }
     else if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567", type: "tel" } }); if (!phone) return; body = { phone }; }
     else { const to = await confirmDialog("Send a test email", "We'll send one short email to this address straight away and tell you what happened.", { confirm: "Send", input: { label: "Email address", type: "email", required: true, value: (await me()).email } }); if (!to) return; body = { to }; }
     b.disabled = true;

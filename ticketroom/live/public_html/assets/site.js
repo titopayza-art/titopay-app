@@ -1,4 +1,4 @@
-import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
+import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js?build=2026-10-22-phases";
 
 const main = $("#main");
@@ -706,7 +706,7 @@ async function eventPage(slug, opts = {}) {
 // The order page: the buyer's tickets, signed in or from the private link in
 // their email (?k=…). Guests see their QR codes here and are offered an
 // account with the same email, which collects every ticket once confirmed.
-function orderTicket(t, o) {
+function orderTicket(t, o, f, q) {
   const testEvent = !!o.testEvent;
   const when = `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`;
   const live = t.status === "valid" && t.qrUrl;
@@ -720,7 +720,7 @@ function orderTicket(t, o) {
     <div class="tk-perf" aria-hidden="true"></div>
     <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">${t.code}</span><p class="tk-note">Present this ticket at the entrance. Do not share the code publicly.</p></div>
   </article>
-  ${live ? html`<div class="tk-actions no-print"><div class="row"><button class="btn btn-ghost btn-sm" data-img="${t.id}">Save ticket image</button><button class="btn btn-ghost btn-sm" data-cal>Add to calendar</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div></div>` : ""}</div>`;
+  ${live ? html`<div class="tk-actions no-print"><div class="row">${walletBadges(f, { apple: `/api/public/orders/${encodeURIComponent(o.reference)}/tickets/${t.id}/wallet/apple${q}`, google: true })}<button class="btn btn-ghost btn-sm" data-img="${t.id}">Save ticket image</button><button class="btn btn-ghost btn-sm" data-cal>Add to calendar</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div></div>` : ""}</div>`;
 }
 
 async function orderPage(ref) {
@@ -735,6 +735,7 @@ async function orderPage(ref) {
   const draw = async () => {
     const { order: o, items, tickets, payment, guest, email, ticketsHidden, ticketCount } = await get(`/api/public/orders/${encodeURIComponent(ref)}${q}`);
     const wallet = payment?.method === "titopay_wallet";
+    const f = await features();
     document.title = `Order ${o.reference} | TicketRoom`;
     const pending = o.status === "pending_payment";
     const paid = o.status === "paid" || o.status === "partially_refunded";
@@ -760,10 +761,14 @@ async function orderPage(ref) {
         <div class="line"><span>Service fee</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div>
         ${o.refundedCents ? html`<div class="line"><span>Refunded</span><span>−${moneyExact(o.refundedCents)}</span></div>` : ""}</div></div>
     </div>
-    ${paid && (guest || k) && tickets.length ? html`<div class="stack-lg">${tickets.map((t) => orderTicket(t, o))}</div>` : ""}</div>`);
+    ${paid && (guest || k) && tickets.length ? html`<div class="stack-lg">${tickets.map((t) => orderTicket(t, o, f, q))}</div>` : ""}</div>`);
     $("[data-share]")?.append(shareBar(`${location.origin}/events/${o.event.slug}`, o.event.title, { text: `I'm going to ${o.event.title}. Get your ticket` }));
     $("[data-make-account]")?.addEventListener("click", () => authDialog("signup", { portal: "customer" }));
     $$("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
+    $$("[data-gw]").forEach((b) => b.addEventListener("click", async () => {
+      const id = b.closest(".tk-wrap").querySelector("[data-img]").dataset.img;
+      try { location.href = (await get(`/api/public/orders/${encodeURIComponent(o.reference)}/tickets/${id}/wallet/google${q}`)).url; } catch (err) { toast(err.message, "bad"); }
+    }));
     $$("[data-cal]").forEach((b) => b.addEventListener("click", () => calendarFile({ title: o.event.title, starts: o.event.startsAt, ends: o.event.endsAt, place: `${o.event.venue}, ${o.event.city}`, url: `${location.origin}/events/${o.event.slug}` })));
     $$("[data-img]").forEach((b) => b.addEventListener("click", async () => {
       const t = tickets.find((x) => x.id === b.dataset.img);

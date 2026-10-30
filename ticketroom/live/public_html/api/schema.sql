@@ -418,6 +418,29 @@ CREATE TABLE IF NOT EXISTS replaced_codes (
   replaced_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS replaced_codes_event_idx ON replaced_codes (event_id, replaced_at);
+-- Apple Wallet and Google Wallet passes handed out, and the Apple devices
+-- holding each one (upgrade 53). A transfer, resale, reissue or refund voids them.
+CREATE TABLE IF NOT EXISTS wallet_passes (
+  serial      TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL CHECK (kind IN ('apple','google')),
+  ticket_id   TEXT NOT NULL,
+  qr_version  INTEGER NOT NULL,
+  snapshot    TEXT NOT NULL,
+  state       TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','void')),
+  fingerprint TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS wallet_passes_state_idx ON wallet_passes (state, expires_at);
+CREATE INDEX IF NOT EXISTS wallet_passes_ticket_idx ON wallet_passes (ticket_id);
+CREATE TABLE IF NOT EXISTS wallet_devices (
+  device_id  TEXT NOT NULL,
+  serial     TEXT NOT NULL,
+  push_token TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (device_id, serial)
+);
 -- The days a multi-day or season pass was used: once a day (upgrade 48).
 CREATE TABLE IF NOT EXISTS ticket_entry_days (
   ticket_id   TEXT NOT NULL REFERENCES tickets(id),

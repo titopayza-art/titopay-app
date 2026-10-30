@@ -3,6 +3,10 @@
 Options -Indexes
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  # Apple Wallet's pass web service signs in with an Authorization header,
+  # which some hosts (CGI, FastCGI) do not pass to PHP unless told to.
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
   RewriteCond %{REQUEST_URI} !/api/index\.php$
   RewriteRule ^ index.php [L,QSA]
 </IfModule>

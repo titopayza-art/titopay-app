@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile , phoneVerifyDialog, accountDeletionDialog } from "/assets/core.js?build=2026-10-22-phases";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, authDialog, me, emailLinkPage, wrongAccountPage, accountType, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile, walletBadges, phoneVerifyDialog, accountDeletionDialog } from "/assets/core.js?build=2026-10-22-phases";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -60,16 +60,11 @@ function ticketCard(t, offline = false) {
 // iPhone or iPad, Google Wallet on Android, both on a computer. They show only
 // once TicketRoom's wallet accounts are set up. "Save ticket image" always
 // works: a picture of the QR code for the phone's photo gallery.
-const DEVICE = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ? "apple"
-  : /Android/i.test(navigator.userAgent) ? "google" : "desktop";
 async function walletButtons() {
   const f = await features();
   for (const box of $$("[data-wallet]")) {
     const id = box.dataset.wallet;
-    const apple = f.walletApple && DEVICE !== "google";
-    const google = f.walletGoogle && DEVICE !== "apple";
-    render(box, html`${apple ? html`<a class="wallet-btn apple" href="/api/me/tickets/${id}/wallet/apple">${raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></svg>')} Add to Apple Wallet</a>` : ""}
-      ${google ? html`<button type="button" class="wallet-btn google" data-gw>${raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></svg>')} Add to Google Wallet</button>` : ""}
+    render(box, html`${walletBadges(f, { apple: `/api/me/tickets/${id}/wallet/apple`, google: true })}
       <button type="button" class="btn btn-ghost btn-sm" data-img>Save ticket image</button><button type="button" class="btn btn-ghost btn-sm" data-cal>Add to calendar</button>`);
     $("[data-cal]", box).addEventListener("click", () => calendarFile({ title: box.dataset.title, starts: box.dataset.starts, ends: box.dataset.ends, place: box.dataset.place, url: `${location.origin}/events/${box.dataset.slug}` }));
     $("[data-gw]", box)?.addEventListener("click", async () => {

@@ -71,12 +71,84 @@ route('GET', '/api/me/tickets/:id/wallet/apple', function ($a) {
     $u = require_auth();
     limit('walletpass', 60, 3600, $u['id']);
     if (!wallet_apple_ready()) throw not_available();
-    $t = wallet_ticket($u, $a['id']);
-    return raw_out(wallet_apple_pkpass($t), 'application/vnd.apple.pkpass', 200, ['Content-Disposition' => 'attachment; filename="ticketroom-' . $t['code'] . '.pkpass"', 'Cache-Control' => 'no-store']);
+    return wallet_apple_download(wallet_ticket($u, $a['id']));
 });
 route('GET', '/api/me/tickets/:id/wallet/google', function ($a) {
     $u = require_auth();
     limit('walletpass', 60, 3600, $u['id']);
     if (!wallet_google_ready()) throw not_available();
     return ['url' => wallet_google_url(wallet_ticket($u, $a['id']))];
+});
+// The same from the order page's private link (guests too).
+route('GET', '/api/public/orders/:ref/tickets/:id/wallet/apple', function ($a) {
+    limit('walletpass', 60, 3600);
+    if (!wallet_apple_ready()) throw not_available();
+    $o = order_access($a['ref'], qs('k'));
+    if (!order_tickets_visible($o, qs('k'))) throw not_found('Ticket not found.');
+    return wallet_apple_download(wallet_order_ticket($o, $a['id']));
+});
+route('GET', '/api/public/orders/:ref/tickets/:id/wallet/google', function ($a) {
+    limit('walletpass', 60, 3600);
+    if (!wallet_google_ready()) throw not_available();
+    $o = order_access($a['ref'], qs('k'));
+    if (!order_tickets_visible($o, qs('k'))) throw not_found('Ticket not found.');
+    return ['url' => wallet_google_url(wallet_order_ticket($o, $a['id']))];
+});
+// The logo Google Wallet shows on the pass (Google fetches it from here).
+route('GET', '/api/wallet/logo.png', fn() => raw_out((string) file_get_contents(TR_APP . '/wallet/google-logo.png'), 'image/png', 200, ['Cache-Control' => 'public, max-age=86400']));
+
+// ---- Apple Wallet pass web service (developer.apple.com, "Wallet Passes web service")
+// Devices register for updates to a pass and fetch its newest version. Each
+// call carries the pass's own token ("ApplePass <token>"), never a session.
+function passkit_auth(string $type, string $serial): array
+{
+    $a = wallet_apple_creds();
+    $h = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+    if ($type !== $a['passTypeId'] || !preg_match('/^ApplePass\s+(\S+)$/', $h, $m) || !safe_equal(wallet_apple_token($serial), $m[1])) throw new AppError(401, 'unauthorised', 'Not authorised.');
+    $p = row("SELECT * FROM wallet_passes WHERE serial = ? AND kind = 'apple'", [$serial]);
+    if (!$p) throw not_found('Pass not found.');
+    return $p;
+}
+route('POST', '/api/passkit/v1/devices/:device/registrations/:type/:serial', function ($a) {
+    limit('passkit', 120, 3600);
+    if (!wallet_apple_ready()) throw not_available();
+    passkit_auth($a['type'], $a['serial']);
+    $b = json_decode((string) $GLOBALS['TR_REQ']['raw'], true);
+    $token = is_array($b) ? (string) ($b['pushToken'] ?? '') : '';
+    if (!preg_match('/^[A-Za-z0-9]{8,200}$/', $token) || !preg_match('/^[A-Za-z0-9]{1,200}$/', $a['device'])) throw bad('pushToken missing.');
+    $had = val('SELECT 1 FROM wallet_devices WHERE device_id = ? AND serial = ?', [$a['device'], $a['serial']]);
+    q('INSERT INTO wallet_devices (device_id, serial, push_token, created_at) VALUES (?,?,?,?) ON CONFLICT (device_id, serial) DO UPDATE SET push_token = excluded.push_token', [$a['device'], $a['serial'], $token, now_iso()]);
+    return raw_out('', 'text/plain', $had ? 200 : 201);
+});
+route('DELETE', '/api/passkit/v1/devices/:device/registrations/:type/:serial', function ($a) {
+    limit('passkit', 120, 3600);
+    if (!wallet_apple_ready()) throw not_available();
+    passkit_auth($a['type'], $a['serial']);
+    q('DELETE FROM wallet_devices WHERE device_id = ? AND serial = ?', [$a['device'], $a['serial']]);
+    return raw_out('', 'text/plain', 200);
+});
+// Which of this device's passes changed since the tag it last saw.
+route('GET', '/api/passkit/v1/devices/:device/registrations/:type', function ($a) {
+    limit('passkit', 240, 3600);
+    if (!wallet_apple_ready() || $a['type'] !== wallet_apple_creds()['passTypeId']) throw not_found('Unknown pass type.');
+    $since = qs('passesUpdatedSince');
+    $list = rows("SELECT p.serial, p.updated_at FROM wallet_devices d JOIN wallet_passes p ON p.serial = d.serial WHERE d.device_id = ?" . ($since ? ' AND p.updated_at > ?' : ''), $since ? [$a['device'], $since] : [$a['device']]);
+    if (!$list) return raw_out('', 'text/plain', 204);
+    return ['serialNumbers' => array_column($list, 'serial'), 'lastUpdated' => max(array_column($list, 'updated_at'))];
+});
+route('GET', '/api/passkit/v1/passes/:type/:serial', function ($a) {
+    limit('passkit', 240, 3600);
+    if (!wallet_apple_ready()) throw not_available();
+    $p = passkit_auth($a['type'], $a['serial']);
+    $since = (string) ($_SERVER['HTTP_IF_MODIFIED_SINCE'] ?? '');
+    $mod = (int) to_unix($p['updated_at']);
+    if ($since !== '' && strtotime($since) >= $mod) return raw_out('', 'text/plain', 304);
+    $s = wallet_pass_state($p);
+    return raw_out(wallet_apple_pkpass($s['ticket'], $s['void']), 'application/vnd.apple.pkpass', 200, ['Last-Modified' => gmdate('D, d M Y H:i:s \G\M\T', $mod), 'Cache-Control' => 'no-store']);
+});
+route('POST', '/api/passkit/v1/log', function () {
+    limit('passkit-log', 30, 3600);
+    $b = json_decode((string) $GLOBALS['TR_REQ']['raw'], true);
+    foreach (array_slice((array) ($b['logs'] ?? []), 0, 10) as $line) error_log('[wallet] Apple: ' . substr(preg_replace('/[^\x20-\x7E]/', '', (string) $line), 0, 300));
+    return raw_out('', 'text/plain', 200);
 });

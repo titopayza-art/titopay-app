@@ -603,7 +603,7 @@ route('GET', '/api/me/refunds', function () {
 });
 
 // ============================================================== integrations
-const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'payouts' => 'Payouts', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'verifynow' => 'VerifyNow', 'google' => 'Sign in with Google'];
+const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'payouts' => 'Payouts', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'verifynow' => 'VerifyNow', 'google' => 'Sign in with Google', 'wallet' => 'Apple Wallet and Google Wallet'];
 function fin_integration(string $group): array
 {
     $form = integration_form($group);
@@ -657,6 +657,12 @@ function fin_integration(string $group): array
         return ['key' => 'google', 'group' => 'google', 'label' => 'Sign in with Google', 'provider' => cfg('google.enabled') === 'on' ? 'google' : 'none', 'environment' => $on ? 'live' : 'not set up',
             'status' => $on ? 'active' : 'not set up', 'endpoint' => 'accounts.google.com', 'redirectUrl' => google_redirect_uri(), 'credentials' => $creds ?: (object) [], 'fields' => $form];
     }
+    if ($group === 'wallet') {
+        $apple = wallet_apple_ready(); $google = wallet_google_ready();
+        return ['key' => 'wallet', 'group' => 'wallet', 'label' => 'Apple Wallet and Google Wallet', 'provider' => $apple || $google ? 'wallet' : 'none',
+            'environment' => $apple && $google ? 'live' : ($apple ? 'Apple only' : ($google ? 'Google only' : 'not set up')), 'status' => $apple || $google ? 'active' : 'not set up',
+            'apple' => $apple, 'google' => $google, 'endpoint' => 'Apple Wallet and Google Wallet', 'webServiceUrl' => wallet_web_service_url(), 'credentials' => $creds ?: (object) [], 'fields' => $form];
+    }
     $p = sms_provider();
     return ['key' => 'sms', 'group' => 'sms', 'label' => 'SMS', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : 'live', 'status' => sms_ready() ? 'active' : 'not set up',
         'endpoint' => $p === 'bulksms' ? 'api.bulksms.com' : ($p === 'clickatell' ? 'platform.clickatell.com' : '–'), 'credentials' => $creds ?: (object) [], 'fields' => $form];
@@ -665,14 +671,14 @@ route('GET', '/api/admin/integrations', function () {
     adm_admin(); // provider settings are for admins only
     return [
         'defaults' => ['bookingFeeCents' => (int) (settings_all()['fees']['ticketFeeFixedCents'] ?? 1000), 'bookingFeeBps' => (int) (settings_all()['fees']['ticketFeeBps'] ?? 0), 'organiserCommissionBps' => (int) (settings_all()['fees']['organiserCommissionBps'] ?? 500), 'organiserCommissionFixedCents' => (int) (settings_all()['fees']['organiserCommissionFixedCents'] ?? 250)],
-        'integrations' => [fin_integration('payments'), fin_integration('payouts'), fin_integration('mail'), fin_integration('sms'), fin_integration('google'), fin_integration('kyc'), fin_integration('verifynow')],
+        'integrations' => [fin_integration('payments'), fin_integration('payouts'), fin_integration('mail'), fin_integration('sms'), fin_integration('google'), fin_integration('kyc'), fin_integration('verifynow'), fin_integration('wallet')],
     ];
 });
 // Saving needs the admin's own password: these settings move money and send mail as TicketRoom.
 route('PUT', '/api/admin/integrations/:key', function ($a) {
     $u = adm_admin();
     limit('integsave', 20, 3600, $u['id']);
-    $group = ['email' => 'mail', 'payments' => 'payments', 'payouts' => 'payouts', 'sms' => 'sms', 'identity' => 'kyc', 'verifynow' => 'verifynow', 'google' => 'google'][$a['key']] ?? null;
+    $group = ['email' => 'mail', 'payments' => 'payments', 'payouts' => 'payouts', 'sms' => 'sms', 'identity' => 'kyc', 'verifynow' => 'verifynow', 'google' => 'google', 'wallet' => 'wallet'][$a['key']] ?? null;
     if (!$group) throw not_found('Unknown integration.');
     $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'values' => R::obj([], ['optional' => true]), 'clear' => R::arr(R::str(['max' => 60]), ['optional' => true, 'max' => 20])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
@@ -722,6 +728,11 @@ route('PUT', '/api/admin/integrations/:key', function ($a) {
         if (!yoco_mode_ready(pay_mode())) $notes[] = 'Mode is ' . ucfirst(pay_mode()) . ' but the ' . pay_mode() . ' Yoco keys are not saved and connected yet, so paid tickets stay off until they are.';
         if ($notes) $warning = 'Saved. ' . implode(' ', $notes);
     }
+    // Wallet: say straight away if what was saved cannot make a pass.
+    if ($group === 'wallet' && $changed) {
+        $t = wallet_selftest();
+        if (!$t['ok']) $warning = 'Saved, but there is a problem. ' . $t['detail'];
+    }
     audit('integration.updated', ['actor' => $u, 'entityType' => 'integration', 'entityId' => $group, 'ip' => client_ip(), 'details' => ['fields' => $changed]]);
     $notice = null;
     if ($wentLive) {
@@ -761,6 +772,7 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     elseif ($key === 'payouts') $result = fin_payouts_health();
     elseif ($key === 'identity') $result = fin_identity_health();
     elseif ($key === 'verifynow') $result = kyc_vn_health();
+    elseif ($key === 'wallet') $result = wallet_selftest();
     elseif ($key === 'google') $result = !google_ready() ? ['ok' => false, 'detail' => 'Switch it on and enter the client ID and secret.']
         : (preg_match('/^[\w-]+\.apps\.googleusercontent\.com$/', (string) cfg('google.clientId')) ? ['ok' => true, 'detail' => 'Ready. Make sure ' . google_redirect_uri() . ' is listed under Authorised redirect URIs in Google Cloud.']
         : ['ok' => false, 'detail' => 'That does not look like a Google OAuth client ID (it ends in .apps.googleusercontent.com).']);
@@ -880,6 +892,12 @@ route('POST', '/api/admin/integrations/:key/test', function ($a) {
         $local = $isId ? "Valid SA ID number: born {$c['dob']}, {$c['citizenship']}." : 'Passport number format is fine.';
         return ['ok' => $r['status'] !== 'error', 'outcome' => $r['status'], 'provider' => $r['provider'], 'simulated' => $r['provider'] === 'sandbox',
             'detail' => "$local " . ($r['status'] === 'manual' ? 'Staff review is on, so nothing is sent anywhere.' : 'Outcome: ' . $r['status'] . ($r['message'] ? " ({$r['message']})" : '') . '.')];
+    }
+    if ($a['key'] === 'wallet') {
+        // Builds and signs a sample pass on each side that is set up. Nothing is sent to anyone.
+        $r = wallet_selftest();
+        audit('integration.wallet_test', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'wallet', 'details' => ['ok' => $r['ok']]]);
+        return $r;
     }
     throw not_found('Nothing to test here.');
 });

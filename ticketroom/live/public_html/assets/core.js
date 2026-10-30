@@ -1606,6 +1606,27 @@ export function likeButton(slug, { liked = false, likes = 0 } = {}) {
   return b;
 }
 
+// Wallet buttons, drawn here (no images from Apple or Google): black badges
+// with the wording each wallet asks for. Apple Wallet is offered on an iPhone,
+// iPad or Mac with touch, Google Wallet on Android, both on a computer. They
+// show only once TicketRoom's wallet accounts are set up (features from /api/config).
+export const WALLET_DEVICE = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ? "apple"
+  : /Android/i.test(navigator.userAgent) ? "google" : "desktop";
+const APPLE_BADGE = `<svg viewBox="0 0 150 46" width="150" height="46" aria-hidden="true" focusable="false"><rect width="150" height="46" rx="9" fill="#000"/><rect x=".5" y=".5" width="149" height="45" rx="8.5" fill="none" stroke="#A6A6A6"/>
+<g transform="translate(11 9)"><rect width="30" height="28" rx="5" fill="#fff"/><rect x="2.5" y="3" width="25" height="6" rx="1.5" fill="#3D8BFD"/><rect x="2.5" y="7" width="25" height="6" rx="1.5" fill="#34C759"/><rect x="2.5" y="11" width="25" height="6" rx="1.5" fill="#FFB800"/><rect x="2.5" y="15" width="25" height="6" rx="1.5" fill="#FF453A"/><path d="M2.5 18h7.5a5 4 0 0 0 10 0h7.5v6.5a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z" fill="#D8D8D8"/></g>
+<text x="49" y="20" fill="#fff" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, Arial, sans-serif" font-size="10.5" font-weight="500">Add to</text>
+<text x="49" y="35.5" fill="#fff" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, Arial, sans-serif" font-size="16.5" font-weight="600" letter-spacing="-.2">Apple Wallet</text></svg>`;
+const GOOGLE_BADGE = `<svg viewBox="0 0 199 46" width="199" height="46" aria-hidden="true" focusable="false"><rect width="199" height="46" rx="23" fill="#1F1F1F"/><rect x=".5" y=".5" width="198" height="45" rx="22.5" fill="none" stroke="#747775"/>
+<g transform="translate(15 12)"><rect width="24" height="9" rx="2.5" fill="#EA4335"/><rect y="4" width="24" height="9" rx="2.5" fill="#FBBC04"/><rect y="8" width="24" height="9" rx="2.5" fill="#34A853"/><path d="M0 14.5a2.5 2.5 0 0 1 2.5-2.5h4.2a5.3 5 0 0 0 10.6 0h4.2a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 0 19.5z" fill="#4285F4"/></g>
+<text x="48" y="28.5" fill="#E3E3E3" font-family="Roboto, system-ui, -apple-system, 'Segoe UI', Arial, sans-serif" font-size="14.5" font-weight="500">Add to Google Wallet</text></svg>`;
+// apple: the .pkpass address; google: true to offer the Google button (its click is the caller's).
+export function walletBadges(f, { apple, google }) {
+  const showApple = f.walletApple && apple && WALLET_DEVICE !== "google";
+  const showGoogle = f.walletGoogle && google && WALLET_DEVICE !== "apple";
+  if (!showApple && !showGoogle) return "";
+  return html`<span class="wallet-badges">${showApple ? html`<a class="wallet-badge" href="${apple}" aria-label="Add to Apple Wallet" data-wallet-apple>${raw(APPLE_BADGE)}</a>` : ""}${showGoogle ? html`<button type="button" class="wallet-badge" aria-label="Add to Google Wallet" data-gw>${raw(GOOGLE_BADGE)}</button>` : ""}</span>`;
+}
+
 // "Add to calendar": a standard .ics file that iPhone, Android (Google),
 // Outlook and Mac calendars all open.
 export function calendarFile({ title, starts, ends, place = "", url = "" }) {
