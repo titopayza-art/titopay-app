@@ -1125,7 +1125,11 @@ CREATE TABLE IF NOT EXISTS vendors (
   commission_bps INTEGER NOT NULL DEFAULT 0 CHECK (commission_bps BETWEEN 0 AND 5000),
   created_by     TEXT REFERENCES users(id),
   created_at     TEXT NOT NULL,
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  category       TEXT,
+  contact_name   TEXT,
+  contact_email  TEXT,
+  contact_phone  TEXT
 );
 CREATE INDEX IF NOT EXISTS vendors_event_idx ON vendors (event_id);
 CREATE TABLE IF NOT EXISTS vendor_members (

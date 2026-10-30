@@ -308,9 +308,31 @@ async function eventPage({ id }) {
   const base = `/api/admin/events/${id}`;
   render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city} · ${e.organiser_name}${e.ref ? html` · Event ID <span class="mono">${e.ref}</span>` : ""}`, html`<a class="btn btn-ghost" href="#/events">All events</a>`)}
     <section class="card" aria-labelledby="team-h" data-team></section>
-    <section class="card mt" data-activity></section>`);
+    <section class="card mt" data-activity></section>
+    <section class="card mt" data-vendors hidden></section>`);
   await teamSection($("[data-team]"), { base, list: d.staff, canEdit: d.canManage, viewer: "admin" });
   await teamActivity($("[data-activity]"), { base });
+  await eventVendors($("[data-vendors]"), id);
+}
+
+// The event's vendors as the organiser sees them (read-only), with each
+// vendor's commission rate set here as on Wristbands & wallets.
+async function eventVendors(box, id) {
+  const { vendors } = await get(`/api/admin/events/${id}/vendors`);
+  if (!vendors.length) return;
+  box.hidden = false;
+  const rate = (bps) => (bps ? `${Number((bps / 100).toFixed(2))}%` : "No commission");
+  render(box, html`<div class="card-title"><h2>Vendors</h2></div><p class="small muted">Rate changes affect future sales only; recorded sales and settlements stay unchanged.</p>
+    ${tbl(["Vendor", "Status", "#Staff", "#Tills", "#Menu items", "#Sales", "Commission", ""], vendors.map((v) => html`<tr data-vendor="${v.id}"><td><strong>${v.name}</strong>${v.description ? html`<div class="tiny muted">${v.description}</div>` : ""}</td><td>${badge(v.status)}</td>
+      <td class="num">${v.members.length}</td><td class="num">${v.terminals.filter((t) => t.status !== "retired").length}</td><td class="num">${v.products_count}</td><td class="num">${moneyExact(v.gross_cents)}</td><td>${rate(v.commission_bps)}</td>
+      <td>${isA() ? html`<button class="btn btn-ghost btn-sm" data-vfee="${v.id}" data-name="${v.name}" data-rate="${v.commission_bps}">Set rate</button>` : ""}</td></tr>`))}`);
+  $$("[data-vfee]", box).forEach((b) => b.addEventListener("click", async () => {
+    const entered = await confirmDialog(`Vendor commission · ${b.dataset.name}`, "The new rate applies to future vendor sales only. Past sales and settlements are unchanged.", { confirm: "Save rate", input: { label: "Commission (%)", type: "text", placeholder: (Number(b.dataset.rate) / 100).toFixed(2), required: true } });
+    if (entered === false) return;
+    const pct = Number(entered);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 50) return toast("Enter a commission from 0% to 50%.", "bad");
+    if (await act(() => patch(`/api/admin/cashless/vendors/${b.dataset.vfee}/commission`, { commissionBps: Math.round(pct * 100) }), "Vendor commission updated.")) eventVendors(box, id);
+  }));
 }
 
 async function eventChangeRequests() {
@@ -698,7 +720,7 @@ async function wallets() {
     <div id="desk" class="mt-lg"></div>`);
   deskPicker($("#desk"), { title: "Run a desk", intro: "Choose the event. Every top-up is logged under your name." });
   $$('[data-vfee]').forEach((b) => b.addEventListener("click", async () => {
-    const entered = await confirmDialog(`Vendor commission · ${b.dataset.name}`, "The new rate applies to future vendor sales only. Past sales and settlements are unchanged.", { confirm: "Save rate", input: { label: "Commission (%)", type: "number", placeholder: (Number(b.dataset.rate) / 100).toFixed(2), required: true } });
+    const entered = await confirmDialog(`Vendor commission · ${b.dataset.name}`, "The new rate applies to future vendor sales only. Past sales and settlements are unchanged.", { confirm: "Save rate", input: { label: "Commission (%)", type: "text", placeholder: (Number(b.dataset.rate) / 100).toFixed(2), required: true } });
     if (entered === false) return;
     const rate = Number(entered);
     if (!Number.isFinite(rate) || rate < 0 || rate > 50) return toast("Enter a commission from 0% to 50%.", "bad");

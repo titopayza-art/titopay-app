@@ -240,9 +240,9 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["checks", "Permits & checks"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["wristbands", "Wristbands & desk"], ["checks", "Permits & checks"], ["details", "Details"]];
 
-async function eventWorkspace({ id, tab = "" }) {
+async function eventWorkspace({ id, tab = "", vendor, section }) {
   const d = await get(`${base()}/events/${id}`);
   const e = d.event;
   const actions = [];
@@ -255,7 +255,7 @@ async function eventWorkspace({ id, tab = "" }) {
     ${e.status === "pending_approval" ? html`<p class="callout">Waiting to be published. TicketRoom checks new events, usually within one business day, and emails you when it is live. <button class="btn-link" data-preview>Preview it</button></p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
-    <div class="tabs" role="tablist">${TABS.filter(([k]) => (k !== "vendors" || FEATURES.cashless) && (k !== "promote" || FEATURES.promote) && (k !== "box-office" || can("owner", "manager")) && (k !== "team" || can("owner", "manager", "finance"))).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
+    <div class="tabs" role="tablist">${TABS.filter(([k]) => (k !== "vendors" || FEATURES.cashless) && (k !== "wristbands" || (FEATURES.cashless && (FEATURES.tagRegistry || FEATURES.cashDesk))) && (k !== "promote" || FEATURES.promote) && (k !== "box-office" || can("owner", "manager")) && (k !== "team" || can("owner", "manager", "finance"))).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
     <div id="tab"></div>`);
   $(`[data-duplicate]`)?.addEventListener("click", () => {
     const d = dialog("Use this event as a template", html`<form class="stack" data-template-form>
@@ -312,9 +312,9 @@ async function eventWorkspace({ id, tab = "" }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, team: teamTab, passes: passesTab, vendors: vendorsTab, checks: checksTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, team: teamTab, passes: passesTab, vendors: vendorsTab, wristbands: wristbandsTab, checks: checksTab, details: detailsTab };
   render(el, spinner());
-  await fns[tab](el, d, () => eventWorkspace({ id, tab }));
+  await fns[tab](el, d, () => eventWorkspace({ id, tab, vendor, section }), { vendor, section });
 }
 
 // "Share your event": the public link and a QR code to download for posters,
@@ -673,31 +673,257 @@ async function passesTab(el, d, reload) {
   }));
 }
 
-async function vendorsTab(el, d, reload) {
+// ---------------- Vendors & POS ----------------
+// Food, drink and merchandise stalls take payment from guests' wristbands at
+// their own tills. The tab lists them; each vendor has its own page (Staff,
+// Tills, Menu, Sales, Settlement) at #/events/<id>/vendors/<vendor>/<section>.
+const VENDOR_CATEGORIES = { food: "Food", drinks: "Soft drinks", bar: "Bar (alcohol)", coffee: "Coffee and tea", sweets: "Sweets and desserts", merch: "Merchandise", services: "Services", other: "Something else" };
+const VENDOR_SECTIONS = [["staff", "Staff"], ["tills", "Tills"], ["menu", "Menu"], ["sales", "Sales"], ["settlement", "Settlement"]];
+const commissionText = (bps) => (Number(bps) ? `${Number((bps / 100).toFixed(2))}%` : "No commission");
+const vendorSells = (v) => [VENDOR_CATEGORIES[v.category], v.description].filter(Boolean).join(" · ");
+const liveTills = (v) => v.terminals.filter((t) => t.status === "active").length;
+
+// Cashless off: say what happens and offer the one step that switches it on.
+// Drafts change straight away; live events go to TicketRoom as a change request.
+function cashlessOff(d) {
+  const e = d.event;
+  if (e.cashless_enabled) return "";
+  const live = ["published", "suspended"].includes(e.status);
+  const pending = (d.eventChangeRequests || []).find((r) => r.status === "pending");
+  const asked = pending && pending.changes?.event?.cashlessEnabled === true;
+  let action = "";
+  if (["cancelled", "completed"].includes(e.status)) action = "";
+  else if (asked) action = html`<p class="small mb-0">You asked TicketRoom to switch it on ${fmtDateTime(pending.created_at)}. We review changes to live events, usually within one business day, and email you when it is done.</p>`;
+  else if (!can("owner", "manager")) action = html`<p class="small mb-0">Ask an owner or manager in your team to switch it on.</p>`;
+  else if (live && pending) action = html`<p class="small mb-0">You already have a change request waiting for review. Once it is decided you can ask for cashless to be switched on here, or withdraw it under <a href="#/events/${e.id}/details">Details</a>.</p>`;
+  else if (live) action = html`<p class="small mb-0">Your event is live, so TicketRoom reviews this change first, usually within one business day. The event stays as it is until then.</p><div><button class="btn btn-dark btn-sm" data-cashless-on>Ask TicketRoom to switch on cashless</button></div>`;
+  else action = html`<div><button class="btn btn-dark btn-sm" data-cashless-on>Switch on cashless</button></div>`;
+  return html`<section class="callout warn stack mb-0" data-cashless-off><p class="mb-0"><strong>Cashless is off for this event.</strong> You can set up vendors now, but tills and wristbands only take payments once it is on.</p>${action}</section>`;
+}
+function wireCashlessOff(el, d, reload) {
+  $("[data-cashless-on]", el)?.addEventListener("click", async () => {
+    const e = d.event;
+    if (!["published", "suspended"].includes(e.status)) {
+      try { await patch(`${base()}/events/${e.id}`, { cashlessEnabled: true }); toast("Cashless is on for this event.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+      return;
+    }
+    const dlg = dialog("Switch on cashless", html`<form class="stack" data-cashless-form>
+      <p class="mb-0">We'll send this to TicketRoom as a change request for <strong>${e.title}</strong>. Once it is approved, cashless is switched on: guests can top up wristbands and your vendors' tills can take payments. You'll get an email when it is decided, and you can follow it under Details.</p>
+      <div class="field"><label for="cl-reason">Note for TicketRoom</label><textarea id="cl-reason" name="reason" rows="3" required minlength="10" maxlength="1000">We want to use cashless payments with vendors at this event.</textarea></div>
+      <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Send for review</button></div></form>`, { sheet: true });
+    onSubmit($("form", dlg), async (v) => {
+      await post(`${base()}/events/${e.id}/change-requests`, { reason: v.reason, eventChanges: { cashlessEnabled: true } });
+      dlg.close(); toast("Sent to TicketRoom for review.", "good"); reload();
+    });
+  });
+}
+
+async function vendorsTab(el, d, reload, opts = {}) {
+  if (opts.vendor) return vendorPage(el, d, opts);
   const { vendors } = await get(`${base()}/events/${d.event.id}/vendors`);
   const edit = can("owner", "manager");
-  render(el, html`${!d.event.cashless_enabled ? html`<p class="callout warn">Cashless is switched off for this event. Turn it on under Details to use vendors and POS.</p>` : ""}
-    ${vendors.length ? html`<div class="stack">${vendors.map((v) => html`<section class="card"><div class="card-title"><div><h3>${v.name}</h3><span class="small muted">${v.description || ""} · commission ${(v.commission_bps / 100).toFixed(1)}% · gross ${moneyExact(v.gross_cents)}</span></div>
-        <div class="row">${badge(v.status)}${edit ? html`<button class="btn btn-ghost btn-sm" data-vstatus="${v.id}" data-s="${v.status === "active" ? "suspended" : "active"}">${v.status === "active" ? "Suspend" : "Reactivate"}</button>` : ""}
-        ${can("owner", "finance") ? html`<button class="btn btn-ghost btn-sm" data-vpay="${v.id}">Request settlement</button>` : ""}</div></div>
-      <div class="grid-2"><div><div class="label">Team</div>${v.members.length ? html`<ul class="small">${v.members.map((m) => html`<li>${m.name} (${m.role}), ${m.email}</li>`)}</ul>` : html`<p class="small muted">No vendor staff yet.</p>`}
-          ${edit ? html`<form class="row" data-member="${v.id}"><input name="email" type="email" required placeholder="Staff email" class="grow" aria-label="Vendor staff email"><select name="role" aria-label="Role"><option value="cashier">Cashier</option><option value="manager">Manager</option></select><button class="btn btn-ghost btn-sm">Add</button></form>` : ""}</div>
-        <div><div class="label">Terminals</div>${v.terminals.length ? html`<ul class="small">${v.terminals.map((t) => html`<li>${t.label} ${badge(t.status)} ${t.lastSeenAt ? html`<span class="muted">seen ${fmtDateTime(t.lastSeenAt)}</span>` : ""} ${edit && t.status !== "retired" ? html`<button class="btn-link" data-tstatus="${t.id}" data-s="${t.status === "active" ? "suspended" : "active"}">${t.status === "active" ? "suspend" : "activate"}</button>` : ""}</li>`)}</ul>` : html`<p class="small muted">No terminals.</p>`}
-          ${edit ? html`<form class="row" data-term="${v.id}"><input name="label" required placeholder="e.g. Till 1" class="grow" aria-label="Terminal name"><button class="btn btn-ghost btn-sm">Register terminal</button></form>` : ""}</div></div></section>`)}</div>` : empty("No vendors yet.")}
-    ${edit ? html`<section class="card mt"><h3>Add vendor</h3><form class="stack" id="vf"><div class="field"><label for="vn">Vendor name</label><input id="vn" name="name" required></div>
-      <div class="field"><label for="vd">What they sell</label><input id="vd" name="description" maxlength="240"></div><p class="small muted mb-0">The Admin-set default applies to new vendors. TicketRoom Admin can record any agreed vendor-specific rate; it appears here and on every settlement.</p><button class="btn btn-dark">Add vendor</button></form></section>` : ""}
-    <div id="bands"></div><div id="cdesk"></div>`);
-  if (FEATURES.tagRegistry) wristbands($("#bands", el), d, edit);
-  if (FEATURES.cashDesk && d.event.cashless_enabled && can("owner", "manager", "finance")) cashDeskCard($("#cdesk", el), el, d, reload);
-  if ($("#vf")) onSubmit($("#vf"), async (v) => { await post(`${base()}/events/${d.event.id}/vendors`, { name: v.name, description: v.description }); toast("Vendor added.", "good"); reload(); });
-  $$("[data-member]", el).forEach((f) => onSubmit(f, async (v) => { await post(`${base()}/events/${d.event.id}/vendors/${f.dataset.member}/members`, v); toast("Vendor staff added.", "good"); reload(); }));
-  $$("[data-term]", el).forEach((f) => onSubmit(f, async (v) => {
-    const r = await post(`${base()}/events/${d.event.id}/vendors/${f.dataset.term}/terminals`, v);
-    dialog("Terminal registered", html`<p>Enter this key once on the POS device (<strong>ticketroom.co.za/pos</strong>). <strong>It is shown only now.</strong></p><input readonly class="mono small" value="${r.terminal.terminalKey}" aria-label="Terminal key"><p class="small muted mt">If it is lost or a device is stolen, suspend the terminal and register a new one.</p>`, { onClose: reload });
+  const sum = (k) => vendors.reduce((n, v) => n + Number(v[k] || 0), 0);
+  const tills = vendors.reduce((n, v) => n + liveTills(v), 0);
+  const addBtn = edit ? html`<button class="btn btn-primary" data-add-vendor>Add vendor</button>` : "";
+  const link = (v) => `#/events/${d.event.id}/vendors/${v.id}`;
+  render(el, html`<div class="stack">${cashlessOff(d)}
+    <div class="row between vend-intro"><p class="muted mb-0 grow">Stalls at your event take payment from guests' wristbands at their own tills. Add each vendor, invite their staff and register their tills here.</p>${vendors.length ? addBtn : ""}</div>
+    ${vendors.length ? html`<div class="kpis kpis-5" data-vendor-kpis>
+        <div class="kpi"><div class="k">Vendors</div><div class="v">${vendors.length}</div><div class="s">${vendors.filter((v) => v.status === "active").length} active</div></div>
+        <div class="kpi"><div class="k">Tills active</div><div class="v">${tills}</div><div class="s">ready to take payments</div></div>
+        <div class="kpi"><div class="k">Sales so far</div><div class="v">${moneyExact(sum("gross_cents"))}</div><div class="s">${plural(sum("sales"), "sale")}</div></div>
+        <div class="kpi"><div class="k">Commission so far</div><div class="v">${moneyExact(sum("commission_cents"))}</div><div class="s">kept by TicketRoom</div></div>
+        <div class="kpi"><div class="k">Owed to vendors</div><div class="v">${moneyExact(sum("owed_cents"))}</div><div class="s">not yet requested</div></div></div>
+      <ul class="vendor-list" data-vendor-list>${vendors.map((v) => html`<li class="card vendor-row" data-vendor="${v.id}">
+        <div class="vr-main"><h3><a href="${link(v)}">${v.name}</a></h3>${vendorSells(v) ? html`<p class="small muted mb-0">${vendorSells(v)}</p>` : ""}
+          <div class="row vr-badges">${badge(v.status)}${v.products_count ? "" : html`<span class="badge warn">No menu yet</span>`}${v.terminals.length ? "" : html`<span class="badge warn">No till yet</span>`}</div></div>
+        <dl class="vr-stats"><div><dt>Staff</dt><dd data-stat="staff">${v.members.length}</dd></div><div><dt>Tills</dt><dd data-stat="tills">${v.terminals.filter((t) => t.status !== "retired").length}</dd></div><div><dt>Menu items</dt><dd data-stat="menu">${v.products_count}</dd></div><div><dt>Sales</dt><dd data-stat="sales">${moneyExact(v.gross_cents)}</dd></div><div><dt>Commission</dt><dd data-stat="commission">${commissionText(v.commission_bps)}</dd></div></dl>
+        <div class="vr-act"><a class="btn btn-ghost btn-sm" href="${link(v)}" data-manage="${v.id}">Manage</a></div></li>`)}</ul>`
+    : html`<section class="card stack" data-vendor-guide><h3 class="mb-0">Get your vendors trading in three steps</h3>
+        <ol class="steps-list vendor-steps"><li><span class="tick">1</span><div><strong>Add a vendor</strong><div class="small muted">Their name, what they sell and a contact person, who becomes the vendor manager.</div></div></li>
+          <li><span class="tick">2</span><div><strong>Invite their staff</strong><div class="small muted">We email each person an invite. Managers look after the menu; cashiers take payments.</div></div></li>
+          <li><span class="tick">3</span><div><strong>Register a till</strong><div class="small muted">You get a one-time key to enter on their phone or tablet at ticketroom.co.za/pos.</div></div></li></ol>
+        ${edit ? html`<div>${addBtn}</div>` : html`<p class="small muted mb-0">Ask an owner or manager in your team to add vendors.</p>`}</section>`}</div>`);
+  wireCashlessOff(el, d, reload);
+  $$("[data-add-vendor]", el).forEach((b) => b.addEventListener("click", () => addVendorDialog(d, reload)));
+}
+
+function addVendorDialog(d, reload) {
+  const dlg = dialog("Add vendor", html`<form class="stack" data-vendor-form>
+    <div class="field"><label for="av-name">Vendor name</label><input id="av-name" name="name" required minlength="2" maxlength="100" autocomplete="organization" placeholder="e.g. Kasi Kitchen"></div>
+    <div class="grid-2"><div class="field"><label for="av-cat">What they sell</label><select id="av-cat" name="category" required><option value="">Choose one</option>${Object.entries(VENDOR_CATEGORIES).map(([k, l]) => html`<option value="${k}">${l}</option>`)}</select></div>
+      <div class="field"><label for="av-desc">Short description (optional)</label><input id="av-desc" name="description" maxlength="240" placeholder="e.g. Bunny chow and vetkoek"></div></div>
+    <fieldset class="stack"><legend>Contact person</legend><p class="small muted mb-0">They become the vendor manager: we email them an invite to set up the menu and run their tills.</p>
+      <div class="field"><label for="av-cname">Full name</label><input id="av-cname" name="contactName" required minlength="2" maxlength="120" autocomplete="off"></div>
+      <div class="grid-2"><div class="field"><label for="av-cemail">Email</label><input id="av-cemail" name="contactEmail" type="email" required autocomplete="off"></div>
+        <div class="field"><label for="av-cphone">Mobile</label><input id="av-cphone" name="contactPhone" type="tel" inputmode="tel" required autocomplete="off" placeholder="082 123 4567"></div></div></fieldset>
+    <div class="field"><label for="av-till">First till name (optional)</label><input id="av-till" name="firstTill" maxlength="60" placeholder="e.g. Till 1"><span class="hint">Leave it empty to register tills later. The till key is shown once, straight after you add the vendor.</span></div>
+    <p class="small muted mb-0">TicketRoom's standard vendor commission applies unless TicketRoom has agreed another rate with you. It shows on the vendor and on every settlement.</p>
+    <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Add vendor</button></div></form>`, { sheet: true, wide: true });
+  const f = $("form", dlg);
+  onSubmit(f, async (v) => {
+    const r = await post(`${base()}/events/${d.event.id}/vendors`, v);
+    dlg.close();
+    const who = v.contactName || v.contactEmail;
+    toast(r.manager?.invited ? `${r.vendor.name} added. We emailed ${who} an invite.` : `${r.vendor.name} added. ${who} can sign in with their existing account.`, "good");
+    const go = () => { location.hash = `#/events/${d.event.id}/vendors/${r.vendor.id}/${r.terminal ? "tills" : "staff"}`; };
+    if (r.terminal) tillKeyDialog(r.terminal, go); else go();
+  });
+}
+
+// The till key is shown once. It goes into the till at ticketroom.co.za/pos.
+function tillKeyDialog(t, onClose) {
+  const dlg = dialog("Till registered", html`<div class="stack" data-till-key>
+    <p class="mb-0"><strong>${t.label}</strong> is ready. Copy the key now: <strong>it is shown only once.</strong></p>
+    <div class="row"><input readonly class="mono small grow" value="${t.terminalKey}" aria-label="Till key" data-key><button type="button" class="btn btn-dark btn-sm" data-copy>Copy key</button></div>
+    <ol class="small mb-0"><li>On the phone or tablet at the stall, open <strong>ticketroom.co.za/pos</strong>.</li><li>Sign in with a vendor staff account.</li><li>Paste or type the key under Terminal key and tap Activate. The till remembers it.</li></ol>
+    <p class="small muted mb-0">If the key is lost or the device is stolen, suspend the till and register a new one.</p>
+    <div class="row end"><button type="button" class="btn btn-primary" data-close>Done</button></div></div>`, { sheet: true, onClose });
+  $("[data-copy]", dlg).addEventListener("click", async () => {
+    const input = $("[data-key]", dlg);
+    try { await navigator.clipboard.writeText(input.value); }
+    catch { input.select(); document.execCommand?.("copy"); }
+    toast("Till key copied.", "good");
+  });
+}
+
+async function vendorPage(el, d, { vendor: vendorId, section = "staff" }) {
+  const ev = d.event;
+  const url = `${base()}/events/${ev.id}/vendors/${vendorId}`;
+  const x = await get(url);
+  const v = x.vendor;
+  const edit = can("owner", "manager");
+  const sec = VENDOR_SECTIONS.some(([k]) => k === section) ? section : "staff";
+  const reload = () => eventWorkspace({ id: ev.id, tab: "vendors", vendor: vendorId, section: sec });
+  const owed = v.owed_cents;
+  const canSettle = can("owner", "finance") && owed > 0 && x.eventEnded;
+  render(el, html`<div class="stack" data-vendor-page="${v.id}">
+    <p class="mb-0"><a href="#/events/${ev.id}/vendors" data-back>Back to all vendors</a></p>
+    ${cashlessOff(d)}
+    <section class="card vendor-head"><div class="vh-main"><div class="row"><h2 class="mb-0">${v.name}</h2>${badge(v.status)}</div>
+        ${vendorSells(v) ? html`<p class="small muted mb-0">${vendorSells(v)}</p>` : ""}
+        <p class="small mb-0">${v.contact_name ? html`Contact: ${v.contact_name}${v.contact_phone ? html` · <a href="tel:${v.contact_phone}">${v.contact_phone}</a>` : ""}${v.contact_email ? html` · ${v.contact_email}` : ""} · ` : ""}${v.commission_bps ? `Commission: ${commissionText(v.commission_bps)}` : "No commission"}</p></div>
+      <div class="vh-act row" data-vendor-actions>${edit ? html`<button class="btn btn-ghost btn-sm" data-vstatus="${v.status === "active" ? "suspended" : "active"}">${v.status === "active" ? "Suspend vendor" : "Reactivate vendor"}</button>` : ""}
+        ${canSettle ? html`<button class="btn btn-primary btn-sm" data-vpay>Request settlement of ${moneyExact(owed)}</button>` : ""}</div>
+      ${owed > 0 && !x.eventEnded && can("owner", "finance") ? html`<p class="small muted mb-0 vh-note">${moneyExact(owed)} owed so far. You can request settlement once the event ends.</p>` : ""}</section>
+    <nav class="chips" aria-label="Vendor sections">${VENDOR_SECTIONS.map(([k, l]) => html`<a class="chip" href="#/events/${ev.id}/vendors/${v.id}/${k}" ${raw(k === sec ? 'aria-current="page"' : "")} data-vsec="${k}">${l}</a>`)}</nav>
+    <div data-vsection="${sec}"></div></div>`);
+  const box = $("[data-vsection]", el);
+  $("[data-vstatus]", el)?.addEventListener("click", async (e) => {
+    const s = e.currentTarget.dataset.vstatus;
+    if (s === "suspended" && !(await confirmDialog("Suspend this vendor?", `${v.name}'s tills stop taking payments straight away. You can reactivate the vendor at any time.`, { confirm: "Suspend vendor", danger: true }))) return;
+    try { await patch(url, { status: s }); toast(s === "active" ? "Vendor reactivated." : "Vendor suspended.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+  });
+  $("[data-vpay]", el)?.addEventListener("click", async () => {
+    if (!(await confirmDialog("Request settlement?", `We'll pay ${moneyExact(owed)} for ${v.name} into your bank account. You then settle with the vendor.`, { confirm: "Request settlement" }))) return;
+    try { const r = await post(`${url}/payout`); toast(`Settlement ${r.payout.reference} requested for ${moneyExact(r.payout.amount_cents)}.`, "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+  });
+  wireCashlessOff(el, d, reload);
+  await ({ staff: vendorStaff, tills: vendorTills, menu: vendorMenu, sales: vendorSales, settlement: vendorSettlement })[sec](box, { ev, v, x, url, edit, reload });
+}
+
+function vendorStaff(box, { v, url, edit, reload }) {
+  const roleText = { manager: "Manager", cashier: "Cashier" };
+  render(box, html`<section class="card"><div class="card-title"><h3>Staff</h3>${edit ? html`<button class="btn btn-dark btn-sm" data-add-staff>Add staff</button>` : ""}</div>
+    <p class="small muted">Managers look after the menu and can void sales; cashiers take payments. Everyone signs in at ticketroom.co.za/pos with their own account.</p>
+    ${v.members.length ? html`<ul class="item-list">${v.members.map((m) => html`<li><div class="grow"><strong>${m.name}</strong><div class="small muted">${m.email}</div></div><span class="badge plain">${roleText[m.role] || m.role}</span>
+      ${edit ? html`<button class="btn btn-ghost btn-sm" data-remove="${m.userId}" data-name="${m.name}">Remove</button>` : ""}</li>`)}</ul>` : empty("No staff yet. Add the people who will run the tills.")}</section>`);
+  $("[data-add-staff]", box)?.addEventListener("click", () => {
+    const dlg = dialog("Add staff", html`<form class="stack">
+      <div class="field"><label for="vs-name">Full name (optional)</label><input id="vs-name" name="fullName" minlength="2" maxlength="120" autocomplete="off"></div>
+      <div class="field"><label for="vs-email">Email</label><input id="vs-email" name="email" type="email" required autocomplete="off"><span class="hint">New people get an email to set a password.</span></div>
+      <div class="field"><label for="vs-role">Role</label><select id="vs-role" name="role"><option value="cashier">Cashier: takes payments</option><option value="manager">Manager: also runs the menu and voids sales</option></select></div>
+      <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Add staff</button></div></form>`, { sheet: true });
+    onSubmit($("form", dlg), async (val) => {
+      const r = await post(`${url}/members`, val);
+      dlg.close(); toast(r.invited ? "Staff added. We emailed them an invite." : "Staff added.", "good"); reload();
+    });
+  });
+  $$("[data-remove]", box).forEach((b) => b.addEventListener("click", async () => {
+    if (!(await confirmDialog("Remove from this vendor?", `${b.dataset.name} can no longer use ${v.name}'s tills.`, { confirm: "Remove", danger: true }))) return;
+    try { await del(`${url}/members/${b.dataset.remove}`); toast("Removed.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
   }));
-  $$("[data-vstatus]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/vendors/${b.dataset.vstatus}`, { status: b.dataset.s }); reload(); }));
-  $$("[data-tstatus]", el).forEach((b) => b.addEventListener("click", async () => { await patch(`${base()}/events/${d.event.id}/terminals/${b.dataset.tstatus}`, { status: b.dataset.s }); reload(); }));
-  $$("[data-vpay]", el).forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`${base()}/events/${d.event.id}/vendors/${b.dataset.vpay}/payout`); toast(`Settlement ${r.payout.reference} requested for ${moneyExact(r.payout.amount_cents)}.`, "good"); } catch (err) { toast(err.message, "bad"); } }));
+}
+
+function vendorTills(box, { ev, v, url, edit, reload }) {
+  const list = v.terminals.filter((t) => t.status !== "retired");
+  render(box, html`<section class="card"><div class="card-title"><h3>Tills</h3>${edit && v.status === "active" ? html`<button class="btn btn-dark btn-sm" data-add-till>Register till</button>` : ""}</div>
+    <p class="small muted">Each phone or tablet that takes payments is a till. Register it here, then enter its key once at ticketroom.co.za/pos.</p>
+    ${v.status !== "active" ? html`<p class="callout warn">This vendor is suspended, so its tills cannot take payments. Reactivate the vendor to register tills.</p>` : ""}
+    ${list.length ? html`<ul class="item-list">${list.map((t) => html`<li data-till="${t.id}"><div class="grow"><strong>${t.label}</strong><div class="small muted">${t.lastSeenAt ? `Last seen ${fmtDateTime(t.lastSeenAt)}` : "Not used yet"}</div></div>${badge(t.status)}
+      ${edit ? html`<button class="btn btn-ghost btn-sm" data-tstatus="${t.id}" data-s="${t.status === "active" ? "suspended" : "active"}">${t.status === "active" ? "Suspend" : "Reactivate"}</button>` : ""}</li>`)}</ul>` : empty("No tills yet.")}</section>`);
+  $("[data-add-till]", box)?.addEventListener("click", () => {
+    const dlg = dialog("Register till", html`<form class="stack">
+      <div class="field"><label for="vt-label">Till name</label><input id="vt-label" name="label" required maxlength="60" placeholder="e.g. Till 2" value="${`Till ${list.length + 1}`}"><span class="hint">A name the stall's staff will recognise.</span></div>
+      <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Register till</button></div></form>`, { sheet: true });
+    onSubmit($("form", dlg), async (val) => {
+      const r = await post(`${url}/terminals`, val);
+      dlg.close(); tillKeyDialog(r.terminal, reload);
+    });
+  });
+  $$("[data-tstatus]", box).forEach((b) => b.addEventListener("click", async () => {
+    try { await patch(`${base()}/events/${ev.id}/terminals/${b.dataset.tstatus}`, { status: b.dataset.s }); toast(b.dataset.s === "active" ? "Till reactivated." : "Till suspended.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
+async function vendorMenu(box, { v, url, edit, reload }) {
+  if (!can("owner", "manager", "finance")) return render(box, html`<section class="card"><h3>Menu</h3><p class="muted mb-0">${plural(v.products_count, "item")} on sale. Owners, managers and finance in your team can see the menu.</p></section>`);
+  const { products } = await get(`${url}/products`);
+  render(box, html`<section class="card"><div class="card-title"><h3>Menu</h3>${edit ? html`<button class="btn btn-dark btn-sm" data-add-item>Add item</button>` : ""}</div>
+    <p class="small muted">What the tills can sell, at these prices. The vendor manager can change it from the till too.${edit ? "" : " You can view the menu; owners and managers change it."}</p>
+    ${products.length ? html`<ul class="item-list" data-menu>${products.map((p) => html`<li data-product="${p.id}"><div class="grow"><strong>${p.name}</strong><div class="small muted">${moneyExact(p.price_cents)}</div></div>${p.active ? "" : html`<span class="badge plain">Hidden</span>`}
+      ${edit ? html`<button class="btn btn-ghost btn-sm" data-price="${p.id}">Edit price</button><button class="btn btn-ghost btn-sm" data-show="${p.id}" data-on="${p.active ? "" : "1"}">${p.active ? "Hide" : "Show"}</button>` : ""}</li>`)}</ul>` : empty("No menu items yet. The tills need at least one item to take payments.")}</section>`);
+  const byId = (id) => products.find((p) => p.id === id);
+  const priceForm = (p) => {
+    const dlg = dialog(p ? `Edit price · ${p.name}` : "Add item", html`<form class="stack">
+      ${p ? "" : html`<div class="field"><label for="mi-name">Item</label><input id="mi-name" name="name" required maxlength="60" placeholder="e.g. Bunny chow"></div>`}
+      <div class="field"><label for="mi-price">Price (R)</label><input id="mi-price" name="price" required inputmode="decimal" placeholder="e.g. 85.00" value="${p ? (p.price_cents / 100).toFixed(2) : ""}"><span class="hint">From R1.00. New prices apply to the next sale.</span></div>
+      <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">${p ? "Save price" : "Add item"}</button></div></form>`, { sheet: true });
+    onSubmit($("form", dlg), async (val) => {
+      const cents = parseRand(val.price);
+      if (cents === null || cents < 100) throw Object.assign(new Error("Enter a price of at least R1.00."), { details: { price: "Enter a price like 85.00." } });
+      if (p) await patch(`${url}/products/${p.id}`, { priceCents: cents });
+      else await post(`${url}/products`, { name: val.name, priceCents: cents });
+      dlg.close(); toast(p ? "Price saved." : "Item added.", "good"); reload();
+    });
+  };
+  $("[data-add-item]", box)?.addEventListener("click", () => priceForm(null));
+  $$("[data-price]", box).forEach((b) => b.addEventListener("click", () => priceForm(byId(b.dataset.price))));
+  $$("[data-show]", box).forEach((b) => b.addEventListener("click", async () => {
+    try { await patch(`${url}/products/${b.dataset.show}`, { active: !!b.dataset.on }); toast(b.dataset.on ? "Item back on the menu." : "Item hidden from the tills.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
+function vendorSales(box, { x }) {
+  const s = x.summary;
+  render(box, html`<section class="card stack"><h3 class="mb-0">Sales</h3>
+    <div class="kpis"><div class="kpi"><div class="k">Today</div><div class="v">${moneyExact(x.today.grossCents)}</div><div class="s">${plural(x.today.sales, "sale")}</div></div>
+      <div class="kpi"><div class="k">Overall</div><div class="v">${moneyExact(s.gross_cents)}</div><div class="s">${plural(s.confirmed_count, "sale")}</div></div>
+      <div class="kpi"><div class="k">Commission</div><div class="v">${moneyExact(s.commission_cents)}</div><div class="s">${commissionText(x.vendor.commission_bps)}</div></div>
+      <div class="kpi"><div class="k">Refunds and voids</div><div class="v">${moneyExact(s.reversed_cents)}</div><div class="s">${plural(x.refunds.length, "request")}</div></div></div>
+    ${s.test_count ? html`<p class="small muted mb-0">${plural(s.test_count, "test sale")} (${moneyExact(s.test_gross_cents)}) are not counted.</p>` : ""}
+    <div><h4>Recent sales</h4>${x.sales.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Sale</th><th>Till</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>${x.sales.map((r) => html`<tr><td>${fmtDateTime(r.created_at)}</td><td class="mono small">${r.reference}</td><td>${r.terminal}</td><td class="num">${moneyExact(r.total_cents)}</td><td>${badge(r.status)}${Number(r.test) ? html` <span class="badge plain">Test</span>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="small muted mb-0">No sales yet.</p>`}</div>
+    <div><h4>Refunds and voids</h4>${x.refunds.length ? html`<div class="table-wrap"><table><thead><tr><th>Requested</th><th>Sale</th><th>Reason</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>${x.refunds.map((r) => html`<tr><td>${fmtDateTime(r.created_at)}</td><td class="mono small">${r.sale_reference}</td><td>${r.reason}</td><td class="num">${moneyExact(r.amount_cents)}</td><td>${badge(r.status)}</td></tr>`)}</tbody></table></div>` : html`<p class="small muted mb-0">No refunds or voids.</p>`}</div></section>`);
+}
+
+function vendorSettlement(box, { x }) {
+  const v = x.vendor;
+  render(box, html`<section class="card stack"><h3 class="mb-0">Settlement</h3>
+    <p class="small muted mb-0">After the event, TicketRoom pays the vendor's takings, less commission, into your bank account. You then settle with the vendor.</p>
+    <div class="kpis"><div class="kpi"><div class="k">Owed now</div><div class="v">${moneyExact(v.owed_cents)}</div><div class="s">${v.owed_cents > 0 ? (x.eventEnded ? "ready to request" : "after the event ends") : "nothing to request"}</div></div>
+      <div class="kpi"><div class="k">Being paid</div><div class="v">${moneyExact(v.in_flight_cents)}</div><div class="s">requested</div></div>
+      <div class="kpi"><div class="k">Paid out</div><div class="v">${moneyExact(v.paid_cents)}</div><div class="s">to your bank account</div></div></div>
+    <div><h4>History</h4>${x.payouts.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Requested</th><th class="num">Amount</th><th>Status</th><th>Paid</th></tr></thead><tbody>${x.payouts.map((p) => html`<tr><td class="mono small">${p.reference}</td><td>${fmtDateTime(p.created_at)}</td><td class="num">${moneyExact(p.amount_cents)}</td><td>${badge(p.status)}</td><td>${p.paid_at ? fmtDate(p.paid_at) : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="small muted mb-0">No settlements yet.</p>`}</div></section>`);
+}
+
+// Wristbands and the top-up and cash-out desk have their own tab.
+async function wristbandsTab(el, d, reload) {
+  render(el, html`<div class="stack">${cashlessOff(d)}<div id="bands"></div><div id="cdesk"></div></div>`);
+  wireCashlessOff(el, d, reload);
+  const jobs = [];
+  if (FEATURES.tagRegistry) jobs.push(wristbands($("#bands", el), d, can("owner", "manager")));
+  if (FEATURES.cashDesk && d.event.cashless_enabled && can("owner", "manager", "finance")) jobs.push(cashDeskCard($("#cdesk", el), el, d, reload));
+  await Promise.all(jobs);
 }
 
 // Wristbands for this event: register the chip numbers of a box of bands in
@@ -732,7 +958,7 @@ async function cashDeskCard(box, tab, d, reload) {
       ${edit ? html`<button class="btn ${s.cashoutDeskOpen ? "btn-danger" : "btn-dark"}" data-co="${s.cashoutDeskOpen ? "" : "1"}">${s.cashoutDeskOpen ? "Close the cash-out desk" : "Open the cash-out desk"}</button>` : ""}</div>
     <p class="small mb-0">Cash-out desk: <strong>${s.cashoutDeskOpen ? "open" : "closed"}</strong>. While it is open, guests can ask for their balance in cash and show a code at the desk.</p>
     ${edit ? html`<form class="row" id="capf"><label class="grow small" for="cap">Most one desk person can take in a day (R)</label><input id="cap" name="cap" inputmode="decimal" value="${s.deskDailyCapCents / 100}" style="max-width:9rem"><button class="btn btn-ghost btn-sm">Save</button></form>` : ""}</section>`);
-  $("[data-desk]", box).addEventListener("click", () => deskApp(tab, d.event.id, { onBack: reload, backLabel: "Back to Vendors & POS" }));
+  $("[data-desk]", box).addEventListener("click", () => deskApp(tab, d.event.id, { onBack: reload, backLabel: "Back to Wristbands & desk" }));
   $("[data-co]", box)?.addEventListener("click", async (e) => {
     try { await put(`${base()}/events/${d.event.id}/cashdesk`, { cashoutDeskOpen: !!e.target.dataset.co }); toast(e.target.dataset.co ? "Cash-out desk open." : "Cash-out desk closed.", "good"); cashDeskCard(box, tab, d, reload); } catch (err) { toast(err.message, "bad"); }
   });
@@ -1335,7 +1561,7 @@ async function loadVerif() {
   nav();
   if (!ORG) { render($("#sidenav"), ""); return apply(); }
   router([
-    ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)],
+    ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)], ["/events/:id/vendors/:vendor", (p) => eventWorkspace({ id: p.id, tab: "vendors", vendor: p.vendor })], ["/events/:id/vendors/:vendor/:section", (p) => eventWorkspace({ id: p.id, tab: "vendors", vendor: p.vendor, section: p.section })],
     ["/verification", verification], ["/queries", queries], ["/queries/:id", (p) => query(p)], ["/marketing", marketing], ["/promote", promoteHome], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
   ], () => { location.hash = "#/"; });
 })();

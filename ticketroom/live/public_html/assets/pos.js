@@ -29,7 +29,7 @@ window.addEventListener("online", () => setOnline(true));
 
 function activate(vendors) {
   render(main, html`<h1>Activate this device</h1>
-    <p class="muted">Each till needs a terminal key, created once by your manager or the organiser (Vendors & POS, then Register terminal). The key stays on this device.</p>
+    <p class="muted">Each till needs a terminal key, created once by your manager or the organiser (Vendors & POS, Manage, Tills, Register till). The key stays on this device.</p>
     ${vendors.length ? html`<p class="small">You're on the team for: ${vendors.map((v) => `${v.name} (${v.event_title})`).join(", ")}</p>` : html`<p class="callout warn">You aren't on any vendor's team yet. Ask the organiser to add you.</p>`}
     <form class="stack card" id="act"><div class="field"><label for="tk">Terminal key</label><input id="tk" name="key" required autocomplete="off" class="mono" placeholder="trk_…"></div><button class="btn btn-primary">Activate</button></form>`);
   $("#act").addEventListener("submit", async (e) => { e.preventDefault(); localStorage.setItem(KEY, $("#tk").value.trim()); boot(); });

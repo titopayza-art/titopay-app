@@ -228,7 +228,7 @@ const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT
 const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 54;
+const SCHEMA_VERSION = 55;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -590,6 +590,14 @@ const UPGRADES = [
         'ALTER TABLE admission_log ADD COLUMN synced_at TEXT',
         'CREATE INDEX IF NOT EXISTS door_tenders_event_idx ON door_tenders (event_id, cashier_id)',
         'CREATE INDEX IF NOT EXISTS wallet_cashouts_paid_idx ON wallet_cashouts (event_id, paid_by)',
+    ],
+    // Vendors & POS: what a vendor sells (a category next to the short
+    // description) and the contact person the organiser added them with.
+    55 => [
+        'ALTER TABLE vendors ADD COLUMN category TEXT',
+        'ALTER TABLE vendors ADD COLUMN contact_name TEXT',
+        'ALTER TABLE vendors ADD COLUMN contact_email TEXT',
+        'ALTER TABLE vendors ADD COLUMN contact_phone TEXT',
     ],
 ];
 // Promote's tables and columns (version 13), each only if missing.

@@ -150,39 +150,133 @@ route('POST', '/api/organiser/:orgId/events/:eventId/tags', function ($a) {
 });
 
 // ============================================================== organiser: vendors & tills
+const CL_VENDOR_CATEGORIES = ['food', 'drinks', 'bar', 'coffee', 'sweets', 'merch', 'services', 'other'];
+// Who on the organiser's team can see a vendor's menu (owners and managers
+// change it, finance reads it).
+const CL_MENU_READ = ['owner', 'manager', 'finance'];
 function cl_event_vendor(array $event, string $vendorId): array
 {
     $v = row('SELECT * FROM vendors WHERE id = ? AND event_id = ?', [$vendorId, $event['id']]);
     if (!$v) throw not_found('Vendor not found.');
     return $v;
 }
-route('GET', '/api/organiser/:orgId/events/:eventId/vendors', function ($a) {
-    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+// Every vendor of one event with its staff, tills, menu size and money, for
+// the organiser's Vendors & POS tab and the admin's event page.
+function cl_vendor_list(string $eventId, ?string $vendorId = null): array
+{
     $figures = [];
-    foreach (vendor_settlement_rows('v.event_id = ?', [$event['id']]) as $f) $figures[$f['id']] = $f;
-    $list = rows('SELECT * FROM vendors WHERE event_id = ? ORDER BY created_at', [$event['id']]);
+    foreach (vendor_settlement_rows('v.event_id = ?', [$eventId]) as $f) $figures[$f['id']] = $f;
+    $list = $vendorId ? rows('SELECT * FROM vendors WHERE event_id = ? AND id = ?', [$eventId, $vendorId]) : rows('SELECT * FROM vendors WHERE event_id = ? ORDER BY created_at', [$eventId]);
     foreach ($list as &$v) {
-        $v['terminals'] = array_map(fn($t) => ['id' => $t['id'], 'label' => $t['label'], 'status' => $t['status'], 'lastSeenAt' => $t['last_seen_at']],
-            rows('SELECT id, label, status, last_seen_at FROM terminals WHERE vendor_id = ? ORDER BY created_at', [$v['id']]));
+        $v['terminals'] = array_map(fn($t) => ['id' => $t['id'], 'label' => $t['label'], 'status' => $t['status'], 'lastSeenAt' => $t['last_seen_at'], 'createdAt' => $t['created_at']],
+            rows('SELECT id, label, status, last_seen_at, created_at FROM terminals WHERE vendor_id = ? ORDER BY created_at', [$v['id']]));
         $v['members'] = array_map(fn($m) => ['userId' => $m['id'], 'name' => $m['full_name'], 'email' => $m['email'], 'role' => $m['role']],
             rows('SELECT u.id, u.full_name, u.email, vm.role FROM vendor_members vm JOIN users u ON u.id = vm.user_id WHERE vm.vendor_id = ? ORDER BY vm.created_at', [$v['id']]));
+        $p = row('SELECT COALESCE(SUM(active = 1),0) AS shown, COALESCE(SUM(active = 0),0) AS hidden FROM products WHERE vendor_id = ?', [$v['id']]);
+        $v['products_count'] = (int) $p['shown'];
+        $v['products_hidden'] = (int) $p['hidden'];
+        $v['commission_bps'] = (int) $v['commission_bps'];
         $f = $figures[$v['id']] ?? [];
         foreach (['sales', 'gross_cents', 'commission_cents', 'payable_cents', 'in_flight_cents', 'paid_cents', 'test_gross_cents'] as $k) $v[$k] = $f[$k] ?? 0;
+        // Still to be asked for: what the vendor earned less settlements already requested.
+        $v['owed_cents'] = max(0, $v['payable_cents'] - $v['in_flight_cents']);
     }
-    return ['vendors' => $list];
+    return $list;
+}
+// Adds someone to a vendor's team. Like gate staff, someone without an
+// account gets one (a customer account) and an email to choose a password.
+function cl_vendor_member_add(array $u, array $event, array $org, array $v, string $email, string $role, ?string $fullName): array
+{
+    $found = user_by_email($email);
+    if ($found && $found['status'] !== 'active') throw conflict('That account is suspended or closed.', 'account_inactive');
+    if ($found && account_type($found) === 'staff') throw conflict('That email belongs to a TicketRoom staff account. Vendor staff need their own email.', 'staff_account', ['email' => 'Use a different email.', 'contactEmail' => 'Use a different email.']);
+    $invited = false;
+    $uid = tx(function () use ($u, $email, $role, $fullName, $found, $v, $event, $org, &$invited) {
+        $uid = $found['id'] ?? null;
+        if (!$uid || (int) $found['guest'] === 1) {
+            $now = now_iso();
+            $name = $fullName ?? ($found['full_name'] ?? explode('@', $email)[0]);
+            if (!$uid) $uid = insert('users', ['id' => uuid(), 'email' => $email, 'email_key' => email_key($email), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)),
+                'status' => 'active', 'account_type' => 'customer', 'created_at' => $now, 'updated_at' => $now])['id'];
+            $token = random_token(32);
+            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $uid, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
+            outbox_enqueue(['to' => $email, 'userId' => $uid] + tpl('vendorInvite', ['name' => $name, 'organiser' => $org['name'], 'vendor' => $v['name'], 'event' => $event['title'], 'url' => base_url() . "/account#/reset/$token"]));
+            $invited = true;
+        }
+        q('INSERT INTO vendor_members (vendor_id, user_id, role, added_by, created_at) VALUES (?,?,?,?,?) ON CONFLICT (vendor_id, user_id) DO UPDATE SET role = excluded.role', [$v['id'], $uid, $role, $u['id'], now_iso()]);
+        audit('vendor.member_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['vendorId' => $v['id'], 'role' => $role, 'invited' => $invited]]);
+        return $uid;
+    });
+    return ['userId' => $uid, 'invited' => $invited];
+}
+// The menu rules, the same for a vendor manager at the till (/api/pos) and
+// the organiser's owners and managers (Vendors & POS, Menu).
+function cl_product_create(array $u, array $v, array $body): array
+{
+    $b = check($body, ['name' => R::str(['min' => 1, 'max' => 60]), 'priceCents' => R::int(['min' => 100, 'max' => 1000000]), 'sortOrder' => R::int(['optional' => true, 'min' => 0, 'max' => 1000, 'fallback' => 0])]);
+    $now = now_iso();
+    $p = insert('products', ['id' => uuid(), 'vendor_id' => $v['id'], 'name' => $b['name'], 'price_cents' => $b['priceCents'], 'active' => 1, 'sort_order' => $b['sortOrder'], 'created_at' => $now, 'updated_at' => $now]);
+    audit('product.created', ['actor' => $u, 'entityType' => 'product', 'entityId' => $p['id'], 'organiserId' => $v['organiser_id'] ?? null, 'details' => ['vendorId' => $v['id'], 'price' => $b['priceCents']]]);
+    return row('SELECT * FROM products WHERE id = ?', [$p['id']]);
+}
+function cl_product_update(array $u, array $v, string $productId, array $body): array
+{
+    $b = check($body, ['name' => R::str(['optional' => true, 'min' => 1, 'max' => 60]), 'priceCents' => R::int(['optional' => true, 'min' => 100, 'max' => 1000000]), 'active' => R::bool(['optional' => true, 'fallback' => null])]);
+    // R::bool falls back to false when the field is left out; only an
+    // explicit value shows or hides the item (a price change keeps it on sale).
+    if (!array_key_exists('active', $body) || $body['active'] === null || $body['active'] === '') unset($b['active']);
+    if (affected('UPDATE products SET name = COALESCE(?, name), price_cents = COALESCE(?, price_cents), active = COALESCE(?, active), updated_at = ? WHERE id = ? AND vendor_id = ?',
+        [$b['name'] ?? null, $b['priceCents'] ?? null, isset($b['active']) ? (int) $b['active'] : null, now_iso(), $productId, $v['id']]) !== 1) throw not_found('Product not found.');
+    audit('product.updated', ['actor' => $u, 'entityType' => 'product', 'entityId' => $productId, 'organiserId' => $v['organiser_id'] ?? null, 'details' => array_keys(array_filter($b, fn($x) => $x !== null))]);
+    return row('SELECT * FROM products WHERE id = ?', [$productId]);
+}
+route('GET', '/api/organiser/:orgId/events/:eventId/vendors', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+    return ['vendors' => cl_vendor_list($event['id'])];
 });
+// One vendor in full: team, tills, sales today and overall, recent sales,
+// refunds and voids, and settlements.
+route('GET', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+    $v = cl_event_vendor($event, $a['vendorId']);
+    $today = (new DateTimeImmutable('today', new DateTimeZone('Africa/Johannesburg')))->getTimestamp();
+    $t = row("SELECT COUNT(*) AS n, COALESCE(SUM(total_cents),0) AS cents FROM pos_sales WHERE vendor_id = ? AND status = 'confirmed' AND test = 0 AND created_at >= ?", [$v['id'], iso_at((float) $today)]);
+    return [
+        'vendor' => cl_vendor_list($event['id'], $v['id'])[0],
+        'summary' => pos_vendor_summary($v),
+        'today' => ['sales' => (int) $t['n'], 'grossCents' => (int) $t['cents']],
+        'sales' => pos_vendor_sales($v['id'], 25),
+        'refunds' => rows("SELECT r.reference, r.status, r.amount_cents, r.reason, r.created_at, s.reference AS sale_reference FROM refunds r JOIN pos_sales s ON s.id = r.pos_sale_id
+                            WHERE r.kind = 'pos_sale' AND s.vendor_id = ? ORDER BY r.created_at DESC LIMIT 50", [$v['id']]),
+        'payouts' => rows('SELECT reference, amount_cents, status, created_at, paid_at FROM payouts WHERE vendor_id = ? ORDER BY created_at DESC', [$v['id']]),
+        'eventEnded' => to_unix($event['ends_at']) <= microtime(true),
+    ];
+});
+// Adding a vendor is one step: the vendor, its contact person as the vendor
+// manager (invited by email when new), and optionally its first till.
 route('POST', '/api/organiser/:orgId/events/:eventId/vendors', function ($a) {
     $u = require_auth();
-    ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
     // Keep accepting the old client field for compatibility, but only the
     // platform's Admin-configured default sets a new vendor's commission.
-    $b = check(body(), ['name' => R::str(['min' => 2, 'max' => 100]), 'description' => R::str(['optional' => true, 'max' => 240]), 'commissionBps' => R::int(['min' => 0, 'max' => 5000, 'optional' => true])]);
+    $b = check(body(), ['name' => R::str(['min' => 2, 'max' => 100]), 'description' => R::str(['optional' => true, 'max' => 240]), 'commissionBps' => R::int(['min' => 0, 'max' => 5000, 'optional' => true]),
+        'category' => R::oneOf(CL_VENDOR_CATEGORIES, ['optional' => true]), 'contactName' => R::str(['optional' => true, 'min' => 2, 'max' => 120]), 'contactEmail' => R::email(['optional' => true]),
+        'contactPhone' => R::phone(['optional' => true]), 'firstTill' => R::str(['optional' => true, 'min' => 1, 'max' => 60])]);
+    if (!empty($b['contactEmail'])) limit('staffadd', 30, 3600, $u['id']);
+    if (!empty($b['firstTill'])) limit('terminalreg', 30, 3600, $u['id']);
     $commissionBps = (int) (settings_all()['fees']['cashlessVendorCommissionBps'] ?? 0);
-    $now = now_iso();
-    $v = insert('vendors', ['id' => uuid(), 'event_id' => $event['id'], 'organiser_id' => $event['organiser_id'], 'name' => $b['name'], 'description' => $b['description'] ?? null,
-        'status' => 'active', 'commission_bps' => $commissionBps, 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now]);
-    audit('vendor.created', ['actor' => $u, 'entityType' => 'vendor', 'entityId' => $v['id'], 'organiserId' => $event['organiser_id'], 'details' => ['name' => $b['name'], 'commissionBps' => $commissionBps]]);
-    return json_out(['vendor' => row('SELECT * FROM vendors WHERE id = ?', [$v['id']])], 201);
+    $out = tx(function () use ($u, $event, $org, $b, $commissionBps) {
+        $now = now_iso();
+        $id = insert('vendors', ['id' => uuid(), 'event_id' => $event['id'], 'organiser_id' => $event['organiser_id'], 'name' => $b['name'], 'description' => $b['description'] ?? null,
+            'category' => $b['category'] ?? null, 'contact_name' => $b['contactName'] ?? null, 'contact_email' => $b['contactEmail'] ?? null, 'contact_phone' => $b['contactPhone'] ?? null,
+            'status' => 'active', 'commission_bps' => $commissionBps, 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now])['id'];
+        $v = row('SELECT * FROM vendors WHERE id = ?', [$id]);
+        audit('vendor.created', ['actor' => $u, 'entityType' => 'vendor', 'entityId' => $id, 'organiserId' => $event['organiser_id'], 'details' => ['name' => $b['name'], 'commissionBps' => $commissionBps]]);
+        $manager = !empty($b['contactEmail']) ? cl_vendor_member_add($u, $event, $org, $v, $b['contactEmail'], 'manager', $b['contactName'] ?? null) : null;
+        $terminal = !empty($b['firstTill']) ? terminal_register($u, $v, $b['firstTill']) : null;
+        return ['vendor' => $v, 'manager' => $manager, 'terminal' => $terminal];
+    });
+    return json_out($out, 201);
 });
 route('PATCH', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId', function ($a) {
     $u = require_auth();
@@ -193,35 +287,14 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId', functi
     audit("vendor.{$b['status']}", ['actor' => $u, 'entityType' => 'vendor', 'entityId' => $v['id'], 'organiserId' => $event['organiser_id']]);
     return ['ok' => true];
 });
-// Vendor staff, like gate staff: someone without an account gets one (a
-// customer account) and an email to choose a password.
 route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/members', function ($a) {
     $u = require_auth();
     limit('staffadd', 30, 3600, $u['id']);
     ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
     $v = cl_event_vendor($event, $a['vendorId']);
     $b = check(body(), ['email' => R::email(), 'role' => R::oneOf(['manager', 'cashier']), 'fullName' => R::str(['optional' => true, 'min' => 2, 'max' => 120])]);
-    $found = user_by_email($b['email']);
-    if ($found && $found['status'] !== 'active') throw conflict('That account is suspended or closed.', 'account_inactive');
-    if ($found && account_type($found) === 'staff') throw conflict('That email belongs to a TicketRoom staff account. Vendor staff need their own email.', 'staff_account', ['email' => 'Use a different email.']);
-    $invited = false;
-    $uid = tx(function () use ($u, $b, $found, $v, $event, $org, &$invited) {
-        $uid = $found['id'] ?? null;
-        if (!$uid || (int) $found['guest'] === 1) {
-            $now = now_iso();
-            $name = $b['fullName'] ?? ($found['full_name'] ?? explode('@', $b['email'])[0]);
-            if (!$uid) $uid = insert('users', ['id' => uuid(), 'email' => $b['email'], 'email_key' => email_key($b['email']), 'full_name' => $name, 'password_hash' => hash_secret(random_token(24)),
-                'status' => 'active', 'account_type' => 'customer', 'created_at' => $now, 'updated_at' => $now])['id'];
-            $token = random_token(32);
-            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $uid, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
-            outbox_enqueue(['to' => $b['email'], 'userId' => $uid] + tpl('vendorInvite', ['name' => $name, 'organiser' => $org['name'], 'vendor' => $v['name'], 'event' => $event['title'], 'url' => base_url() . "/account#/reset/$token"]));
-            $invited = true;
-        }
-        q('INSERT INTO vendor_members (vendor_id, user_id, role, added_by, created_at) VALUES (?,?,?,?,?) ON CONFLICT (vendor_id, user_id) DO UPDATE SET role = excluded.role', [$v['id'], $uid, $b['role'], $u['id'], now_iso()]);
-        audit('vendor.member_set', ['actor' => $u, 'entityType' => 'user', 'entityId' => $uid, 'organiserId' => $event['organiser_id'], 'details' => ['vendorId' => $v['id'], 'role' => $b['role'], 'invited' => $invited]]);
-        return $uid;
-    });
-    return json_out(['ok' => true, 'invited' => $invited, 'userId' => $uid], 201);
+    $r = cl_vendor_member_add($u, $event, $org, $v, $b['email'], $b['role'], $b['fullName'] ?? null);
+    return json_out(['ok' => true, 'invited' => $r['invited'], 'userId' => $r['userId']], 201);
 });
 route('DELETE', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/members/:userId', function ($a) {
     $u = require_auth();
@@ -258,6 +331,25 @@ route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/payout', 
     $po = vendor_payout_request($u, $org, $v);
     fin_payout_mail($po, 'payoutRequested');
     return json_out(['payout' => $po], 201);
+});
+
+// A vendor's menu, for the organiser: owners and managers add items, change
+// prices and hide items with the same rules as the vendor's own till; finance
+// can read it. Vendor staff use /api/pos.
+route('GET', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/products', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], CL_MENU_READ);
+    $v = cl_event_vendor($event, $a['vendorId']);
+    return ['products' => rows('SELECT * FROM products WHERE vendor_id = ? ORDER BY active DESC, sort_order, name', [$v['id']])];
+});
+route('POST', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/products', function ($a) {
+    $u = require_auth();
+    ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    return json_out(['product' => cl_product_create($u, cl_event_vendor($event, $a['vendorId']), body())], 201);
+});
+route('PATCH', '/api/organiser/:orgId/events/:eventId/vendors/:vendorId/products/:productId', function ($a) {
+    $u = require_auth();
+    ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    return ['product' => cl_product_update($u, cl_event_vendor($event, $a['vendorId']), $a['productId'], body())];
 });
 
 // ============================================================== the vendor till
@@ -455,21 +547,13 @@ route('GET', '/api/pos/vendors/:vendorId/products', function ($a) {
 });
 route('POST', '/api/pos/vendors/:vendorId/products', function ($a) {
     $u = require_auth();
-    vendor_access($u, $a['vendorId'], ['manager']);
-    $b = check(body(), ['name' => R::str(['min' => 1, 'max' => 60]), 'priceCents' => R::int(['min' => 100, 'max' => 1000000]), 'sortOrder' => R::int(['optional' => true, 'min' => 0, 'max' => 1000, 'fallback' => 0])]);
-    $now = now_iso();
-    $p = insert('products', ['id' => uuid(), 'vendor_id' => $a['vendorId'], 'name' => $b['name'], 'price_cents' => $b['priceCents'], 'active' => 1, 'sort_order' => $b['sortOrder'], 'created_at' => $now, 'updated_at' => $now]);
-    audit('product.created', ['actor' => $u, 'entityType' => 'product', 'entityId' => $p['id'], 'details' => ['vendorId' => $a['vendorId'], 'price' => $b['priceCents']]]);
-    return json_out(['product' => row('SELECT * FROM products WHERE id = ?', [$p['id']])], 201);
+    ['vendor' => $v] = vendor_access($u, $a['vendorId'], ['manager']);
+    return json_out(['product' => cl_product_create($u, $v, body())], 201);
 });
 route('PATCH', '/api/pos/vendors/:vendorId/products/:productId', function ($a) {
     $u = require_auth();
-    vendor_access($u, $a['vendorId'], ['manager']);
-    $b = check(body(), ['name' => R::str(['optional' => true, 'min' => 1, 'max' => 60]), 'priceCents' => R::int(['optional' => true, 'min' => 100, 'max' => 1000000]), 'active' => R::bool(['optional' => true, 'fallback' => null])]);
-    if (affected('UPDATE products SET name = COALESCE(?, name), price_cents = COALESCE(?, price_cents), active = COALESCE(?, active), updated_at = ? WHERE id = ? AND vendor_id = ?',
-        [$b['name'] ?? null, $b['priceCents'] ?? null, isset($b['active']) ? (int) $b['active'] : null, now_iso(), $a['productId'], $a['vendorId']]) !== 1) throw not_found('Product not found.');
-    audit('product.updated', ['actor' => $u, 'entityType' => 'product', 'entityId' => $a['productId'], 'details' => array_keys(array_filter($b, fn($v) => $v !== null))]);
-    return ['product' => row('SELECT * FROM products WHERE id = ?', [$a['productId']])];
+    ['vendor' => $v] = vendor_access($u, $a['vendorId'], ['manager']);
+    return ['product' => cl_product_update($u, $v, $a['productId'], body())];
 });
 // A vendor manager can register their own tills too.
 route('POST', '/api/pos/vendors/:vendorId/terminals', function ($a) {
@@ -543,6 +627,13 @@ route('GET', '/api/admin/cashless', function () {
                      WHERE e.cashless_enabled = 1 OR EXISTS (SELECT 1 FROM cashless_wallets w WHERE w.event_id = e.id) ORDER BY e.starts_at DESC LIMIT 200");
     foreach ($events as &$e) foreach (['topups_cents', 'outstanding_cents', 'refunds_pending_cents', 'refunded_cents', 'desk_cash_cents', 'desk_card_cents', 'cashed_out_cash_cents', 'cashed_out_eft_cents'] as $k) $e[$k] = (int) $e[$k];
     return ['events' => $events, 'vendors' => vendor_settlement_rows('1 = 1', []), 'commissionCents' => -ledger_balance(CASHLESS_COMMISSION)];
+});
+// One event's vendors for the admin's event page (read-only; the rate is
+// changed with the commission route below).
+route('GET', '/api/admin/events/:id/vendors', function ($a) {
+    adm_any();
+    if (!val('SELECT 1 FROM events WHERE id = ?', [$a['id']])) throw not_found('Event not found.');
+    return ['vendors' => cl_vendor_list($a['id'])];
 });
 route('PATCH', '/api/admin/cashless/vendors/:id/commission', function ($a) {
     $u = adm_admin();
