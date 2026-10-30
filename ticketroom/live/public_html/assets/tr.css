@@ -1304,7 +1304,8 @@ body.venue .spinner.skel::before, body.venue .spinner.skel::after, body.venue #m
   .tab-badge { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--amber-500); color: var(--navy-950); font-size: .68rem; font-weight: 800; line-height: 18px; text-align: center; }
   .tab-dot { position: absolute; top: 6px; left: calc(50% + 8px); width: 9px; height: 9px; border-radius: 50%; background: var(--amber-500); box-shadow: 0 0 0 2px #fff; }
   html.chat-open .tabbar { display: none; }
-  body.has-tabbar .main { padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + 32px); }
+  /* Nothing at the end of a page (the Help button on My tickets included) sits under the bar. */
+  body.has-tabbar { padding-bottom: calc(var(--tabbar-h) + var(--safe-b)); }
   body.has-tabbar .toasts, body.has-tabbar .install-card { bottom: calc(var(--tabbar-h) + var(--safe-b) + 12px); }
   body.has-tabbar .chat-fab { bottom: calc(var(--tabbar-h) + var(--safe-b) + 12px); }
   body.has-tabbar .cookie-banner { bottom: calc(var(--tabbar-h) + var(--safe-b) + 10px); max-height: calc(100vh - var(--tabbar-h) - 120px); }

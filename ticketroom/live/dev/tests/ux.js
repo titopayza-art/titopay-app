@@ -188,7 +188,7 @@ function pageAudit({ phone, portal, HYPE_SOURCE }) {
     [/(?<![@\w./-])[a-z]+(?:_[a-z]+)+(?![\w@-])(?![\w.-]*@)/g, "snake_case"],
     [/\[object Object\]|\bundefined\b|\bNaN\b/g, "broken value"],
     [/(?<![@\w/.-])[a-z]{3,}:[a-z0-9][\w:-]*/g, "account code"],
-    [/(?<![@\w/.-])[a-z]+\.(?!(?:co|za|com|net|org|test|html|php|js|css|svg|png|pdf|txt|md|json|sqlite)\b)[a-z]+(?:[._][a-z]+)*\b(?![\w@/.-])/g, "dotted key"],
+    [/(?<![@\w/.-])[a-z]+\.(?!(?:co|za|com|net|org|test|html|php|js|css|svg|png|pdf|txt|md|json|sqlite)\b)[a-z]+(?:[._][a-z]+)*\b(?![\w@/.+-])/g, "dotted key"],
   ];
   for (const [re, what] of rawRes) for (const m of txt.matchAll(re)) out.raw.push(`${what}: "${m[0]}"`);
   // Counts that read wrong ("1 orders") and, in the portals, money always in rands and cents.
