@@ -91,12 +91,7 @@ export function gate(feature, fn) {
 // about while each piece loads on a slow connection.
 const root = document.documentElement;
 export function pageReady() {
-  const banner = $(".site-banner"), main = $("#main");
-  if (banner && main && main.childElementCount && !(main.childElementCount === 1 && main.firstElementChild.classList.contains("spinner"))) {
-    const hero = $(".hero", main);
-    if (hero) hero.after(banner);
-    else main.prepend(banner);
-  }
+  placeBanner();
   if (!root.classList.contains("booting")) return;
   const show = () => root.classList.remove("booting");
   // After the next paint, so it all appears together; the timer covers tabs
@@ -949,17 +944,28 @@ export async function siteExtras() {
   if (s.chatbot?.enabled && !$(".chat-fab")) chatWidget(s);
 }
 // Keep public announcements in the page content, not in the site header.
+// The notice lives inside the page, under its opening section, and is never
+// put above the site header. It waits until the page has its content, and is
+// put back if the page redraws.
+let siteBanner = null;
+function placeBanner() {
+  const b = siteBanner, main = $("#main");
+  if (!b || !b.isConnected && !main) return;
+  if (!main || !main.childElementCount || (main.childElementCount === 1 && main.firstElementChild.classList.contains("spinner"))) return;
+  const hero = $(".hero", main);
+  if (hero) { if (hero.nextElementSibling !== b) hero.after(b); }
+  else if (main.firstElementChild !== b) main.prepend(b);
+}
 function showBanner(s) {
   if (s?.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
     const b = document.createElement("div");
     b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
     render(b, html`<div class="wrap"><div class="announcement-card"><div class="announcement-copy"><span class="pill">New</span><p>${s.banner.text}</p></div>${s.banner.linkText && s.banner.linkUrl ? html`<a class="announcement-link" href="${s.banner.linkUrl}">${s.banner.linkText}${svgIcon("arrow", 16)}</a>` : ""}<button class="icon-btn" data-hide aria-label="Dismiss announcement">×</button></div></div>`);
-    $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
-    // Straight into the page, under its opening section; never above the site header.
+    $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); siteBanner = null; b.remove(); });
+    siteBanner = b;
+    placeBanner();
     const main = $("#main");
-    const hero = main && $(".hero", main);
-    if (hero) hero.after(b);
-    else if (main) main.prepend(b);
+    if (main) new MutationObserver(() => { if (siteBanner && !siteBanner.isConnected) placeBanner(); }).observe(main, { childList: true });
   }
 }
 

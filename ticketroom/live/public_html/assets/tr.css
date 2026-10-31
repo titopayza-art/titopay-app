@@ -1427,3 +1427,6 @@ fieldset.stack legend { font-weight: 750; padding: 0 6px; }
   .calc-results .kpi:not(.kpi-payout) .v { margin-top: 0; font-size: 1.15rem; grid-row: 1 / span 2; grid-column: 2; }
   .calc-results .kpi:not(.kpi-payout) .s { grid-column: 1; }
 }
+
+/* Readable text on the dark venue screens (scanner, till) */
+body.venue .welcome .lead, body.venue .welcome p { color: #C8D4EA; }

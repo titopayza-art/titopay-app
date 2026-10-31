@@ -140,7 +140,8 @@ const CAMERA_STUB = () => {
       assert(png.slice(1, 4).toString() === "PNG" && png.readUInt32BE(16) === size && png.readUInt32BE(20) === size, `${ic.src} is not a ${size}px PNG`);
     }
     const sc = Object.fromEntries((m.shortcuts || []).map((s) => [s.short_name, s.url]));
-    assert(sc["My tickets"] === "/account#/tickets" && sc.Scanner === "/scan", `shortcuts ${JSON.stringify(sc)}`);
+    // The gate scanner is only for event teams, so it is not an app shortcut for everyone.
+    assert(sc["My tickets"] === "/account#/tickets" && !Object.values(sc).includes("/scan"), `shortcuts ${JSON.stringify(sc)}`);
     for (const page of ["/", "/account", "/scan", "/organisers", "/admin", "/pos", `/events/${free.slug}`]) {
       const h = await (await fetch(BASE + page)).text();
       for (const want of ['rel="manifest"', 'rel="apple-touch-icon" href="/assets/app/apple-touch-icon.png"', 'name="apple-mobile-web-app-capable" content="yes"', 'name="apple-mobile-web-app-status-bar-style"', "viewport-fit=cover"]) assert(h.includes(want), `${page} lacks ${want}`);
