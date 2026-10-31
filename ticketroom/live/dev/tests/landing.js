@@ -130,7 +130,7 @@ function manyEvents(body, n, cities = ["Cape Town", "Johannesburg", "Durban"]) {
       assert(Math.abs(r.gapToHero) < 2, `${size[0]}: the strip is not straight under the hero (${r.gapToHero})`);
       assert(r.items.every((i) => i.svg) && !r.imgs.length, `${size[0]}: icons must be line icons, no images ${JSON.stringify(r.imgs)}`);
       const all = r.items.map((i) => i.text).join(" | ");
-      for (const want of ["Secure card payments", "Card, instant EFT, SnapScan and Zapper", "Tickets on your phone", "Fair resale at face value", "Refunds handled by TicketRoom"]) assert(all.includes(want), `${size[0]}: "${want}" missing in ${all}`);
+      for (const want of ["Pay by card or EFT", "Card, instant EFT, SnapScan and Zapper", "Tickets on your phone", "Fair resale at face value", "Help with your order"]) assert(all.includes(want), `${size[0]}: "${want}" missing in ${all}`);
       assert(!/Wallet/.test(all), `${size[0]}: wallets named while switched off: ${all}`);
       if (size === DESKTOP) assert(new Set(r.items.map((i) => i.top)).size === 1, `desktop: trust items not in one row ${JSON.stringify(r.items.map((i) => i.top))}`);
       else assert(new Set(r.items.map((i) => i.top)).size > 1 && r.items.every((i) => i.right <= r.vw + 1), `phone: trust items do not wrap ${JSON.stringify(r.items)}`);
