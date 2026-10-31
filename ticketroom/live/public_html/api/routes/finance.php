@@ -32,7 +32,7 @@ route('POST', '/api/webhooks/:provider', function ($a) {
         if ($secret === '' || $provided === '' || !hash_equals($secret, $provided)) throw forbidden('Invalid Peach checkout notification.');
         $seen = row("SELECT id,status FROM webhook_events WHERE provider = 'peach' AND event_id = ?", [$eventId]);
         if ($seen && in_array($seen['status'], ['processed', 'ignored'], true)) { q('UPDATE webhook_events SET attempts = attempts + 1 WHERE id = ?', [$seen['id']]); return ['duplicate' => true]; }
-        if (!$seen) { q("INSERT INTO webhook_events (provider,event_id,status,received_at) VALUES ('peach',?,'received',?)", [$eventId, now_iso()]); $wid = (int) db()->lastInsertId(); }
+        if (!$seen) { q("INSERT INTO webhook_events (provider,event_id,status,received_at) VALUES ('peach',?,'received',?)", [$eventId, now_iso()]); $wid = last_id(); }
         else { $wid = (int) $seen['id']; q('UPDATE webhook_events SET attempts = attempts + 1 WHERE id = ?', [$wid]); }
         try {
             $result = payment_sync($payment['id']);
@@ -69,7 +69,7 @@ function finance_peach_payout_webhook(): Response|array
     }
     $seen = row("SELECT * FROM webhook_events WHERE provider = 'peach-payouts' AND event_id = ?", [$evt['id']]);
     if ($seen && in_array($seen['status'], ['processed', 'ignored'], true)) { q('UPDATE webhook_events SET attempts = attempts + 1 WHERE id = ?', [$seen['id']]); return raw_out('OK', 'text/plain'); }
-    if (!$seen) { q("INSERT INTO webhook_events (provider,event_id,status,received_at) VALUES ('peach-payouts',?,'received',?)", [$evt['id'], now_iso()]); $wid = (int) db()->lastInsertId(); }
+    if (!$seen) { q("INSERT INTO webhook_events (provider,event_id,status,received_at) VALUES ('peach-payouts',?,'received',?)", [$evt['id'], now_iso()]); $wid = last_id(); }
     else { $wid = (int) $seen['id']; q('UPDATE webhook_events SET attempts = attempts + 1 WHERE id = ?', [$wid]); }
     try {
         $body = $evt['payload'];

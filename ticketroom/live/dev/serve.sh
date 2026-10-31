@@ -46,6 +46,18 @@ echo "Built $(cat "$DIR/public_html/version.txt") into $DIR/public_html"
 DATA="$DIR/ticketroom-data"
 mkdir -p "$DATA"
 chmod 750 "$DATA"
+# TR_DB=mysql: a fresh MariaDB/MySQL database tr_<port> on this machine
+# (its own user tr_<port>, local only) instead of SQLite.
+DB_BLOCK=""
+if [ "${TR_DB:-sqlite}" = "mysql" ]; then
+  DBNAME="tr_$PORT"
+  DBPASS="local-test-$(head -c 9 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+  mariadb -uroot -e "DROP DATABASE IF EXISTS $DBNAME; CREATE DATABASE $DBNAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+    CREATE USER IF NOT EXISTS '$DBNAME'@'localhost'; ALTER USER '$DBNAME'@'localhost' IDENTIFIED BY '$DBPASS';
+    GRANT ALL ON \`$DBNAME\`.* TO '$DBNAME'@'localhost'; GRANT PROCESS ON *.* TO '$DBNAME'@'localhost';"
+  DB_BLOCK="'database' => ['driver' => 'mysql', 'socket' => '/run/mysqld/mysqld.sock', 'name' => '$DBNAME', 'user' => '$DBNAME', 'pass' => '$DBPASS'],"
+  echo "Using MySQL database $DBNAME"
+fi
 write_config() { # $1 = baseUrl
   cat > "$DATA/config.php" <<PHP
 <?php
@@ -54,6 +66,7 @@ return [
     'baseUrl' => '$1',
     'mail' => ['mode' => 'log', 'smtpPass' => ''],
     'anthropicApiKey' => '',
+    $DB_BLOCK
 ];
 PHP
   chmod 600 "$DATA/config.php"

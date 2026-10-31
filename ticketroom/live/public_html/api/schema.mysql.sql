@@ -4,9 +4,9 @@
 
 ;;
 CREATE TABLE users (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   email MEDIUMTEXT NOT NULL,
-  phone VARCHAR(255),
+  phone VARCHAR(191),
   phone_verified_at MEDIUMTEXT,
   full_name MEDIUMTEXT NOT NULL,
   password_hash MEDIUMTEXT NOT NULL,
@@ -14,24 +14,24 @@ CREATE TABLE users (
   email_verified_at MEDIUMTEXT,
   failed_logins BIGINT NOT NULL DEFAULT 0,
   locked_until MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   deleted_at MEDIUMTEXT,
-  email_key VARCHAR(255),
+  email_key VARCHAR(191),
   guest BIGINT NOT NULL DEFAULT 0,
-  account_type VARCHAR(255) NOT NULL DEFAULT 'customer',
+  account_type VARCHAR(191) NOT NULL DEFAULT 'customer',
   spending_pin_hash MEDIUMTEXT,
   pin_failed_attempts BIGINT NOT NULL DEFAULT 0,
   pin_locked_until MEDIUMTEXT,
   email_otp_enabled BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
-  g_users_email_uq_0 VARCHAR(255) GENERATED ALWAYS AS (lower(email)) STORED INVISIBLE,
+  email_lc VARCHAR(191) GENERATED ALWAYS AS (lower(email)) STORED INVISIBLE,
   CHECK (status IN ('active','suspended','deleted')),
   CHECK (account_type IN ('customer','organiser','staff')),
   CHECK (email_otp_enabled IN (0,1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
-CREATE UNIQUE INDEX users_email_uq ON users (g_users_email_uq_0)
+CREATE UNIQUE INDEX users_email_uq ON users (email_lc)
 ;;
 CREATE INDEX users_type_idx ON users (account_type, created_at)
 ;;
@@ -40,9 +40,9 @@ CREATE INDEX users_email_key_idx ON users (email_key)
 CREATE INDEX users_phone_idx ON users (phone)
 ;;
 CREATE TABLE platform_roles (
-  user_id VARCHAR(255) NOT NULL,
-  role VARCHAR(255) NOT NULL,
-  granted_by VARCHAR(255),
+  user_id VARCHAR(191) NOT NULL,
+  role VARCHAR(191) NOT NULL,
+  granted_by VARCHAR(191),
   granted_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (user_id, role),
   FOREIGN KEY (granted_by) REFERENCES users (id),
@@ -51,9 +51,9 @@ CREATE TABLE platform_roles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE sessions (
-  id VARCHAR(255) NOT NULL,
-  token_hash VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  token_hash VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   csrf_token MEDIUMTEXT NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   expires_at MEDIUMTEXT NOT NULL,
@@ -68,8 +68,8 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_user_idx ON sessions (user_id)
 ;;
 CREATE TABLE staff_login_codes (
-  user_id VARCHAR(255) NOT NULL,
-  challenge_hash VARCHAR(255) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  challenge_hash VARCHAR(191) NOT NULL,
   code_hash MEDIUMTEXT NOT NULL,
   attempts BIGINT NOT NULL DEFAULT 0,
   expires_at MEDIUMTEXT NOT NULL,
@@ -81,8 +81,8 @@ CREATE TABLE staff_login_codes (
 CREATE UNIQUE INDEX staff_login_challenge_uq ON staff_login_codes (challenge_hash)
 ;;
 CREATE TABLE user_login_codes (
-  user_id VARCHAR(255) NOT NULL,
-  challenge_hash VARCHAR(255) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  challenge_hash VARCHAR(191) NOT NULL,
   code_hash MEDIUMTEXT NOT NULL,
   portal MEDIUMTEXT NOT NULL,
   attempts BIGINT NOT NULL DEFAULT 0,
@@ -96,8 +96,8 @@ CREATE TABLE user_login_codes (
 CREATE UNIQUE INDEX user_login_challenge_uq ON user_login_codes (challenge_hash)
 ;;
 CREATE TABLE password_resets (
-  token_hash VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  token_hash VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   expires_at MEDIUMTEXT NOT NULL,
   used_at MEDIUMTEXT,
   created_at MEDIUMTEXT NOT NULL,
@@ -106,9 +106,9 @@ CREATE TABLE password_resets (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE organisers (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   name MEDIUMTEXT NOT NULL,
-  slug VARCHAR(255) NOT NULL,
+  slug VARCHAR(191) NOT NULL,
   contact_email MEDIUMTEXT NOT NULL,
   contact_phone MEDIUMTEXT,
   description MEDIUMTEXT,
@@ -122,8 +122,8 @@ CREATE TABLE organisers (
   commission_bps BIGINT,
   created_at MEDIUMTEXT NOT NULL,
   approved_at MEDIUMTEXT,
-  approved_by VARCHAR(255),
-  ref VARCHAR(255),
+  approved_by VARCHAR(191),
+  ref VARCHAR(191),
   logo_upload_id MEDIUMTEXT,
   is_test BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
@@ -136,8 +136,8 @@ CREATE TABLE organisers (
 CREATE UNIQUE INDEX organisers_ref_uq ON organisers (ref)
 ;;
 CREATE TABLE organiser_members (
-  organiser_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   role MEDIUMTEXT NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (organiser_id, user_id),
@@ -163,25 +163,25 @@ CREATE TABLE audit_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE support_cases (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255),
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191),
   email MEDIUMTEXT NOT NULL,
   category MEDIUMTEXT NOT NULL,
   subject MEDIUMTEXT NOT NULL,
   body MEDIUMTEXT NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'open',
-  assigned_to VARCHAR(255),
+  status VARCHAR(191) NOT NULL DEFAULT 'open',
+  assigned_to VARCHAR(191),
   resolution MEDIUMTEXT,
   phone MEDIUMTEXT,
   full_name MEDIUMTEXT,
   preferred_time MEDIUMTEXT,
   source MEDIUMTEXT NOT NULL DEFAULT ('web'),
-  due_at VARCHAR(255),
+  due_at VARCHAR(40),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
-  organiser_id VARCHAR(255),
-  event_id VARCHAR(255),
+  organiser_id VARCHAR(191),
+  event_id VARCHAR(191),
   handled_by MEDIUMTEXT NOT NULL DEFAULT ('ticketroom'),
   transferred_at MEDIUMTEXT,
   PRIMARY KEY (id),
@@ -197,9 +197,9 @@ CREATE TABLE support_cases (
 CREATE INDEX support_cases_status_idx ON support_cases (status, due_at)
 ;;
 CREATE TABLE uploads (
-  id VARCHAR(255) NOT NULL,
-  owner_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255),
+  id VARCHAR(191) NOT NULL,
+  owner_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191),
   mime_type MEDIUMTEXT NOT NULL,
   size_bytes BIGINT NOT NULL,
   sha256 MEDIUMTEXT,
@@ -212,9 +212,9 @@ CREATE TABLE uploads (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE events (
-  id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  slug VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  slug VARCHAR(191) NOT NULL,
   title MEDIUMTEXT NOT NULL,
   summary MEDIUMTEXT,
   description MEDIUMTEXT,
@@ -223,12 +223,12 @@ CREATE TABLE events (
   address MEDIUMTEXT,
   city MEDIUMTEXT NOT NULL,
   province MEDIUMTEXT,
-  starts_at VARCHAR(255) NOT NULL,
-  ends_at VARCHAR(255) NOT NULL,
+  starts_at VARCHAR(40) NOT NULL,
+  ends_at VARCHAR(40) NOT NULL,
   doors_open_at MEDIUMTEXT,
-  image_upload_id VARCHAR(255),
+  image_upload_id VARCHAR(191),
   capacity BIGINT NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'draft',
+  status VARCHAR(191) NOT NULL DEFAULT 'draft',
   sales_start_at MEDIUMTEXT,
   sales_end_at MEDIUMTEXT,
   presale_queue_enabled BIGINT NOT NULL DEFAULT 0,
@@ -244,11 +244,11 @@ CREATE TABLE events (
   status_reason MEDIUMTEXT,
   cancellation_requested_at MEDIUMTEXT,
   cancellation_reason MEDIUMTEXT,
-  created_by VARCHAR(255),
+  created_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   published_at MEDIUMTEXT,
-  ref VARCHAR(255),
+  ref VARCHAR(191),
   age_groups MEDIUMTEXT,
   lineup MEDIUMTEXT,
   resale_enabled BIGINT NOT NULL DEFAULT 1,
@@ -277,16 +277,16 @@ CREATE INDEX events_status_idx ON events (status, starts_at)
 CREATE INDEX events_organiser_idx ON events (organiser_id)
 ;;
 CREATE TABLE presale_queue_entries (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   email MEDIUMTEXT NOT NULL,
-  email_key VARCHAR(255) NOT NULL,
+  email_key VARCHAR(191) NOT NULL,
   full_name MEDIUMTEXT NOT NULL,
-  token_hash VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'waiting',
-  joined_at VARCHAR(255) NOT NULL,
+  token_hash VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL DEFAULT 'waiting',
+  joined_at VARCHAR(40) NOT NULL,
   admitted_until MEDIUMTEXT,
-  order_id VARCHAR(255),
+  order_id VARCHAR(191),
   PRIMARY KEY (id),
   UNIQUE KEY uq_presale_queue_entries_11 (event_id, email_key),
   UNIQUE KEY uq_presale_queue_entries_12 (token_hash),
@@ -298,9 +298,9 @@ CREATE TABLE presale_queue_entries (
 CREATE INDEX presale_queue_fifo_idx ON presale_queue_entries (event_id, status, joined_at, id)
 ;;
 CREATE TABLE recently_viewed_events (
-  user_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  viewed_at VARCHAR(255) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  viewed_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (user_id, event_id),
   FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
@@ -309,22 +309,22 @@ CREATE TABLE recently_viewed_events (
 CREATE INDEX recently_viewed_user_idx ON recently_viewed_events (user_id, viewed_at DESC)
 ;;
 CREATE TABLE event_change_requests (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  requested_by VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  requested_by VARCHAR(191) NOT NULL,
   request_reason MEDIUMTEXT NOT NULL,
   changes_json MEDIUMTEXT NOT NULL,
   before_json MEDIUMTEXT NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'pending',
+  status VARCHAR(191) NOT NULL DEFAULT 'pending',
   review_note MEDIUMTEXT,
   review_checks_json MEDIUMTEXT,
-  reviewed_by VARCHAR(255),
+  reviewed_by VARCHAR(191),
   reviewed_at MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
-  g_event_change_requests_pending_uq_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'pending' THEN event_id END) STORED INVISIBLE,
+  g_event_change_requests_pending_uq_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'pending' THEN event_id END) STORED INVISIBLE,
   FOREIGN KEY (reviewed_by) REFERENCES users (id),
   FOREIGN KEY (requested_by) REFERENCES users (id),
   FOREIGN KEY (organiser_id) REFERENCES organisers (id),
@@ -339,8 +339,8 @@ CREATE INDEX event_change_requests_status_idx ON event_change_requests (status, 
 CREATE INDEX event_change_requests_organiser_idx ON event_change_requests (organiser_id, created_at)
 ;;
 CREATE TABLE ticket_types (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   name MEDIUMTEXT NOT NULL,
   description MEDIUMTEXT,
   price_cents BIGINT NOT NULL,
@@ -372,8 +372,8 @@ CREATE TABLE ticket_types (
 CREATE INDEX ticket_types_event_idx ON ticket_types (event_id)
 ;;
 CREATE TABLE promo_codes (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   code MEDIUMTEXT NOT NULL,
   code_type MEDIUMTEXT NOT NULL DEFAULT ('promo'),
   kind MEDIUMTEXT NOT NULL,
@@ -382,12 +382,12 @@ CREATE TABLE promo_codes (
   max_uses_per_email BIGINT,
   minimum_subtotal_cents BIGINT NOT NULL DEFAULT 0,
   used_count BIGINT NOT NULL DEFAULT 0,
-  valid_from VARCHAR(255),
-  valid_to VARCHAR(255),
+  valid_from VARCHAR(191),
+  valid_to VARCHAR(191),
   active BIGINT NOT NULL DEFAULT 1,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
-  g_promo_codes_event_code_uq_1 VARCHAR(255) GENERATED ALWAYS AS (upper(code)) STORED INVISIBLE,
+  g_promo_codes_event_code_uq_1 VARCHAR(191) GENERATED ALWAYS AS (upper(code)) STORED INVISIBLE,
   FOREIGN KEY (event_id) REFERENCES events (id),
   CHECK (code_type IN ('promo','voucher')),
   CHECK (kind IN ('percent','fixed')),
@@ -402,13 +402,13 @@ CREATE UNIQUE INDEX promo_codes_event_code_uq ON promo_codes (event_id, g_promo_
 CREATE INDEX promo_codes_event_active_idx ON promo_codes (event_id, active, valid_from, valid_to)
 ;;
 CREATE TABLE tracking_links (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  code VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  code VARCHAR(191) NOT NULL,
   label MEDIUMTEXT NOT NULL,
   clicks BIGINT NOT NULL DEFAULT 0,
   created_at MEDIUMTEXT NOT NULL,
-  campaign_id VARCHAR(255),
+  campaign_id VARCHAR(191),
   PRIMARY KEY (id),
   FOREIGN KEY (event_id) REFERENCES events (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
@@ -418,11 +418,11 @@ CREATE UNIQUE INDEX tracking_links_event_code_uq ON tracking_links (event_id, co
 CREATE INDEX tracking_links_campaign_idx ON tracking_links (campaign_id)
 ;;
 CREATE TABLE orders (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   buyer_name MEDIUMTEXT NOT NULL,
   buyer_email MEDIUMTEXT NOT NULL,
   buyer_phone MEDIUMTEXT,
@@ -435,18 +435,18 @@ CREATE TABLE orders (
   organiser_commission_fixed_cents BIGINT NOT NULL DEFAULT 0,
   organiser_service_fee_cents BIGINT NOT NULL DEFAULT 0,
   currency MEDIUMTEXT NOT NULL DEFAULT ('ZAR'),
-  promo_code_id VARCHAR(255),
-  tracking_link_id VARCHAR(255),
-  retail_partner_id VARCHAR(255),
+  promo_code_id VARCHAR(191),
+  tracking_link_id VARCHAR(191),
+  retail_partner_id VARCHAR(191),
   retail_commission_share_cents BIGINT NOT NULL DEFAULT 0,
   retail_service_share_cents BIGINT NOT NULL DEFAULT 0,
-  idempotency_key VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
   expires_at MEDIUMTEXT NOT NULL,
   paid_at MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
-  resale_listing_id VARCHAR(255),
+  resale_listing_id VARCHAR(191),
   link_shows_tickets BIGINT NOT NULL DEFAULT 1,
   PRIMARY KEY (id),
   UNIQUE KEY uq_orders_31 (user_id, idempotency_key),
@@ -478,9 +478,9 @@ CREATE INDEX orders_event_created_idx ON orders (event_id, created_at)
 CREATE INDEX orders_resale_idx ON orders (resale_listing_id)
 ;;
 CREATE TABLE order_items (
-  id VARCHAR(255) NOT NULL,
-  order_id VARCHAR(255) NOT NULL,
-  ticket_type_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  order_id VARCHAR(191) NOT NULL,
+  ticket_type_id VARCHAR(191) NOT NULL,
   quantity BIGINT NOT NULL,
   unit_price_cents BIGINT NOT NULL,
   unit_fee_cents BIGINT NOT NULL DEFAULT 0,
@@ -497,23 +497,23 @@ CREATE TABLE order_items (
 CREATE INDEX order_items_order_idx ON order_items (order_id)
 ;;
 CREATE TABLE tickets (
-  id VARCHAR(255) NOT NULL,
-  code VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  code VARCHAR(191) NOT NULL,
   qr_version BIGINT NOT NULL DEFAULT 1,
-  order_id VARCHAR(255) NOT NULL,
-  order_item_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  ticket_type_id VARCHAR(255) NOT NULL,
-  owner_user_id VARCHAR(255) NOT NULL,
+  order_id VARCHAR(191) NOT NULL,
+  order_item_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  ticket_type_id VARCHAR(191) NOT NULL,
+  owner_user_id VARCHAR(191) NOT NULL,
   holder_name MEDIUMTEXT,
   price_cents BIGINT NOT NULL,
   fee_cents BIGINT NOT NULL DEFAULT 0,
-  status VARCHAR(255) NOT NULL DEFAULT 'valid',
+  status VARCHAR(191) NOT NULL DEFAULT 'valid',
   admitted_at MEDIUMTEXT,
-  admitted_by VARCHAR(255),
+  admitted_by VARCHAR(191),
   revoked_reason MEDIUMTEXT,
   created_at MEDIUMTEXT NOT NULL,
-  updated_at VARCHAR(255) NOT NULL,
+  updated_at VARCHAR(40) NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY uq_tickets_19 (code),
@@ -536,12 +536,12 @@ CREATE INDEX tickets_event_updated_idx ON tickets (event_id, updated_at)
 CREATE INDEX tickets_order_idx ON tickets (order_id)
 ;;
 CREATE TABLE replaced_codes (
-  code VARCHAR(255) NOT NULL,
+  code VARCHAR(191) NOT NULL,
   kind MEDIUMTEXT NOT NULL,
   ref_id MEDIUMTEXT NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   reason MEDIUMTEXT NOT NULL,
-  replaced_at VARCHAR(255) NOT NULL,
+  replaced_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (code),
   FOREIGN KEY (event_id) REFERENCES events (id),
   CHECK (kind IN ('ticket','pass'))
@@ -550,14 +550,14 @@ CREATE TABLE replaced_codes (
 CREATE INDEX replaced_codes_event_idx ON replaced_codes (event_id, replaced_at)
 ;;
 CREATE TABLE wallet_passes (
-  serial VARCHAR(255) NOT NULL,
+  serial VARCHAR(191) NOT NULL,
   kind MEDIUMTEXT NOT NULL,
-  ticket_id VARCHAR(255) NOT NULL,
+  ticket_id VARCHAR(191) NOT NULL,
   qr_version BIGINT NOT NULL,
   snapshot MEDIUMTEXT NOT NULL,
-  state VARCHAR(255) NOT NULL DEFAULT 'active',
+  state VARCHAR(191) NOT NULL DEFAULT 'active',
   fingerprint MEDIUMTEXT NOT NULL,
-  expires_at VARCHAR(255) NOT NULL,
+  expires_at VARCHAR(40) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (serial),
@@ -570,27 +570,27 @@ CREATE INDEX wallet_passes_state_idx ON wallet_passes (state, expires_at)
 CREATE INDEX wallet_passes_ticket_idx ON wallet_passes (ticket_id)
 ;;
 CREATE TABLE wallet_devices (
-  device_id VARCHAR(255) NOT NULL,
-  serial VARCHAR(255) NOT NULL,
+  device_id VARCHAR(191) NOT NULL,
+  serial VARCHAR(191) NOT NULL,
   push_token MEDIUMTEXT NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (device_id, serial)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE ticket_entry_days (
-  ticket_id VARCHAR(255) NOT NULL,
-  day VARCHAR(255) NOT NULL,
+  ticket_id VARCHAR(191) NOT NULL,
+  day VARCHAR(191) NOT NULL,
   admitted_at MEDIUMTEXT NOT NULL,
-  admitted_by VARCHAR(255),
+  admitted_by VARCHAR(191),
   PRIMARY KEY (ticket_id, day),
   FOREIGN KEY (admitted_by) REFERENCES users (id),
   FOREIGN KEY (ticket_id) REFERENCES tickets (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE gate_passes (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  code VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  code VARCHAR(191) NOT NULL,
   qr_version BIGINT NOT NULL DEFAULT 1,
   holder_name MEDIUMTEXT NOT NULL,
   email MEDIUMTEXT,
@@ -598,13 +598,13 @@ CREATE TABLE gate_passes (
   access_note MEDIUMTEXT,
   reentry BIGINT NOT NULL DEFAULT 1,
   status MEDIUMTEXT NOT NULL DEFAULT ('active'),
-  link_token_hash VARCHAR(255) NOT NULL,
+  link_token_hash VARCHAR(191) NOT NULL,
   scans BIGINT NOT NULL DEFAULT 0,
   first_scanned_at MEDIUMTEXT,
   last_scanned_at MEDIUMTEXT,
-  created_by VARCHAR(255) NOT NULL,
+  created_by VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
-  updated_at VARCHAR(255) NOT NULL,
+  updated_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_gate_passes_18 (link_token_hash),
   UNIQUE KEY uq_gate_passes_19 (code),
@@ -616,19 +616,19 @@ CREATE TABLE gate_passes (
 CREATE INDEX gate_passes_event_idx ON gate_passes (event_id, updated_at)
 ;;
 CREATE TABLE ticket_transfers (
-  id VARCHAR(255) NOT NULL,
-  ticket_id VARCHAR(255) NOT NULL,
-  from_user_id VARCHAR(255) NOT NULL,
-  to_email VARCHAR(255) NOT NULL,
-  to_user_id VARCHAR(255),
-  claim_token_hash VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'pending',
+  id VARCHAR(191) NOT NULL,
+  ticket_id VARCHAR(191) NOT NULL,
+  from_user_id VARCHAR(191) NOT NULL,
+  to_email VARCHAR(191) NOT NULL,
+  to_user_id VARCHAR(191),
+  claim_token_hash VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL DEFAULT 'pending',
   created_at MEDIUMTEXT NOT NULL,
   expires_at MEDIUMTEXT NOT NULL,
   completed_at MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_ticket_transfers_11 (claim_token_hash),
-  g_ticket_transfers_one_pending_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'pending' THEN ticket_id END) STORED INVISIBLE,
+  g_ticket_transfers_one_pending_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'pending' THEN ticket_id END) STORED INVISIBLE,
   FOREIGN KEY (to_user_id) REFERENCES users (id),
   FOREIGN KEY (from_user_id) REFERENCES users (id),
   FOREIGN KEY (ticket_id) REFERENCES tickets (id),
@@ -641,16 +641,16 @@ CREATE INDEX ticket_transfers_to_idx ON ticket_transfers (to_email, status)
 ;;
 CREATE TABLE admission_log (
   id BIGINT NOT NULL AUTO_INCREMENT,
-  event_id VARCHAR(255) NOT NULL,
-  ticket_id VARCHAR(255),
-  scanned_by VARCHAR(255) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  ticket_id VARCHAR(191),
+  scanned_by VARCHAR(191) NOT NULL,
   outcome MEDIUMTEXT NOT NULL,
   gate MEDIUMTEXT,
-  occurred_at VARCHAR(255) NOT NULL,
+  occurred_at VARCHAR(40) NOT NULL,
   pass_id MEDIUMTEXT,
   reason MEDIUMTEXT,
   offline BIGINT NOT NULL DEFAULT 0,
-  synced_by VARCHAR(255),
+  synced_by VARCHAR(191),
   synced_at MEDIUMTEXT,
   PRIMARY KEY (id),
   FOREIGN KEY (synced_by) REFERENCES users (id),
@@ -665,12 +665,12 @@ CREATE INDEX admission_event_idx ON admission_log (event_id, occurred_at)
 CREATE INDEX admission_scanner_idx ON admission_log (event_id, scanned_by)
 ;;
 CREATE TABLE event_staff (
-  event_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   can_scan BIGINT NOT NULL DEFAULT 1,
   can_manage_tags BIGINT NOT NULL DEFAULT 0,
   can_sell_tickets BIGINT NOT NULL DEFAULT 0,
-  added_by VARCHAR(255),
+  added_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (event_id, user_id),
   FOREIGN KEY (added_by) REFERENCES users (id),
@@ -679,22 +679,22 @@ CREATE TABLE event_staff (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE door_shifts (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  retail_partner_id VARCHAR(255),
-  cashier_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  retail_partner_id VARCHAR(191),
+  cashier_id VARCHAR(191) NOT NULL,
   opening_float_cents BIGINT NOT NULL DEFAULT 0,
   counted_cash_cents BIGINT,
   counted_card_cents BIGINT,
   cash_variance_cents BIGINT,
   card_variance_cents BIGINT,
   status MEDIUMTEXT NOT NULL,
-  opened_at VARCHAR(255) NOT NULL,
+  opened_at VARCHAR(40) NOT NULL,
   closed_at MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_door_shifts_13 (id, event_id),
-  g_door_shifts_one_open_cashier_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'open' THEN event_id END) STORED INVISIBLE,
-  g_door_shifts_one_open_cashier_1 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'open' THEN cashier_id END) STORED INVISIBLE,
+  g_door_shifts_one_open_cashier_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'open' THEN event_id END) STORED INVISIBLE,
+  g_door_shifts_one_open_cashier_1 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'open' THEN cashier_id END) STORED INVISIBLE,
   FOREIGN KEY (cashier_id) REFERENCES users (id),
   FOREIGN KEY (retail_partner_id) REFERENCES retail_partners (id),
   FOREIGN KEY (event_id) REFERENCES events (id),
@@ -709,11 +709,11 @@ CREATE UNIQUE INDEX door_shifts_one_open_cashier ON door_shifts (g_door_shifts_o
 CREATE INDEX door_shifts_event_idx ON door_shifts (event_id, opened_at)
 ;;
 CREATE TABLE door_order_intents (
-  order_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  retail_partner_id VARCHAR(255),
-  shift_id VARCHAR(255) NOT NULL,
-  cashier_id VARCHAR(255) NOT NULL,
+  order_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  retail_partner_id VARCHAR(191),
+  shift_id VARCHAR(191) NOT NULL,
+  cashier_id VARCHAR(191) NOT NULL,
   tender_method MEDIUMTEXT NOT NULL,
   status MEDIUMTEXT NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
@@ -729,19 +729,19 @@ CREATE TABLE door_order_intents (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE door_tenders (
-  id VARCHAR(255) NOT NULL,
-  order_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  shift_id VARCHAR(255) NOT NULL,
-  cashier_id VARCHAR(255) NOT NULL,
-  payment_id VARCHAR(255) NOT NULL,
-  method VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  order_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  shift_id VARCHAR(191) NOT NULL,
+  cashier_id VARCHAR(191) NOT NULL,
+  payment_id VARCHAR(191) NOT NULL,
+  method VARCHAR(191) NOT NULL,
   amount_cents BIGINT NOT NULL,
   cash_received_cents BIGINT,
   change_cents BIGINT NOT NULL DEFAULT 0,
-  external_reference VARCHAR(255),
-  receipt_reference VARCHAR(255) NOT NULL,
-  created_at VARCHAR(255) NOT NULL,
+  external_reference VARCHAR(191),
+  receipt_reference VARCHAR(191) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_door_tenders_14 (shift_id, method, external_reference),
   UNIQUE KEY uq_door_tenders_15 (receipt_reference),
@@ -763,21 +763,21 @@ CREATE INDEX door_tenders_shift_idx ON door_tenders (shift_id, created_at)
 CREATE INDEX door_tenders_event_idx ON door_tenders (event_id, cashier_id)
 ;;
 CREATE TABLE retail_partners (
-  id VARCHAR(255) NOT NULL,
-  ref VARCHAR(255) NOT NULL,
-  owner_user_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  ref VARCHAR(191) NOT NULL,
+  owner_user_id VARCHAR(191) NOT NULL,
   business_name MEDIUMTEXT NOT NULL,
   registration_number MEDIUMTEXT,
   contact_phone MEDIUMTEXT NOT NULL,
   store_address MEDIUMTEXT NOT NULL,
   sales_channels MEDIUMTEXT NOT NULL DEFAULT ('[]'),
   website_url MEDIUMTEXT,
-  status VARCHAR(255) NOT NULL DEFAULT 'pending',
+  status VARCHAR(191) NOT NULL DEFAULT 'pending',
   review_note MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   approved_at MEDIUMTEXT,
-  approved_by VARCHAR(255),
+  approved_by VARCHAR(191),
   location_lat_e6 BIGINT,
   location_lng_e6 BIGINT,
   PRIMARY KEY (id),
@@ -792,8 +792,8 @@ CREATE TABLE retail_partners (
 CREATE INDEX retail_partners_status_idx ON retail_partners (status, created_at)
 ;;
 CREATE TABLE retail_partner_members (
-  partner_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  partner_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   role MEDIUMTEXT NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (partner_id, user_id),
@@ -803,11 +803,11 @@ CREATE TABLE retail_partner_members (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE retail_partner_payouts (
-  id VARCHAR(255) NOT NULL,
-  partner_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  partner_id VARCHAR(191) NOT NULL,
   amount_cents BIGINT NOT NULL,
-  bank_reference VARCHAR(255) NOT NULL,
-  paid_by VARCHAR(255) NOT NULL,
+  bank_reference VARCHAR(191) NOT NULL,
+  paid_by VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_retail_partner_payouts_7 (partner_id, bank_reference),
@@ -817,15 +817,15 @@ CREATE TABLE retail_partner_payouts (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE marketing_consents (
-  id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255),
-  channel VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191),
+  channel VARCHAR(191) NOT NULL,
   granted BIGINT NOT NULL,
   source MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
-  g_marketing_consents_uq_1 VARCHAR(255) GENERATED ALWAYS AS (COALESCE(organiser_id, '')) STORED INVISIBLE,
+  g_marketing_consents_uq_1 VARCHAR(191) GENERATED ALWAYS AS (COALESCE(organiser_id, '')) STORED INVISIBLE,
   FOREIGN KEY (organiser_id) REFERENCES organisers (id),
   FOREIGN KEY (user_id) REFERENCES users (id),
   CHECK (channel IN ('email','sms'))
@@ -835,8 +835,8 @@ CREATE UNIQUE INDEX marketing_consents_uq ON marketing_consents (user_id, g_mark
 ;;
 CREATE TABLE consent_log (
   id BIGINT NOT NULL AUTO_INCREMENT,
-  user_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255),
+  user_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191),
   channel MEDIUMTEXT NOT NULL,
   granted BIGINT NOT NULL,
   source MEDIUMTEXT NOT NULL,
@@ -847,8 +847,8 @@ CREATE TABLE consent_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE campaigns (
-  id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
   channel MEDIUMTEXT NOT NULL,
   name MEDIUMTEXT NOT NULL,
   subject MEDIUMTEXT,
@@ -861,10 +861,10 @@ CREATE TABLE campaigns (
   delivered_count BIGINT NOT NULL DEFAULT 0,
   failed_count BIGINT NOT NULL DEFAULT 0,
   estimated_cost_cents BIGINT NOT NULL DEFAULT 0,
-  created_by VARCHAR(255) NOT NULL,
+  created_by VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
-  promotion_id VARCHAR(255),
+  promotion_id VARCHAR(191),
   PRIMARY KEY (id),
   FOREIGN KEY (created_by) REFERENCES users (id),
   FOREIGN KEY (organiser_id) REFERENCES organisers (id),
@@ -875,28 +875,28 @@ CREATE TABLE campaigns (
 CREATE INDEX campaigns_promotion_idx ON campaigns (promotion_id)
 ;;
 CREATE TABLE message_outbox (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   channel MEDIUMTEXT NOT NULL,
   kind MEDIUMTEXT NOT NULL,
   to_address MEDIUMTEXT NOT NULL,
   subject MEDIUMTEXT,
   body MEDIUMTEXT NOT NULL,
-  campaign_id VARCHAR(255),
-  user_id VARCHAR(255),
-  status VARCHAR(255) NOT NULL DEFAULT 'queued',
+  campaign_id VARCHAR(191),
+  user_id VARCHAR(191),
+  status VARCHAR(191) NOT NULL DEFAULT 'queued',
   provider MEDIUMTEXT,
   provider_message_id MEDIUMTEXT,
   attempts BIGINT NOT NULL DEFAULT 0,
   last_error MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   sent_at MEDIUMTEXT,
   claimed_until MEDIUMTEXT,
-  next_attempt_at VARCHAR(255),
-  event_id VARCHAR(255),
+  next_attempt_at VARCHAR(40),
+  event_id VARCHAR(191),
   PRIMARY KEY (id),
-  g_message_outbox_event_idx_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN event_id IS NOT NULL THEN event_id END) STORED INVISIBLE,
-  g_message_outbox_campaign_user_uq_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN campaign_id IS NOT NULL THEN campaign_id END) STORED INVISIBLE,
-  g_message_outbox_campaign_user_uq_1 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN campaign_id IS NOT NULL THEN user_id END) STORED INVISIBLE,
+  g_message_outbox_event_idx_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN event_id IS NOT NULL THEN event_id END) STORED INVISIBLE,
+  g_message_outbox_campaign_user_uq_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN campaign_id IS NOT NULL THEN campaign_id END) STORED INVISIBLE,
+  g_message_outbox_campaign_user_uq_1 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN campaign_id IS NOT NULL THEN user_id END) STORED INVISIBLE,
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (campaign_id) REFERENCES campaigns (id),
   CHECK (channel IN ('email','sms')),
@@ -915,19 +915,19 @@ CREATE UNIQUE INDEX message_outbox_campaign_user_uq ON message_outbox (g_message
 CREATE INDEX message_outbox_user_idx ON message_outbox (user_id)
 ;;
 CREATE TABLE site_settings (
-  "key" VARCHAR(255) NOT NULL,
+  "key" VARCHAR(191) NOT NULL,
   value MEDIUMTEXT NOT NULL,
-  updated_by VARCHAR(255),
+  updated_by VARCHAR(191),
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY ("key"),
   FOREIGN KEY (updated_by) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE ad_posters (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   title MEDIUMTEXT NOT NULL,
   subtitle MEDIUMTEXT,
-  image_upload_id VARCHAR(255),
+  image_upload_id VARCHAR(191),
   link_url MEDIUMTEXT,
   placement MEDIUMTEXT NOT NULL DEFAULT ('home'),
   starts_at MEDIUMTEXT,
@@ -935,7 +935,7 @@ CREATE TABLE ad_posters (
   active BIGINT NOT NULL DEFAULT 1,
   sort_order BIGINT NOT NULL DEFAULT 0,
   clicks BIGINT NOT NULL DEFAULT 0,
-  created_by VARCHAR(255),
+  created_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (created_by) REFERENCES users (id),
@@ -945,7 +945,7 @@ CREATE TABLE ad_posters (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE job_posts (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   title MEDIUMTEXT NOT NULL,
   department MEDIUMTEXT NOT NULL,
   location MEDIUMTEXT NOT NULL,
@@ -953,10 +953,10 @@ CREATE TABLE job_posts (
   summary MEDIUMTEXT NOT NULL,
   description MEDIUMTEXT NOT NULL,
   application_url MEDIUMTEXT,
-  closes_at VARCHAR(255),
-  status VARCHAR(255) NOT NULL DEFAULT 'draft',
-  created_by VARCHAR(255),
-  created_at VARCHAR(255) NOT NULL,
+  closes_at VARCHAR(40),
+  status VARCHAR(191) NOT NULL DEFAULT 'draft',
+  created_by VARCHAR(191),
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (created_by) REFERENCES users (id),
@@ -966,14 +966,14 @@ CREATE TABLE job_posts (
 CREATE INDEX job_posts_public_idx ON job_posts (status, closes_at, created_at DESC)
 ;;
 CREATE TABLE kb_articles (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   question MEDIUMTEXT NOT NULL,
   answer MEDIUMTEXT NOT NULL,
   keywords MEDIUMTEXT NOT NULL DEFAULT ('[]'),
   link_url MEDIUMTEXT,
   active BIGINT NOT NULL DEFAULT 1,
   sort_order BIGINT NOT NULL DEFAULT 0,
-  updated_by VARCHAR(255),
+  updated_by VARCHAR(191),
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (updated_by) REFERENCES users (id)
@@ -985,9 +985,9 @@ CREATE TABLE chat_messages (
   question MEDIUMTEXT NOT NULL,
   answer MEDIUMTEXT NOT NULL,
   source MEDIUMTEXT NOT NULL,
-  article_id VARCHAR(255),
+  article_id VARCHAR(191),
   helpful BIGINT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (article_id) REFERENCES kb_articles (id) ON DELETE SET NULL,
   CHECK (source IN ('kb','ai','fallback'))
@@ -996,62 +996,62 @@ CREATE TABLE chat_messages (
 CREATE INDEX chat_messages_created_idx ON chat_messages (created_at)
 ;;
 CREATE TABLE notification_log (
-  "key" VARCHAR(255) NOT NULL,
+  "key" VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY ("key")
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE rate_limits (
-  "key" VARCHAR(255) NOT NULL,
+  "key" VARCHAR(191) NOT NULL,
   count BIGINT NOT NULL,
   reset_at BIGINT NOT NULL,
   PRIMARY KEY ("key")
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE job_runs (
-  name VARCHAR(255) NOT NULL,
+  name VARCHAR(191) NOT NULL,
   last_run BIGINT NOT NULL,
   PRIMARY KEY (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE meta (
-  "key" VARCHAR(255) NOT NULL,
+  "key" VARCHAR(191) NOT NULL,
   value MEDIUMTEXT NOT NULL,
   PRIMARY KEY ("key")
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE newsletter_subscribers (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   email MEDIUMTEXT NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   source MEDIUMTEXT NOT NULL DEFAULT ('web'),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   confirmed_at MEDIUMTEXT,
   unsubscribed_at MEDIUMTEXT,
   PRIMARY KEY (id),
-  g_newsletter_email_uq_0 VARCHAR(255) GENERATED ALWAYS AS (lower(email)) STORED INVISIBLE,
+  email_lc VARCHAR(191) GENERATED ALWAYS AS (lower(email)) STORED INVISIBLE,
   CHECK (status IN ('pending','subscribed','unsubscribed'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
-CREATE UNIQUE INDEX newsletter_email_uq ON newsletter_subscribers (g_newsletter_email_uq_0)
+CREATE UNIQUE INDEX newsletter_email_uq ON newsletter_subscribers (email_lc)
 ;;
 CREATE INDEX newsletter_status_idx ON newsletter_subscribers (status)
 ;;
 CREATE TABLE newsletter_issues (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   subject MEDIUMTEXT NOT NULL,
   body MEDIUMTEXT NOT NULL,
   recipients BIGINT NOT NULL,
-  sent_by VARCHAR(255) NOT NULL,
+  sent_by VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (sent_by) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE event_likes (
-  user_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (user_id, event_id),
   FOREIGN KEY (event_id) REFERENCES events (id),
@@ -1061,25 +1061,24 @@ CREATE TABLE event_likes (
 CREATE INDEX event_likes_event_idx ON event_likes (event_id)
 ;;
 CREATE TABLE payments (
-  id VARCHAR(255) NOT NULL,
-  order_id VARCHAR(255),
-  provider VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  order_id VARCHAR(191),
+  provider VARCHAR(191) NOT NULL,
   environment MEDIUMTEXT NOT NULL,
-  provider_reference VARCHAR(255),
+  provider_reference VARCHAR(191),
   amount_cents BIGINT NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   refunded_cents BIGINT NOT NULL DEFAULT 0,
   failure_reason MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   confirmed_at MEDIUMTEXT,
   checkout_url MEDIUMTEXT,
-  provider_payment_id VARCHAR(255),
+  provider_payment_id VARCHAR(191),
   purpose MEDIUMTEXT NOT NULL DEFAULT ('order'),
-  topup_id VARCHAR(255),
+  topup_id VARCHAR(191),
   PRIMARY KEY (id),
-  g_payments_one_active_order_uq_0 VARCHAR(255) GENERATED ALWAYS AS (order_id) WHERE order_id IS NOT NULL AND status IN ('initiated') STORED INVISIBLE,
-  g_payments_one_active_order_uq_1 VARCHAR(255) GENERATED ALWAYS AS ('pending') STORED INVISIBLE,
+  g_payments_one_active_order_uq_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN order_id IS NOT NULL AND status IN ('initiated','pending') THEN order_id END) STORED INVISIBLE,
   FOREIGN KEY (topup_id) REFERENCES wallet_topups (id),
   FOREIGN KEY (order_id) REFERENCES orders (id),
   CHECK (amount_cents > 0),
@@ -1095,14 +1094,14 @@ CREATE INDEX payments_status_idx ON payments (status, created_at)
 ;;
 CREATE INDEX payments_provider_payment_id_idx ON payments (provider, provider_payment_id)
 ;;
-CREATE UNIQUE INDEX payments_one_active_order_uq ON payments (g_payments_one_active_order_uq_0, g_payments_one_active_order_uq_1)
+CREATE UNIQUE INDEX payments_one_active_order_uq ON payments (g_payments_one_active_order_uq_0)
 ;;
 CREATE INDEX payments_topup_idx ON payments (topup_id)
 ;;
 CREATE TABLE webhook_events (
   id BIGINT NOT NULL AUTO_INCREMENT,
-  provider VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  provider VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   status MEDIUMTEXT NOT NULL DEFAULT ('received'),
   result MEDIUMTEXT,
   error MEDIUMTEXT,
@@ -1115,32 +1114,30 @@ CREATE TABLE webhook_events (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE refunds (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  order_id VARCHAR(255),
-  payment_id VARCHAR(255),
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  order_id VARCHAR(191),
+  payment_id VARCHAR(191),
   amount_cents BIGINT NOT NULL,
   fee_refund_cents BIGINT NOT NULL DEFAULT 0,
   kind MEDIUMTEXT NOT NULL,
   reason MEDIUMTEXT NOT NULL,
   ticket_ids MEDIUMTEXT,
-  status VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   provider_reference MEDIUMTEXT,
   failure_reason MEDIUMTEXT,
   note MEDIUMTEXT,
-  requested_by VARCHAR(255),
-  decided_by VARCHAR(255),
-  created_at VARCHAR(255) NOT NULL,
+  requested_by VARCHAR(191),
+  decided_by VARCHAR(191),
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   completed_at MEDIUMTEXT,
-  event_id VARCHAR(255),
-  user_id VARCHAR(255),
-  pos_sale_id VARCHAR(255),
+  event_id VARCHAR(191),
+  user_id VARCHAR(191),
+  pos_sale_id VARCHAR(191),
   PRIMARY KEY (id),
   UNIQUE KEY uq_refunds_22 (reference),
-  g_refunds_one_pos_sale_0 VARCHAR(255) GENERATED ALWAYS AS (pos_sale_id) WHERE kind = 'pos_sale' AND status IN ('requested') STORED INVISIBLE,
-  g_refunds_one_pos_sale_1 VARCHAR(255) GENERATED ALWAYS AS ('processing') STORED INVISIBLE,
-  g_refunds_one_pos_sale_2 VARCHAR(255) GENERATED ALWAYS AS ('completed') STORED INVISIBLE,
+  g_refunds_one_pos_sale_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN kind = 'pos_sale' AND status IN ('requested','processing','completed') THEN pos_sale_id END) STORED INVISIBLE,
   FOREIGN KEY (pos_sale_id) REFERENCES pos_sales (id),
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (event_id) REFERENCES events (id),
@@ -1163,27 +1160,27 @@ CREATE INDEX refunds_event_idx ON refunds (event_id, status)
 ;;
 CREATE INDEX refunds_user_idx ON refunds (user_id)
 ;;
-CREATE UNIQUE INDEX refunds_one_pos_sale ON refunds (g_refunds_one_pos_sale_0, g_refunds_one_pos_sale_1, g_refunds_one_pos_sale_2)
+CREATE UNIQUE INDEX refunds_one_pos_sale ON refunds (g_refunds_one_pos_sale_0)
 ;;
 CREATE TABLE payouts (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
   amount_cents BIGINT NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   bank_name MEDIUMTEXT,
   bank_account_holder MEDIUMTEXT,
   bank_account_last4 MEDIUMTEXT,
   bank_branch_code MEDIUMTEXT,
   bank_reference MEDIUMTEXT,
   note MEDIUMTEXT,
-  requested_by VARCHAR(255),
-  approved_by VARCHAR(255),
-  paid_by VARCHAR(255),
+  requested_by VARCHAR(191),
+  approved_by VARCHAR(191),
+  paid_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   paid_at MEDIUMTEXT,
-  vendor_id VARCHAR(255),
+  vendor_id VARCHAR(191),
   PRIMARY KEY (id),
   UNIQUE KEY uq_payouts_19 (reference),
   FOREIGN KEY (vendor_id) REFERENCES vendors (id),
@@ -1200,24 +1197,22 @@ CREATE INDEX payouts_org_idx ON payouts (organiser_id, status)
 CREATE INDEX payouts_vendor_idx ON payouts (vendor_id, status)
 ;;
 CREATE TABLE peach_payout_submissions (
-  id VARCHAR(255) NOT NULL,
-  payout_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  payout_id VARCHAR(191) NOT NULL,
   environment MEDIUMTEXT NOT NULL,
-  provider_payout_id VARCHAR(255) NOT NULL,
+  provider_payout_id VARCHAR(191) NOT NULL,
   payout_request_id MEDIUMTEXT,
   status MEDIUMTEXT NOT NULL,
   failure_reason MEDIUMTEXT,
   provider_status MEDIUMTEXT,
   provider_updated_at MEDIUMTEXT,
-  created_by VARCHAR(255),
-  created_at VARCHAR(255) NOT NULL,
+  created_by VARCHAR(191),
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   completed_at MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_peach_payout_submissions_14 (provider_payout_id),
-  g_peach_payout_one_open_uq_0 VARCHAR(255) GENERATED ALWAYS AS (payout_id) WHERE status IN ('submitting') STORED INVISIBLE,
-  g_peach_payout_one_open_uq_1 VARCHAR(255) GENERATED ALWAYS AS ('pending') STORED INVISIBLE,
-  g_peach_payout_one_open_uq_2 VARCHAR(255) GENERATED ALWAYS AS ('processing') STORED INVISIBLE,
+  g_peach_payout_one_open_uq_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status IN ('submitting','pending','processing') THEN payout_id END) STORED INVISIBLE,
   FOREIGN KEY (created_by) REFERENCES users (id),
   FOREIGN KEY (payout_id) REFERENCES payouts (id),
   CHECK (environment IN ('sandbox','live')),
@@ -1226,17 +1221,17 @@ CREATE TABLE peach_payout_submissions (
 ;;
 CREATE INDEX peach_payout_submission_payout_idx ON peach_payout_submissions (payout_id, created_at DESC)
 ;;
-CREATE UNIQUE INDEX peach_payout_one_open_uq ON peach_payout_submissions (g_peach_payout_one_open_uq_0, g_peach_payout_one_open_uq_1, g_peach_payout_one_open_uq_2)
+CREATE UNIQUE INDEX peach_payout_one_open_uq ON peach_payout_submissions (g_peach_payout_one_open_uq_0)
 ;;
 CREATE TABLE peach_payout_reversals (
-  id VARCHAR(255) NOT NULL,
-  submission_id VARCHAR(255) NOT NULL,
-  payout_id VARCHAR(255) NOT NULL,
-  provider_payout_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  submission_id VARCHAR(191) NOT NULL,
+  payout_id VARCHAR(191) NOT NULL,
+  provider_payout_id VARCHAR(191) NOT NULL,
   provider_status MEDIUMTEXT NOT NULL,
   provider_updated_at MEDIUMTEXT,
   ledger_reversed BIGINT NOT NULL DEFAULT 0,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_peach_payout_reversals_9 (provider_payout_id),
   UNIQUE KEY uq_peach_payout_reversals_10 (submission_id),
@@ -1249,9 +1244,9 @@ CREATE TABLE peach_payout_reversals (
 CREATE INDEX peach_payout_reversal_payout_idx ON peach_payout_reversals (payout_id, created_at DESC)
 ;;
 CREATE TABLE integration_settings (
-  "key" VARCHAR(255) NOT NULL,
+  "key" VARCHAR(191) NOT NULL,
   value MEDIUMTEXT NOT NULL,
-  updated_by VARCHAR(255),
+  updated_by VARCHAR(191),
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY ("key"),
   FOREIGN KEY (updated_by) REFERENCES users (id)
@@ -1259,8 +1254,8 @@ CREATE TABLE integration_settings (
 ;;
 CREATE TABLE support_messages (
   id BIGINT NOT NULL AUTO_INCREMENT,
-  case_id VARCHAR(255) NOT NULL,
-  author_id VARCHAR(255),
+  case_id VARCHAR(191) NOT NULL,
+  author_id VARCHAR(191),
   author_kind MEDIUMTEXT NOT NULL,
   body MEDIUMTEXT NOT NULL,
   emailed BIGINT NOT NULL DEFAULT 0,
@@ -1284,7 +1279,7 @@ CREATE TABLE ledger_journals (
 CREATE TABLE ledger_entries (
   id BIGINT NOT NULL AUTO_INCREMENT,
   journal_id BIGINT NOT NULL,
-  account VARCHAR(255) NOT NULL,
+  account VARCHAR(191) NOT NULL,
   amount_cents BIGINT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (journal_id) REFERENCES ledger_journals (id)
@@ -1295,12 +1290,12 @@ CREATE INDEX ledger_entries_account_idx ON ledger_entries (account)
 CREATE INDEX ledger_entries_journal_idx ON ledger_entries (journal_id)
 ;;
 CREATE TABLE recon_runs (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   provider MEDIUMTEXT NOT NULL,
   period_start MEDIUMTEXT NOT NULL,
   period_end MEDIUMTEXT NOT NULL,
   summary MEDIUMTEXT NOT NULL,
-  created_by VARCHAR(255),
+  created_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (created_by) REFERENCES users (id)
@@ -1308,7 +1303,7 @@ CREATE TABLE recon_runs (
 ;;
 CREATE TABLE recon_items (
   id BIGINT NOT NULL AUTO_INCREMENT,
-  run_id VARCHAR(255) NOT NULL,
+  run_id VARCHAR(191) NOT NULL,
   provider_reference MEDIUMTEXT NOT NULL,
   outcome MEDIUMTEXT NOT NULL,
   provider_amount_cents BIGINT,
@@ -1317,7 +1312,7 @@ CREATE TABLE recon_items (
   internal_status MEDIUMTEXT,
   resolved BIGINT NOT NULL DEFAULT 0,
   resolution_note MEDIUMTEXT,
-  resolved_by VARCHAR(255),
+  resolved_by VARCHAR(191),
   resolved_at MEDIUMTEXT,
   PRIMARY KEY (id),
   FOREIGN KEY (resolved_by) REFERENCES users (id),
@@ -1327,11 +1322,11 @@ CREATE TABLE recon_items (
 CREATE INDEX recon_items_run_idx ON recon_items (run_id)
 ;;
 CREATE TABLE event_promotions (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   price_cents BIGINT NOT NULL,
   paid_with MEDIUMTEXT,
   test BIGINT NOT NULL DEFAULT 0,
@@ -1345,17 +1340,16 @@ CREATE TABLE event_promotions (
   refund_reason MEDIUMTEXT,
   refund_provider_reference MEDIUMTEXT,
   refund_failure MEDIUMTEXT,
-  refunded_by VARCHAR(255),
+  refunded_by VARCHAR(191),
   refunded_at MEDIUMTEXT,
-  created_by VARCHAR(255) NOT NULL,
+  created_by VARCHAR(191) NOT NULL,
   paid_at MEDIUMTEXT,
   ends_at MEDIUMTEXT NOT NULL,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_event_promotions_26 (reference),
-  g_event_promotions_open_uq_0 VARCHAR(255) GENERATED ALWAYS AS (event_id) WHERE status IN ('pending_payment') STORED INVISIBLE,
-  g_event_promotions_open_uq_1 VARCHAR(255) GENERATED ALWAYS AS ('active') STORED INVISIBLE,
+  g_event_promotions_open_uq_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status IN ('pending_payment','active') THEN event_id END) STORED INVISIBLE,
   FOREIGN KEY (created_by) REFERENCES users (id),
   FOREIGN KEY (refunded_by) REFERENCES users (id),
   FOREIGN KEY (organiser_id) REFERENCES organisers (id),
@@ -1367,23 +1361,23 @@ CREATE TABLE event_promotions (
   CHECK (refund_status IN ('processing','manual_pending','completed','failed'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
-CREATE UNIQUE INDEX event_promotions_open_uq ON event_promotions (g_event_promotions_open_uq_0, g_event_promotions_open_uq_1)
+CREATE UNIQUE INDEX event_promotions_open_uq ON event_promotions (g_event_promotions_open_uq_0)
 ;;
 CREATE INDEX event_promotions_status_idx ON event_promotions (status, created_at)
 ;;
 CREATE INDEX event_promotions_org_idx ON event_promotions (organiser_id, created_at)
 ;;
 CREATE TABLE promotion_payments (
-  id VARCHAR(255) NOT NULL,
-  promotion_id VARCHAR(255) NOT NULL,
-  provider VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  promotion_id VARCHAR(191) NOT NULL,
+  provider VARCHAR(191) NOT NULL,
   environment MEDIUMTEXT NOT NULL,
-  provider_reference VARCHAR(255),
+  provider_reference VARCHAR(191),
   amount_cents BIGINT NOT NULL,
   status MEDIUMTEXT NOT NULL,
   refunded_cents BIGINT NOT NULL DEFAULT 0,
   failure_reason MEDIUMTEXT,
-  created_by VARCHAR(255),
+  created_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   confirmed_at MEDIUMTEXT,
@@ -1401,14 +1395,14 @@ CREATE UNIQUE INDEX promotion_payments_ref_uq ON promotion_payments (provider, p
 CREATE INDEX promotion_payments_promo_idx ON promotion_payments (promotion_id)
 ;;
 CREATE TABLE tag_batches (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   tag_type MEDIUMTEXT NOT NULL,
   mode MEDIUMTEXT NOT NULL,
-  event_id VARCHAR(255),
-  organiser_id VARCHAR(255),
+  event_id VARCHAR(191),
+  organiser_id VARCHAR(191),
   quantity BIGINT NOT NULL,
   notes MEDIUMTEXT,
-  created_by VARCHAR(255) NOT NULL,
+  created_by VARCHAR(191) NOT NULL,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (created_by) REFERENCES users (id),
@@ -1420,29 +1414,29 @@ CREATE TABLE tag_batches (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE tags (
-  id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
   tag_type MEDIUMTEXT NOT NULL,
-  token_hash VARCHAR(255) NOT NULL,
-  display_code VARCHAR(255) NOT NULL,
+  token_hash VARCHAR(191) NOT NULL,
+  display_code VARCHAR(191) NOT NULL,
   activation_code_hash MEDIUMTEXT,
   security_level MEDIUMTEXT NOT NULL,
-  batch_id VARCHAR(255),
-  event_id VARCHAR(255),
-  user_id VARCHAR(255),
-  ticket_id VARCHAR(255),
-  status VARCHAR(255) NOT NULL DEFAULT 'unassigned',
+  batch_id VARCHAR(191),
+  event_id VARCHAR(191),
+  user_id VARCHAR(191),
+  ticket_id VARCHAR(191),
+  status VARCHAR(191) NOT NULL DEFAULT 'unassigned',
   linked_at MEDIUMTEXT,
   last_used_at MEDIUMTEXT,
   status_reason MEDIUMTEXT,
-  replaced_by_tag_id VARCHAR(255),
+  replaced_by_tag_id VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_tags_18 (display_code),
   UNIQUE KEY uq_tags_19 (token_hash),
-  g_tags_one_active_per_user_event_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN event_id END) STORED INVISIBLE,
-  g_tags_one_active_per_user_event_1 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN user_id END) STORED INVISIBLE,
-  g_tags_one_active_per_ticket_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN status = 'active' AND ticket_id IS NOT NULL THEN ticket_id END) STORED INVISIBLE,
+  g_tags_one_active_per_user_event_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN event_id END) STORED INVISIBLE,
+  g_tags_one_active_per_user_event_1 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN user_id END) STORED INVISIBLE,
+  g_tags_one_active_per_ticket_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status = 'active' AND ticket_id IS NOT NULL THEN ticket_id END) STORED INVISIBLE,
   FOREIGN KEY (replaced_by_tag_id) REFERENCES tags (id),
   FOREIGN KEY (ticket_id) REFERENCES tickets (id),
   FOREIGN KEY (user_id) REFERENCES users (id),
@@ -1464,11 +1458,11 @@ CREATE INDEX tags_event_idx ON tags (event_id, status)
 ;;
 CREATE TABLE tag_events (
   id BIGINT NOT NULL AUTO_INCREMENT,
-  tag_id VARCHAR(255) NOT NULL,
+  tag_id VARCHAR(191) NOT NULL,
   action MEDIUMTEXT NOT NULL,
-  actor_id VARCHAR(255),
+  actor_id VARCHAR(191),
   details MEDIUMTEXT NOT NULL DEFAULT ('{}'),
-  occurred_at VARCHAR(255) NOT NULL,
+  occurred_at VARCHAR(40) NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (actor_id) REFERENCES users (id),
   FOREIGN KEY (tag_id) REFERENCES tags (id)
@@ -1477,8 +1471,8 @@ CREATE TABLE tag_events (
 CREATE INDEX tag_events_tag_idx ON tag_events (tag_id, occurred_at)
 ;;
 CREATE TABLE cashless_wallets (
-  user_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   balance_cents BIGINT NOT NULL DEFAULT 0,
   test_balance_cents BIGINT NOT NULL DEFAULT 0,
   created_at MEDIUMTEXT NOT NULL,
@@ -1493,17 +1487,17 @@ CREATE TABLE cashless_wallets (
 CREATE INDEX cashless_wallets_event_idx ON cashless_wallets (event_id)
 ;;
 CREATE TABLE wallet_topups (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   amount_cents BIGINT NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'pending',
-  idempotency_key VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL DEFAULT 'pending',
+  idempotency_key VARCHAR(191) NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
   created_at MEDIUMTEXT NOT NULL,
   confirmed_at MEDIUMTEXT,
-  paid_by VARCHAR(255),
+  paid_by VARCHAR(191),
   PRIMARY KEY (id),
   UNIQUE KEY uq_wallet_topups_12 (user_id, idempotency_key),
   UNIQUE KEY uq_wallet_topups_13 (reference),
@@ -1521,14 +1515,14 @@ CREATE INDEX wallet_topups_event_idx ON wallet_topups (event_id, status)
 CREATE INDEX wallet_topups_paid_by_idx ON wallet_topups (paid_by, event_id)
 ;;
 CREATE TABLE vendors (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
   name MEDIUMTEXT NOT NULL,
   description MEDIUMTEXT,
   status MEDIUMTEXT NOT NULL DEFAULT ('active'),
   commission_bps BIGINT NOT NULL DEFAULT 0,
-  created_by VARCHAR(255),
+  created_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   category MEDIUMTEXT,
@@ -1546,10 +1540,10 @@ CREATE TABLE vendors (
 CREATE INDEX vendors_event_idx ON vendors (event_id)
 ;;
 CREATE TABLE vendor_members (
-  vendor_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  vendor_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   role MEDIUMTEXT NOT NULL,
-  added_by VARCHAR(255),
+  added_by VARCHAR(191),
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (vendor_id, user_id),
   FOREIGN KEY (added_by) REFERENCES users (id),
@@ -1561,8 +1555,8 @@ CREATE TABLE vendor_members (
 CREATE INDEX vendor_members_user_idx ON vendor_members (user_id)
 ;;
 CREATE TABLE products (
-  id VARCHAR(255) NOT NULL,
-  vendor_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  vendor_id VARCHAR(191) NOT NULL,
   name MEDIUMTEXT NOT NULL,
   price_cents BIGINT NOT NULL,
   active BIGINT NOT NULL DEFAULT 1,
@@ -1577,13 +1571,13 @@ CREATE TABLE products (
 CREATE INDEX products_vendor_idx ON products (vendor_id, active)
 ;;
 CREATE TABLE terminals (
-  id VARCHAR(255) NOT NULL,
-  vendor_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  vendor_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   label MEDIUMTEXT NOT NULL,
-  key_hash VARCHAR(255) NOT NULL,
+  key_hash VARCHAR(191) NOT NULL,
   status MEDIUMTEXT NOT NULL DEFAULT ('active'),
-  registered_by VARCHAR(255) NOT NULL,
+  registered_by VARCHAR(191) NOT NULL,
   last_seen_at MEDIUMTEXT,
   created_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
@@ -1597,22 +1591,22 @@ CREATE TABLE terminals (
 CREATE INDEX terminals_vendor_idx ON terminals (vendor_id)
 ;;
 CREATE TABLE pos_sales (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  vendor_id VARCHAR(255) NOT NULL,
-  terminal_id VARCHAR(255) NOT NULL,
-  cashier_id VARCHAR(255) NOT NULL,
-  tag_id VARCHAR(255),
-  user_id VARCHAR(255),
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  vendor_id VARCHAR(191) NOT NULL,
+  terminal_id VARCHAR(191) NOT NULL,
+  cashier_id VARCHAR(191) NOT NULL,
+  tag_id VARCHAR(191),
+  user_id VARCHAR(191),
   total_cents BIGINT NOT NULL,
   commission_cents BIGINT NOT NULL DEFAULT 0,
   status MEDIUMTEXT NOT NULL,
   decline_reason MEDIUMTEXT,
-  idempotency_key VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
   request_hash MEDIUMTEXT NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   reversed_at MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_pos_sales_18 (terminal_id, idempotency_key),
@@ -1633,8 +1627,8 @@ CREATE INDEX pos_sales_vendor_idx ON pos_sales (vendor_id, created_at)
 CREATE INDEX pos_sales_user_idx ON pos_sales (user_id, event_id)
 ;;
 CREATE TABLE pos_sale_items (
-  sale_id VARCHAR(255) NOT NULL,
-  product_id VARCHAR(255) NOT NULL,
+  sale_id VARCHAR(191) NOT NULL,
+  product_id VARCHAR(191) NOT NULL,
   name MEDIUMTEXT NOT NULL,
   unit_price_cents BIGINT NOT NULL,
   quantity BIGINT NOT NULL,
@@ -1645,19 +1639,19 @@ CREATE TABLE pos_sale_items (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE pos_qr_intents (
-  id VARCHAR(255) NOT NULL,
-  token_hash VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  vendor_id VARCHAR(255) NOT NULL,
-  terminal_id VARCHAR(255) NOT NULL,
-  cashier_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  token_hash VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  vendor_id VARCHAR(191) NOT NULL,
+  terminal_id VARCHAR(191) NOT NULL,
+  cashier_id VARCHAR(191) NOT NULL,
   items_json MEDIUMTEXT NOT NULL,
   total_cents BIGINT NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'pending',
-  payer_user_id VARCHAR(255),
-  sale_id VARCHAR(255),
-  expires_at VARCHAR(255) NOT NULL,
-  created_at VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL DEFAULT 'pending',
+  payer_user_id VARCHAR(191),
+  sale_id VARCHAR(191),
+  expires_at VARCHAR(40) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_pos_qr_intents_15 (sale_id),
@@ -1677,10 +1671,10 @@ CREATE INDEX pos_qr_intents_terminal_idx ON pos_qr_intents (terminal_id, status,
 CREATE INDEX pos_qr_intents_payer_idx ON pos_qr_intents (payer_user_id, event_id, created_at)
 ;;
 CREATE TABLE cashless_event_settings (
-  event_id VARCHAR(255) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   cashout_desk_open BIGINT NOT NULL DEFAULT 0,
   desk_daily_cap_cents BIGINT,
-  updated_by VARCHAR(255),
+  updated_by VARCHAR(191),
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (event_id),
   FOREIGN KEY (updated_by) REFERENCES users (id),
@@ -1689,22 +1683,22 @@ CREATE TABLE cashless_event_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE desk_topups (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  tag_id VARCHAR(255),
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  tag_id VARCHAR(191),
   method MEDIUMTEXT NOT NULL,
   amount_cents BIGINT NOT NULL,
   status MEDIUMTEXT NOT NULL DEFAULT ('confirmed'),
-  staff_id VARCHAR(255) NOT NULL,
+  staff_id VARCHAR(191) NOT NULL,
   staff_kind MEDIUMTEXT NOT NULL,
-  idempotency_key VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   undone_at MEDIUMTEXT,
-  undone_by VARCHAR(255),
+  undone_by VARCHAR(191),
   undo_reason MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_desk_topups_18 (staff_id, idempotency_key),
@@ -1726,28 +1720,28 @@ CREATE INDEX desk_topups_event_idx ON desk_topups (event_id, staff_id, created_a
 CREATE INDEX desk_topups_user_idx ON desk_topups (user_id, event_id)
 ;;
 CREATE TABLE wallet_cashouts (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   method MEDIUMTEXT NOT NULL,
   amount_cents BIGINT NOT NULL,
   fee_cents BIGINT NOT NULL DEFAULT 0,
   test BIGINT NOT NULL DEFAULT 0,
-  status VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   bank_account_holder MEDIUMTEXT,
   bank_name MEDIUMTEXT,
   bank_branch_code MEDIUMTEXT,
   bank_account_enc MEDIUMTEXT,
   bank_account_last4 MEDIUMTEXT,
-  code_hash VARCHAR(255),
+  code_hash VARCHAR(191),
   code_enc MEDIUMTEXT,
-  first_approved_by VARCHAR(255),
-  approved_by VARCHAR(255),
-  paid_by VARCHAR(255),
+  first_approved_by VARCHAR(191),
+  approved_by VARCHAR(191),
+  paid_by VARCHAR(191),
   bank_reference MEDIUMTEXT,
   note MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   paid_at MEDIUMTEXT,
   PRIMARY KEY (id),
@@ -1771,23 +1765,23 @@ CREATE INDEX wallet_cashouts_user_idx ON wallet_cashouts (user_id, event_id)
 CREATE INDEX wallet_cashouts_paid_idx ON wallet_cashouts (event_id, paid_by)
 ;;
 CREATE TABLE waitlist_entries (
-  id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  ticket_type_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL DEFAULT 'waiting',
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  ticket_type_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL DEFAULT 'waiting',
   offer_kind MEDIUMTEXT,
   listing_id MEDIUMTEXT,
-  offer_token_hash VARCHAR(255),
+  offer_token_hash VARCHAR(191),
   offered_at MEDIUMTEXT,
-  offer_expires_at VARCHAR(255),
-  order_id VARCHAR(255),
-  created_at VARCHAR(255) NOT NULL,
+  offer_expires_at VARCHAR(40),
+  order_id VARCHAR(191),
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_waitlist_entries_14 (offer_token_hash),
-  g_waitlist_one_open_1 VARCHAR(255) GENERATED ALWAYS AS (user_id) WHERE status IN ('waiting') STORED INVISIBLE,
-  g_waitlist_one_open_2 VARCHAR(255) GENERATED ALWAYS AS ('offered') STORED INVISIBLE,
+  g_waitlist_one_open_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status IN ('waiting','offered') THEN ticket_type_id END) STORED INVISIBLE,
+  g_waitlist_one_open_1 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status IN ('waiting','offered') THEN user_id END) STORED INVISIBLE,
   FOREIGN KEY (order_id) REFERENCES orders (id),
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (ticket_type_id) REFERENCES ticket_types (id),
@@ -1796,7 +1790,7 @@ CREATE TABLE waitlist_entries (
   CHECK (offer_kind IN ('primary','resale'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
-CREATE UNIQUE INDEX waitlist_one_open ON waitlist_entries (ticket_type_id, g_waitlist_one_open_1, g_waitlist_one_open_2)
+CREATE UNIQUE INDEX waitlist_one_open ON waitlist_entries (g_waitlist_one_open_0, g_waitlist_one_open_1)
 ;;
 CREATE INDEX waitlist_queue_idx ON waitlist_entries (ticket_type_id, status, created_at)
 ;;
@@ -1805,34 +1799,32 @@ CREATE INDEX waitlist_user_idx ON waitlist_entries (user_id, status)
 CREATE INDEX waitlist_offer_idx ON waitlist_entries (status, offer_expires_at)
 ;;
 CREATE TABLE resale_listings (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  ticket_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
-  ticket_type_id VARCHAR(255) NOT NULL,
-  seller_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  ticket_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  ticket_type_id VARCHAR(191) NOT NULL,
+  seller_id VARCHAR(191) NOT NULL,
   price_cents BIGINT NOT NULL,
   face_value_cents BIGINT NOT NULL,
   payout_method MEDIUMTEXT NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
-  held_order_id VARCHAR(255),
-  new_ticket_id VARCHAR(255),
+  held_order_id VARCHAR(191),
+  new_ticket_id VARCHAR(191),
   bank_account_holder MEDIUMTEXT,
   bank_name MEDIUMTEXT,
   bank_branch_code MEDIUMTEXT,
   bank_account_enc MEDIUMTEXT,
   bank_account_last4 MEDIUMTEXT,
   close_reason MEDIUMTEXT,
-  created_at VARCHAR(255) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   sold_at MEDIUMTEXT,
   withdraw_requested_at MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_resale_listings_24 (reference),
-  g_resale_listings_one_open_0 VARCHAR(255) GENERATED ALWAYS AS (ticket_id) WHERE status IN ('active') STORED INVISIBLE,
-  g_resale_listings_one_open_1 VARCHAR(255) GENERATED ALWAYS AS ('offered') STORED INVISIBLE,
-  g_resale_listings_one_open_2 VARCHAR(255) GENERATED ALWAYS AS ('held') STORED INVISIBLE,
+  g_resale_listings_one_open_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN status IN ('active','offered','held') THEN ticket_id END) STORED INVISIBLE,
   FOREIGN KEY (new_ticket_id) REFERENCES tickets (id),
   FOREIGN KEY (held_order_id) REFERENCES orders (id),
   FOREIGN KEY (seller_id) REFERENCES users (id),
@@ -1846,23 +1838,23 @@ CREATE TABLE resale_listings (
   CHECK (price_cents <= face_value_cents)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
-CREATE UNIQUE INDEX resale_listings_one_open ON resale_listings (g_resale_listings_one_open_0, g_resale_listings_one_open_1, g_resale_listings_one_open_2)
+CREATE UNIQUE INDEX resale_listings_one_open ON resale_listings (g_resale_listings_one_open_0)
 ;;
 CREATE INDEX resale_listings_event_idx ON resale_listings (event_id, ticket_type_id, status, created_at)
 ;;
 CREATE INDEX resale_listings_seller_idx ON resale_listings (seller_id, status)
 ;;
 CREATE TABLE resale_payouts (
-  id VARCHAR(255) NOT NULL,
-  reference VARCHAR(255) NOT NULL,
-  listing_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  reference VARCHAR(191) NOT NULL,
+  listing_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   method MEDIUMTEXT NOT NULL,
   amount_cents BIGINT NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
-  status VARCHAR(255) NOT NULL,
-  payment_id VARCHAR(255),
+  status VARCHAR(191) NOT NULL,
+  payment_id VARCHAR(191),
   provider MEDIUMTEXT,
   provider_reference MEDIUMTEXT,
   bank_account_holder MEDIUMTEXT,
@@ -1872,9 +1864,9 @@ CREATE TABLE resale_payouts (
   bank_account_last4 MEDIUMTEXT,
   bank_reference MEDIUMTEXT,
   failure_reason MEDIUMTEXT,
-  approved_by VARCHAR(255),
-  paid_by VARCHAR(255),
-  created_at VARCHAR(255) NOT NULL,
+  approved_by VARCHAR(191),
+  paid_by VARCHAR(191),
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   paid_at MEDIUMTEXT,
   PRIMARY KEY (id),
@@ -1895,7 +1887,7 @@ CREATE UNIQUE INDEX resale_payouts_listing_uq ON resale_payouts (listing_id)
 CREATE INDEX resale_payouts_status_idx ON resale_payouts (status, created_at)
 ;;
 CREATE TABLE organiser_verification (
-  organiser_id VARCHAR(255) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
   entity_type MEDIUMTEXT NOT NULL DEFAULT ('individual'),
   nationality MEDIUMTEXT NOT NULL DEFAULT ('sa'),
   legal_name MEDIUMTEXT,
@@ -1907,7 +1899,7 @@ CREATE TABLE organiser_verification (
   plans_paid BIGINT NOT NULL DEFAULT 0,
   terms_version MEDIUMTEXT,
   terms_signed_at MEDIUMTEXT,
-  terms_signed_by VARCHAR(255),
+  terms_signed_by VARCHAR(191),
   terms_signed_name MEDIUMTEXT,
   terms_ip MEDIUMTEXT,
   risk_override MEDIUMTEXT,
@@ -1928,19 +1920,19 @@ CREATE TABLE organiser_verification (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE verification_documents (
-  id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  event_id VARCHAR(255),
-  requirement VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191),
+  requirement VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   file_name MEDIUMTEXT NOT NULL,
   original_name MEDIUMTEXT,
   mime_type MEDIUMTEXT NOT NULL,
   size_bytes BIGINT NOT NULL,
   sha256 MEDIUMTEXT NOT NULL,
-  uploaded_by VARCHAR(255) NOT NULL,
-  created_at VARCHAR(255) NOT NULL,
-  reviewed_by VARCHAR(255),
+  uploaded_by VARCHAR(191) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
+  reviewed_by VARCHAR(191),
   reviewed_at MEDIUMTEXT,
   reject_reason MEDIUMTEXT,
   replaced_at MEDIUMTEXT,
@@ -1965,12 +1957,12 @@ CREATE INDEX verification_documents_org_idx ON verification_documents (organiser
 CREATE INDEX verification_documents_status_idx ON verification_documents (status, created_at)
 ;;
 CREATE TABLE event_risk (
-  event_id VARCHAR(255) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
   sells_alcohol BIGINT NOT NULL DEFAULT 0,
   public_space BIGINT NOT NULL DEFAULT 0,
   third_party BIGINT NOT NULL DEFAULT 0,
   risk_override MEDIUMTEXT,
-  updated_by VARCHAR(255),
+  updated_by VARCHAR(191),
   updated_at MEDIUMTEXT NOT NULL,
   PRIMARY KEY (event_id),
   FOREIGN KEY (updated_by) REFERENCES users (id),
@@ -1979,7 +1971,7 @@ CREATE TABLE event_risk (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE phone_codes (
-  user_id VARCHAR(255) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
   phone MEDIUMTEXT NOT NULL,
   code_hash MEDIUMTEXT NOT NULL,
   attempts BIGINT NOT NULL DEFAULT 0,
@@ -1990,10 +1982,10 @@ CREATE TABLE phone_codes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE TABLE kyc_consents (
-  id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  user_id VARCHAR(255) NOT NULL,
-  text_version VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  user_id VARCHAR(191) NOT NULL,
+  text_version VARCHAR(191) NOT NULL,
   text_sha256 MEDIUMTEXT NOT NULL,
   full_name MEDIUMTEXT,
   ip MEDIUMTEXT,
@@ -2007,33 +1999,33 @@ CREATE TABLE kyc_consents (
 CREATE INDEX kyc_consents_org_idx ON kyc_consents (organiser_id, text_version)
 ;;
 CREATE TABLE kyc_checks (
-  id VARCHAR(255) NOT NULL,
-  organiser_id VARCHAR(255) NOT NULL,
-  check_type VARCHAR(255) NOT NULL,
-  status VARCHAR(255) NOT NULL,
+  id VARCHAR(191) NOT NULL,
+  organiser_id VARCHAR(191) NOT NULL,
+  check_type VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL,
   mode MEDIUMTEXT NOT NULL,
   subject_hash MEDIUMTEXT NOT NULL,
-  idempotency_key VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
   provider_ref MEDIUMTEXT,
-  job_id VARCHAR(255),
+  job_id VARCHAR(191),
   reasons MEDIUMTEXT,
   response_json MEDIUMTEXT,
   http_status BIGINT,
   attempts BIGINT NOT NULL DEFAULT 0,
-  next_attempt_at VARCHAR(255),
+  next_attempt_at VARCHAR(40),
   last_error MEDIUMTEXT,
   override MEDIUMTEXT,
   decision_note MEDIUMTEXT,
-  decided_by VARCHAR(255),
+  decided_by VARCHAR(191),
   decided_at MEDIUMTEXT,
-  consent_id VARCHAR(255),
-  requested_by VARCHAR(255),
-  created_at VARCHAR(255) NOT NULL,
+  consent_id VARCHAR(191),
+  requested_by VARCHAR(191),
+  created_at VARCHAR(40) NOT NULL,
   updated_at MEDIUMTEXT NOT NULL,
   completed_at MEDIUMTEXT,
   PRIMARY KEY (id),
   UNIQUE KEY uq_kyc_checks_25 (idempotency_key),
-  g_kyc_checks_job_uq_0 VARCHAR(255) GENERATED ALWAYS AS (CASE WHEN job_id IS NOT NULL THEN job_id END) STORED INVISIBLE,
+  g_kyc_checks_job_uq_0 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN job_id IS NOT NULL THEN job_id END) STORED INVISIBLE,
   FOREIGN KEY (requested_by) REFERENCES users (id),
   FOREIGN KEY (consent_id) REFERENCES kyc_consents (id),
   FOREIGN KEY (decided_by) REFERENCES users (id),

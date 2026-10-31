@@ -561,7 +561,7 @@ function payment_webhook(string $provider, string $raw, array $headers): array
         $wid = (int) $existing['id'];
     } else {
         q('INSERT INTO webhook_events (provider, event_id, status, received_at) VALUES (?,?,?,?)', [$provider, $evt['id'], 'received', now_iso()]);
-        $wid = (int) db()->lastInsertId();
+        $wid = last_id();
     }
     try {
         if (!empty($evt['refund'])) $result = payment_refund_notice($provider, $evt);
@@ -771,7 +771,7 @@ function ledger_post(string $kind, string $reference, array $lines, bool $test =
     if (!$lines) return;
     if (array_sum(array_map(fn($l) => (int) $l[1], $lines)) !== 0) throw new RuntimeException("ledger: journal $reference does not balance");
     q('INSERT INTO ledger_journals (kind, reference, created_at) VALUES (?,?,?)', [$kind, $reference, now_iso()]);
-    $jid = (int) db()->lastInsertId();
+    $jid = last_id();
     foreach ($lines as [$acct, $cents]) q('INSERT INTO ledger_entries (journal_id, account, amount_cents) VALUES (?,?,?)', [$jid, $acct, (int) $cents]);
 }
 function ledger_org_account(array $order): string
@@ -908,16 +908,16 @@ function ledger_exceptions(): array
         $add('paid_twice', 'action', $r['reference'], (int) $r['open'], "Order {$r['reference']} was paid twice. The second payment of " . format_zar((int) $r['open']) . ' has not gone back to the buyer yet. Check its refund under Refunds.');
     }
     // More refunded than was paid, on an order or a payment.
-    foreach (rows('SELECT reference, refunded_cents - total_cents AS over FROM orders WHERE test = 0 AND refunded_cents > total_cents LIMIT 50') as $r) {
-        $add('over_refunded', 'error', $r['reference'], (int) $r['over'], "Order {$r['reference']} was refunded " . format_zar((int) $r['over']) . ' more than was paid.');
+    foreach (rows('SELECT reference, refunded_cents - total_cents AS over_cents FROM orders WHERE test = 0 AND refunded_cents > total_cents LIMIT 50') as $r) {
+        $add('over_refunded', 'error', $r['reference'], (int) $r['over_cents'], "Order {$r['reference']} was refunded " . format_zar((int) $r['over_cents']) . ' more than was paid.');
     }
-    foreach (rows("SELECT p.id, p.refunded_cents - p.amount_cents AS over, o.reference FROM payments p LEFT JOIN orders o ON o.id = p.order_id
+    foreach (rows("SELECT p.id, p.refunded_cents - p.amount_cents AS over_cents, o.reference FROM payments p LEFT JOIN orders o ON o.id = p.order_id
                     WHERE p.environment = 'live' AND p.refunded_cents > p.amount_cents LIMIT 50") as $r) {
-        $add('over_refunded', 'error', (string) ($r['reference'] ?? $r['id']), (int) $r['over'], 'A payment' . ($r['reference'] ? " for order {$r['reference']}" : '') . ' was refunded ' . format_zar((int) $r['over']) . ' more than its amount.');
+        $add('over_refunded', 'error', (string) ($r['reference'] ?? $r['id']), (int) $r['over_cents'], 'A payment' . ($r['reference'] ? " for order {$r['reference']}" : '') . ' was refunded ' . format_zar((int) $r['over_cents']) . ' more than its amount.');
     }
-    foreach (rows("SELECT o.reference, SUM(r.amount_cents + r.fee_refund_cents) - o.total_cents AS over FROM refunds r JOIN orders o ON o.id = r.order_id
-                    WHERE o.test = 0 AND r.status = 'completed' AND COALESCE(r.note, '') NOT LIKE 'system:overpayment:%' GROUP BY o.id HAVING SUM(r.amount_cents + r.fee_refund_cents) > o.total_cents LIMIT 50") as $r) {
-        $add('over_refunded', 'error', $r['reference'], (int) $r['over'], "The refunds paid on order {$r['reference']} come to " . format_zar((int) $r['over']) . ' more than the order.');
+    foreach (rows("SELECT o.reference, SUM(r.amount_cents + r.fee_refund_cents) - o.total_cents AS over_cents FROM refunds r JOIN orders o ON o.id = r.order_id
+                    WHERE o.test = 0 AND r.status = 'completed' AND COALESCE(r.note, '') NOT LIKE 'system:overpayment:%' GROUP BY o.id, o.reference, o.total_cents HAVING over_cents > 0 LIMIT 50") as $r) {
+        $add('over_refunded', 'error', $r['reference'], (int) $r['over_cents'], "The refunds paid on order {$r['reference']} come to " . format_zar((int) $r['over_cents']) . ' more than the order.');
     }
     // Organisers who hold more of the money than they are owed, and event
     // desk money that was not covered by what the event earned.

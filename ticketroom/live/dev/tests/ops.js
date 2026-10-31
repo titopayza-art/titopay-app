@@ -13,7 +13,7 @@ const path = require("path");
 const zlib = require("zlib");
 const { execFile, execFileSync } = require("child_process");
 const { promisify } = require("util");
-const { Client, outbox, sql, ADMIN_EMAIL } = require("../lib");
+const { Client, outbox, sql, driver, DBQ, ADMIN_EMAIL } = require("../lib");
 
 const DIR = path.resolve(process.argv[2] || "");
 const PORT = process.argv[3] || "8640";
@@ -189,10 +189,18 @@ function smtpMock(port, { starttls = false, delayMs = 0, rcpt = () => "250 OK" }
     const made = await admin.call("POST", "/api/admin/backups", {}, 201);
     const name = made.backup && made.backup.name;
     const file = path.join(DATA, "backups", name || "none");
-    check(name && fs.existsSync(file) && fs.readFileSync(file).subarray(0, 15).toString() === "SQLite format 3", "O2 Back up now makes a SQLite copy in ticketroom-data/backups", name);
     const n = sql(DATA, "SELECT count(*) AS n FROM users")[0].n;
-    const copyUsers = execFileSync("php", ["-r", "$d=new PDO('sqlite:'.$argv[1]); echo $d->query('SELECT count(*) FROM users')->fetchColumn();", file], { encoding: "utf8" });
-    check(Number(copyUsers) === n, "O2 the copy holds the data", `${copyUsers} vs ${n}`);
+    if (driver(DATA) === "mysql") {
+      // A gzipped mysqldump: every user is in it.
+      const text = fs.existsSync(file) ? require("zlib").gunzipSync(fs.readFileSync(file)).toString() : "";
+      check(name && name.endsWith(".sql.gz") && /CREATE TABLE `users`/.test(text), "O2 Back up now makes a MySQL dump in ticketroom-data/backups", name);
+      const ids = sql(DATA, "SELECT id FROM users").map((r) => r.id);
+      check(ids.length === n && ids.every((id) => text.includes(id)), "O2 the copy holds the data", `${ids.filter((id) => text.includes(id)).length} vs ${n}`);
+    } else {
+      check(name && fs.existsSync(file) && fs.readFileSync(file).subarray(0, 15).toString() === "SQLite format 3", "O2 Back up now makes a SQLite copy in ticketroom-data/backups", name);
+      const copyUsers = execFileSync("php", ["-r", "$d=new PDO('sqlite:'.$argv[1]); echo $d->query('SELECT count(*) FROM users')->fetchColumn();", file], { encoding: "utf8" });
+      check(Number(copyUsers) === n, "O2 the copy holds the data", `${copyUsers} vs ${n}`);
+    }
     const list = await admin.call("GET", "/api/admin/backups");
     check(list.backups.some((x) => x.name === name), "O2 the backups list shows it");
     const dl = list.backups.find((x) => x.name === name);

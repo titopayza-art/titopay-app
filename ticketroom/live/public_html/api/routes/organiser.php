@@ -123,7 +123,7 @@ function org_event_analytics(array $event): array
     $checkins = row("SELECT COALESCE(SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END),0) AS admitted,
                             COALESCE(SUM(CASE WHEN status IN ('valid','used') THEN 1 ELSE 0 END),0) AS issued FROM tickets WHERE event_id = ?", [$id]);
     // Africa/Johannesburg is UTC+2 all year (no daylight saving).
-    $byHour = rows("SELECT strftime('%H:00', occurred_at, '+2 hours') AS hour, count(*) AS n FROM admission_log
+    $byHour = rows("SELECT substr('0' || ((CAST(substr(occurred_at, 12, 2) AS INTEGER) + 2) % 24), -2) || ':00' AS hour, count(*) AS n FROM admission_log
                      WHERE event_id = ? AND outcome = 'admitted' GROUP BY 1 ORDER BY 1", [$id]);
     $links = rows("SELECT l.code, l.label, l.clicks,
                           (SELECT count(*) FROM orders o WHERE o.tracking_link_id = l.id AND o.status IN " . ORG_PAID . " AND o.test = 0) AS orders,

@@ -6,7 +6,7 @@
 //
 // schema.sql is loaded into an in-memory SQLite database and read back table
 // by table, so the MySQL schema always matches a fresh SQLite install:
-// - TEXT columns used in a key, index or foreign key become VARCHAR(255),
+// - TEXT columns used in a key, index or foreign key become VARCHAR (40 for times, 191 otherwise),
 //   other TEXT columns MEDIUMTEXT; INTEGER becomes BIGINT.
 // - SQLite partial indexes (WHERE ...) and expression indexes become indexes
 //   on hidden generated columns, so "one open listing per ticket" and the
@@ -61,7 +61,10 @@ function typeof_col(array $c, bool $keyed): string
     if (str_contains($t, 'INT')) return 'BIGINT';
     if (str_contains($t, 'REAL') || str_contains($t, 'FLOA') || str_contains($t, 'DOUB')) return 'DOUBLE';
     if (str_contains($t, 'BLOB')) return 'LONGBLOB';
-    return $keyed ? 'VARCHAR(255)' : 'MEDIUMTEXT';
+    // Index entries are limited to 3072 bytes (4 bytes a character): times are
+    // short ISO text, everything else in a key fits in 191 characters.
+    if (!$keyed) return 'MEDIUMTEXT';
+    return str_ends_with($c['name'], '_at') ? 'VARCHAR(40)' : 'VARCHAR(191)';
 }
 // SQLite expressions used in checks, triggers and generated columns.
 function expr(string $e, callable $q): string
@@ -75,9 +78,14 @@ $genCols = []; // table => [ddl]
 $idxDdl = [];  // table => [ddl]
 
 foreach ($indexes as $ix) {
-    if (!preg_match('/^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(\w+)\s*\((.*)\)\s*(?:WHERE\s+(.*))?$/is', trim($ix['sql']), $m)) throw new RuntimeException("Cannot read index: {$ix['sql']}");
-    [, $unique, $name, $table, $colsRaw] = $m;
-    $where = trim($m[5] ?? '');
+    $ixSql = trim($ix['sql']);
+    if (!preg_match('/^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(\w+)\s*\(/is', $ixSql, $m)) throw new RuntimeException("Cannot read index: $ixSql");
+    [, $unique, $name, $table] = $m;
+    // The column list ends at its matching bracket; a WHERE may follow.
+    $open = strlen($m[0]);
+    for ($j = $open, $depth = 0; $j < strlen($ixSql); $j++) { if ($ixSql[$j] === '(') $depth++; elseif ($ixSql[$j] === ')') { if (!$depth) break; $depth--; } }
+    $colsRaw = substr($ixSql, $open, $j - $open);
+    $where = trim((string) preg_replace('/^\s*WHERE\s+/i', '', substr($ixSql, $j + 1)));
     $parts = [];
     $depth = 0; $cur = '';
     foreach (str_split($colsRaw) as $ch) { if ($ch === '(') $depth++; if ($ch === ')') $depth--; if ($ch === ',' && !$depth) { $parts[] = trim($cur); $cur = ''; continue; } $cur .= $ch; }
@@ -89,11 +97,12 @@ foreach ($indexes as $ix) {
         $plain = preg_match('/^"?(\w+)"?$/', $p, $pm);
         if ($plain && $where === '') { $cols[] = $q($pm[1]) . $dir; $quotedNames[$pm[1]] = true; continue; }
         // A generated, hidden column holds the expression (or NULL outside the index's WHERE).
-        $g = substr('g_' . $name, 0, 60) . "_$k";
+        // lower(email) is named email_lc: lib/mysql.php points lower(email) lookups at it.
+        $g = (!$plain && $where === '' && preg_match('/^lower\(\s*"?(\w+)"?\s*\)$/i', $p, $em)) ? "{$em[1]}_lc" : substr('g_' . $name, 0, 60) . "_$k";
         $val = $plain ? $q($pm[1]) : expr($p, $q);
         $isInt = $plain && preg_match('/INT/i', (string) $lite->query("SELECT type FROM pragma_table_info('$table') WHERE name = '{$pm[1]}'")->fetchColumn());
         $body = $where === '' ? $val : 'CASE WHEN ' . expr($where, $q) . " THEN $val END";
-        $genCols[$table][] = "  $g " . ($isInt ? 'BIGINT' : 'VARCHAR(255)') . " GENERATED ALWAYS AS ($body) STORED INVISIBLE";
+        $genCols[$table][] = "  $g " . ($isInt ? 'BIGINT' : 'VARCHAR(191)') . " GENERATED ALWAYS AS ($body) STORED INVISIBLE";
         $cols[] = $g . $dir;
     }
     $idxDdl[$table][] = 'CREATE ' . ($unique ? 'UNIQUE ' : '') . "INDEX $name ON $table (" . implode(', ', $cols) . ')';

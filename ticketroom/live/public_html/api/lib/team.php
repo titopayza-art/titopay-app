@@ -195,8 +195,7 @@ function team_activity(array $event): array
         $at($r['uid']); $P[$r['uid']]['boxOffice']['cancelledCount'] = (int) $r['n'];
     }
     // First and last action, and how many there were.
-    $st = db()->prepare('SELECT uid, MIN(at) AS first_at, MAX(at) AS last_at, count(*) AS n FROM (' . team_actions_sql() . ') x WHERE uid IS NOT NULL GROUP BY uid');
-    $st->execute([':ev' => $ev]);
+    $st = q_named('SELECT uid, MIN(at) AS first_at, MAX(at) AS last_at, count(*) AS n FROM (' . team_actions_sql() . ') x WHERE uid IS NOT NULL GROUP BY uid', [':ev' => $ev]);
     foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) { $at($r['uid']); $P[$r['uid']]['firstAt'] = $r['first_at']; $P[$r['uid']]['lastAt'] = $r['last_at']; $P[$r['uid']]['actions'] = (int) $r['n']; }
 
     $people = [];
@@ -250,9 +249,9 @@ function team_person(string $uid, array $event): array
 // One person's actions (or everyone's), filtered by kind and time.
 function team_timeline(array $event, ?string $uid, ?string $kind, ?string $from, ?string $to, int $limit = 2000): array
 {
-    $st = db()->prepare('SELECT * FROM (' . team_actions_sql() . ') x WHERE at IS NOT NULL AND (:uid IS NULL OR uid = :uid) AND (:kind IS NULL OR kind = :kind)
-                          AND (:from IS NULL OR at >= :from) AND (:to IS NULL OR at <= :to) ORDER BY at DESC LIMIT ' . max(1, min(5000, $limit)));
-    $st->execute([':ev' => $event['id'], ':uid' => $uid, ':kind' => $kind, ':from' => $from, ':to' => $to]);
+    $st = q_named('SELECT * FROM ('  . team_actions_sql() . ') x WHERE at IS NOT NULL AND (:uid IS NULL OR uid = :uid) AND (:kind IS NULL OR kind = :kind)
+                          AND (:from IS NULL OR at >= :from) AND (:to IS NULL OR at <= :to) ORDER BY at DESC LIMIT ' . max(1, min(5000, $limit)),
+        [':ev' => $event['id'], ':uid' => $uid, ':kind' => $kind, ':from' => $from, ':to' => $to]);
     return array_map(fn($r) => ['kind' => $r['kind'], 'action' => $r['action'], 'at' => $r['at'], 'userId' => $r['uid'], 'place' => $r['place'],
         'amountCents' => $r['amount_cents'] === null ? null : (int) $r['amount_cents'], 'method' => $r['method'], 'reference' => $r['ref'],
         'detail' => $r['detail'] === null ? null : (string) $r['detail'], 'offline' => (int) $r['offline'] === 1, 'syncedAt' => $r['synced_at']], $st->fetchAll(PDO::FETCH_ASSOC));

@@ -23,7 +23,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
-const { Client, outbox, sql, ADMIN_EMAIL } = require("../lib");
+const { Client, outbox, sql, ADMIN_EMAIL, driver } = require("../lib");
 
 const DIR = path.resolve(process.argv[2] || "");
 const PORT = process.argv[3] || "8640";
@@ -489,9 +489,12 @@ const rands = (c) => `R${Math.floor(c / 100).toLocaleString("en-ZA").replace(/[Â
   });
 
   await test("V9 upgrade 55 adds the vendor columns and is safe to run again", () => {
-    const cols = sql(DATA, "SELECT name FROM pragma_table_info('vendors')").map((r) => r.name);
+    const mysql = driver(DATA) === "mysql";
+    const cols = sql(DATA, mysql ? "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'vendors'" : "SELECT name FROM pragma_table_info('vendors')").map((r) => r.name);
     for (const c of ["category", "contact_name", "contact_email", "contact_phone"]) assert(cols.includes(c), `column ${c}`);
     assert(Number(one("SELECT value FROM meta WHERE key = 'schema_version'").value) >= 55, "schema version");
+    // MySQL installs start from schema.mysql.sql, which already holds upgrade 55.
+    if (mysql) return;
     const r = php(`foreach (UPGRADES[55] as $s) { try { db()->exec($s); } catch (PDOException $e) { if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e; } } out(in_array('55', explode(',', (string) val("SELECT value FROM meta WHERE key = 'upgrades_done'")), true) || (int) val("SELECT value FROM meta WHERE key = 'schema_version'") >= 55);`);
     assert(r === true, `rerun ${js(r)}`);
   });

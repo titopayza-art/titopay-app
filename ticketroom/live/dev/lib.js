@@ -4,24 +4,21 @@ const { execFileSync } = require("child_process");
 
 const ADMIN_EMAIL = "hello@ticketroom.co.za";
 
+const DBQ = require("path").join(__dirname, "dbq.php");
 // Reads the newest outbox message to an address and returns the first match
-// of `re` in its body. Uses PHP's SQLite driver (the same one the site uses).
+// of `re` in its body. Goes through dev/dbq.php: SQLite or MySQL, whichever
+// the test site uses.
 function outbox(dataDir, to, re, { after = "" } = {}) {
-  const php = `$db = new PDO('sqlite:' . $argv[1] . '/ticketroom.sqlite');
-$s = $db->prepare('SELECT body FROM message_outbox WHERE lower(to_address) = lower(?) AND created_at > ? ORDER BY created_at DESC, rowid DESC LIMIT 10');
-$s->execute([$argv[2], $argv[3]]);
-echo json_encode($s->fetchAll(PDO::FETCH_COLUMN));`;
-  const bodies = JSON.parse(execFileSync("php", ["-r", php, dataDir, to, after], { encoding: "utf8" }));
+  const bodies = sql(dataDir, "SELECT body FROM message_outbox WHERE lower(to_address) = lower(?) AND created_at > ? ORDER BY created_at DESC, rowid DESC LIMIT 10", [to, after]).map((r) => r.body);
   for (const b of bodies) { const m = b.match(re); if (m) return m; }
   throw new Error(`No outbox message to ${to} matching ${re}`);
 }
 // Runs one SQL statement against the local database (tests only).
 function sql(dataDir, query, params = []) {
-  const php = `$db = new PDO('sqlite:' . $argv[1] . '/ticketroom.sqlite');
-$s = $db->prepare($argv[2]); $s->execute(json_decode($argv[3], true));
-echo json_encode($s->fetchAll(PDO::FETCH_ASSOC));`;
-  return JSON.parse(execFileSync("php", ["-r", php, dataDir, query, JSON.stringify(params)], { encoding: "utf8" }) || "[]");
+  return JSON.parse(execFileSync("php", [DBQ, dataDir, query, JSON.stringify(params)], { encoding: "utf8" }) || "[]");
 }
+// "sqlite" or "mysql": the database of the local test site.
+function driver(dataDir) { return execFileSync("php", [DBQ, dataDir, "--driver"], { encoding: "utf8" }).trim(); }
 
 class Client {
   constructor(base, dataDir) { this.base = base; this.data = dataDir; this.cookies = {}; this.csrf = null; }
@@ -65,4 +62,4 @@ class Client {
   }
 }
 
-module.exports = { Client, outbox, sql, ADMIN_EMAIL };
+module.exports = { Client, outbox, sql, ADMIN_EMAIL, driver, DBQ };

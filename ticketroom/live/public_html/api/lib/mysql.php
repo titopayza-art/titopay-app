@@ -6,7 +6,8 @@
 declare(strict_types=1);
 
 // Words MySQL or MariaDB reserve that TicketRoom uses as column names.
-const MYSQL_QUOTED_NAMES = ['key', 'change', 'condition', 'range', 'rank', 'read', 'release', 'row', 'rows', 'usage', 'window', 'groups', 'lead', 'function', 'system', 'interval', 'match', 'desc', 'order', 'group', 'position', 'current'];
+// scripts/mysql-schema.php prints this list (--names) from the schema.
+const MYSQL_QUOTED_NAMES = ['key'];
 
 function db_is_mysql(): bool { return (string) cfg('database.driver', 'sqlite') === 'mysql'; }
 
@@ -20,12 +21,17 @@ function db_connect_mysql(): PDO
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_STRINGIFY_FETCHES => false,
-        PDO::ATTR_EMULATE_PREPARES => true,
+        // The server's own prepared statements: they read 'a\' as SQLite does
+        // (PDO's emulation would take the backslash as an escape).
+        PDO::ATTR_EMULATE_PREPARES => false,
         PDO::ATTR_TIMEOUT => 10,
         // Matched rows, not changed rows, as SQLite counts them.
         PDO::MYSQL_ATTR_FOUND_ROWS => true,
-        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_bin, time_zone = '+00:00', SESSION sql_mode = 'PIPES_AS_CONCAT,ANSI_QUOTES,NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION', SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_bin, time_zone = '+00:00', SESSION sql_mode = 'PIPES_AS_CONCAT,ANSI_QUOTES,NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'",
     ]);
+    // Each read sees the latest committed data, as in SQLite; the write lock
+    // keeps check-and-update steps in order.
+    $pdo->exec('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
     return $pdo;
 }
 
@@ -35,22 +41,31 @@ function db_connect_mysql(): PDO
 // that. On MySQL the same guarantee comes from one named lock, held for each
 // write transaction and each write made outside one.
 const MYSQL_WRITE_LOCK = 'ticketroom.write';
-function mysql_lock(PDO $pdo): void
+function mysql_lock(PDO $pdo, string $name = MYSQL_WRITE_LOCK): void
 {
-    $got = $pdo->query("SELECT GET_LOCK('" . MYSQL_WRITE_LOCK . "', 20)")->fetchColumn();
+    $got = $pdo->query("SELECT GET_LOCK('" . $name . "', 20)")->fetchColumn();
     if ((int) $got !== 1) throw new RuntimeException('The site is very busy. Please try again in a moment.');
 }
-function mysql_unlock(PDO $pdo): void
+function mysql_unlock(PDO $pdo, string $name = MYSQL_WRITE_LOCK): void
 {
-    try { $pdo->query("SELECT RELEASE_LOCK('" . MYSQL_WRITE_LOCK . "')")->fetchColumn(); } catch (Throwable) { /* connection gone: the lock went with it */ }
+    try { $pdo->query("SELECT RELEASE_LOCK('" . $name . "')")->fetchColumn(); } catch (Throwable) { /* connection gone: the lock went with it */ }
 }
-// Writes that never decide anything for another write (counters, last seen)
-// skip the lock; they are single atomic statements either way.
-const MYSQL_UNLOCKED_TABLES = ['rate_limits', 'recently_viewed_events', 'tracking_links'];
+// Writes that never decide anything for a booking, scan or payment skip the
+// lock: counters, last seen, and the email queue and job clock, whose claims
+// are single compare-and-set statements (UPDATE ... WHERE claimed_until < now).
+// Sending thousands of confirmation emails then never slows the on-sale.
+const MYSQL_UNLOCKED_TABLES = ['rate_limits', 'recently_viewed_events', 'tracking_links', 'message_outbox', 'job_runs'];
 function mysql_needs_lock(string $sql): bool
 {
     if (!preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\b(?:\s+(?:OR\s+\w+\s+)?(?:INTO\s+)?)?\s*"?([a-z_]+)/i', $sql, $m)) return false;
     return !in_array(strtolower($m[2]), MYSQL_UNLOCKED_TABLES, true);
+}
+
+// Runs $fn holding a lock of its own (not the write lock).
+function mysql_with_lock(string $name, callable $fn)
+{
+    mysql_lock(db(), $name);
+    try { return $fn(); } finally { mysql_unlock(db(), $name); }
 }
 
 // ============================================================== results
@@ -66,6 +81,12 @@ function mysql_numbers(PDOStatement $st, array $rows): array
     if (!$dec) return $rows;
     foreach ($rows as &$r) foreach ($dec as $k) if (isset($r[$k]) && is_string($r[$k])) $r[$k] = mysql_number($r[$k]);
     return $rows;
+}
+// One value (val()): a DECIMAL in the first column becomes a number.
+function mysql_val(PDOStatement $st, string $v)
+{
+    $m = $st->getColumnMeta(0);
+    return ($m && in_array($m['native_type'] ?? '', ['NEWDECIMAL', 'DECIMAL'], true)) ? mysql_number($v) : $v;
 }
 function mysql_number(string $v)
 {
@@ -103,6 +124,10 @@ function tr_sql_mysql(string $sql): string
     $s = preg_replace('/\bAS\s+REAL\s*\)/i', 'AS DOUBLE)', $s);
     $s = preg_replace('/\bAS\s+TEXT\s*\)/i', 'AS CHAR)', $s);
     $s = preg_replace('/\blength\s*\(/i', 'CHAR_LENGTH(', $s);
+
+    // lower(email) lookups use the indexed email_lc column (users and
+    // newsletter_subscribers, the tables with a lower(email) index).
+    $s = preg_replace('/\blower\(\s*((?:"?\w+"?\.)?)"?email"?\s*\)/i', '$1email_lc', $s);
 
     // Functions whose arguments change shape.
     $s = mysql_rewrite_calls($s);

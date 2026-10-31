@@ -95,7 +95,11 @@ if (version_compare(PHP_VERSION, '8.1.0', '>=') && extension_loaded('pdo_sqlite'
 }
 if ($data) {
     $add('Data', 'Data folder', is_writable($data), 'ticketroom-data' . (is_writable($data) ? '' : ': not writable. File Manager → right-click → Change Permissions → 755.'));
-    $add('Data', 'Database', is_file("$data/ticketroom.sqlite"), is_file("$data/ticketroom.sqlite") ? number_format(filesize("$data/ticketroom.sqlite") / 1048576, 1) . ' MB · ' . $state['users'] . ($state['users'] === 1 ? ' account · ' : ' accounts · ') . $state['events'] . ($state['events'] === 1 ? ' event' : ' events') : '');
+    if (db_is_mysql()) {
+        try { $ver = (string) val('SELECT VERSION()'); $ok = true; } catch (Throwable $e) { $ver = 'cannot connect: check the database block in ticketroom-data/config.php'; $ok = false; }
+        $add('Data', 'Database (MySQL)', $ok, $ok ? $ver . ' · ' . $state['users'] . ($state['users'] === 1 ? ' account' : ' accounts') : $ver);
+    } else
+        $add('Data', 'Database', is_file("$data/ticketroom.sqlite"), is_file("$data/ticketroom.sqlite") ? number_format(filesize("$data/ticketroom.sqlite") / 1048576, 1) . ' MB · ' . $state['users'] . ($state['users'] === 1 ? ' account · ' : ' accounts · ') . $state['events'] . ($state['events'] === 1 ? ' event' : ' events') : '');
     $add('Data', 'Ticket signing keys', is_file("$data/keys.php") || !empty(cfg('keys.qr')), 'Back up the data folder: every ticket QR code depends on these keys.');
     $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $maskEmail((string) $state['admin']['email']) . ($state['temp'] ? ' · still on the temporary password: change it under Admin portal → My password' : '') : 'No administrator found.');
     $sqlite = (string) val('SELECT sqlite_version()');
@@ -143,7 +147,7 @@ $fetch = function (string $path) use ($base): array {
 $add('Web', 'The API answers (/api/health)', $c === 200 && str_contains($b, '"ok":true'), $c === 200 ? '' : "Got HTTP $c. The hidden .htaccess files may be missing.");
 [$c] = $fetch('/sell');
 $add('Web', 'Clean addresses (/sell)', $c === 200, $c === 200 ? '' : "Got HTTP $c. The root .htaccess is missing or the host has rewriting switched off.");
-foreach (['data', 'tr-data', 'ticketroom-data'] as $folder) {
+foreach (['data', 'tr-data', 'ticketroom-data', 'server'] as $folder) {
     foreach (['ticketroom.sqlite', 'keys.php', 'config.php', 'ticketroom.sqlite-wal', 'ticketroom.sqlite-shm', 'uploads/'] as $file) {
         [$c] = $fetch('/' . $folder . '/' . $file);
         $blocked = $c === 403 || $c === 404;

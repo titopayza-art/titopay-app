@@ -20,6 +20,9 @@ const pad = (n) => String(n).padStart(2, "0");
 const BUILD = process.env.TR_BUILD || `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}-${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}`;
 const TEXT = /\.(html|js|css|php|txt|md|json|webmanifest|htaccess|sql)$|^\.htaccess$/;
 
+// The MySQL schema must match schema.sql (scripts/mysql-schema.php writes it).
+execFileSync("php", [path.join(__dirname, "mysql-schema.php"), "--check"], { stdio: ["ignore", "ignore", "inherit"] });
+
 fs.rmSync(path.dirname(OUT), { recursive: true, force: true });
 (function copy(src, dst) {
   if (fs.statSync(src).isDirectory()) { fs.mkdirSync(dst, { recursive: true }); fs.chmodSync(dst, 0o755); for (const f of fs.readdirSync(src).sort()) copy(path.join(src, f), path.join(dst, f)); return; }

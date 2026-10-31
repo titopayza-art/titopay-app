@@ -87,6 +87,7 @@ function db(): PDO
 {
     static $pdo = null;
     if ($pdo) return $pdo;
+    if (db_is_mysql()) return $pdo = db_connect_mysql();
     $pdo = new PDO('sqlite:' . data_dir() . '/ticketroom.sqlite', null, null, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -114,20 +115,50 @@ function q(string $sql, array $p = []): PDOStatement
     // dozen statements, so this saves parsing them every time).
     static $cache = [];
     if (count($cache) > 200) $cache = [];
-    $st = $cache[$sql] ??= db()->prepare($sql);
+    $st = $cache[$sql] ??= prep($sql);
     $st->closeCursor();
     foreach (array_values($p) as $i => $v) {
         $type = is_int($v) ? PDO::PARAM_INT : (is_bool($v) ? PDO::PARAM_INT : ($v === null ? PDO::PARAM_NULL : PDO::PARAM_STR));
         $st->bindValue($i + 1, is_bool($v) ? (int) $v : $v, $type);
     }
-    $st->execute();
+    // MySQL: a write outside a transaction takes the write lock, as in SQLite.
+    try {
+        if (db_is_mysql() && empty($GLOBALS['TR_TX_DEPTH']) && mysql_needs_lock($sql)) {
+            mysql_lock(db());
+            // The new row's id is read before the unlock (MySQL forgets it after any later statement).
+            try { $st->execute(); $GLOBALS['TR_LAST_ID'] = db()->lastInsertId(); } finally { mysql_unlock(db()); }
+        } else { $st->execute(); $GLOBALS['TR_LAST_ID'] = null; }
+    } catch (PDOException $e) {
+        // The statement's text (never its values) helps find a query MySQL reads differently.
+        if (db_is_mysql()) error_log('[ticketroom] MySQL query failed: ' . preg_replace('/\s+/', ' ', substr(tr_sql_mysql($sql), 0, 600)));
+        throw $e;
+    }
     return $st;
 }
+// Named parameters (:name, each used any number of times) as plain ? ones:
+// MySQL's own prepared statements take each name only once.
+function q_named(string $sql, array $named): PDOStatement
+{
+    $vals = [];
+    $lits = [];
+    $s = preg_replace_callback("/'(?:[^']|'')*'/", function ($m) use (&$lits) { $lits[] = $m[0]; return "\x01" . (count($lits) - 1) . "\x01"; }, $sql);
+    $s = preg_replace_callback('/(?<![:\w]):(\w+)/', function ($m) use (&$vals, $named) {
+        if (!array_key_exists(':' . $m[1], $named) && !array_key_exists($m[1], $named)) throw new InvalidArgumentException("No value for :{$m[1]}");
+        $vals[] = $named[':' . $m[1]] ?? $named[$m[1]];
+        return '?';
+    }, $s);
+    $s = preg_replace_callback("/\x01(\d+)\x01/", fn($m) => $lits[(int) $m[1]], $s);
+    return q($s, $vals);
+}
+// The id of the row the last INSERT added (AUTO_INCREMENT / INTEGER PRIMARY KEY).
+function last_id(): int { return (int) ($GLOBALS['TR_LAST_ID'] ?? db()->lastInsertId()); }
+function prep(string $sql): PDOStatement { return db()->prepare(db_is_mysql() ? tr_sql_mysql($sql) : $sql); }
+function fetch_all(PDOStatement $st): array { $r = $st->fetchAll(); return db_is_mysql() ? mysql_numbers($st, $r) : $r; }
 // Every helper closes its cursor straight away: a cached statement left half
 // read would keep a read snapshot open and make the next write fail as "busy".
-function rows(string $sql, array $p = []): array { $st = q($sql, $p); $r = $st->fetchAll(); $st->closeCursor(); return array_map('norm_row', $r); }
-function row(string $sql, array $p = []): ?array { $st = q($sql, $p); $r = $st->fetch(); $st->closeCursor(); return $r ? norm_row($r) : null; }
-function val(string $sql, array $p = []) { $st = q($sql, $p); $v = $st->fetchColumn(); $st->closeCursor(); return $v === false ? null : $v; }
+function rows(string $sql, array $p = []): array { $st = q($sql, $p); $r = fetch_all($st); $st->closeCursor(); return array_map('norm_row', $r); }
+function row(string $sql, array $p = []): ?array { $st = q($sql, $p); $r = $st->fetch(); if ($r && db_is_mysql()) $r = mysql_numbers($st, [$r])[0]; $st->closeCursor(); return $r ? norm_row($r) : null; }
+function val(string $sql, array $p = []) { $st = q($sql, $p); $v = $st->fetchColumn(); $st->closeCursor(); return $v === false ? null : (is_string($v) && db_is_mysql() ? mysql_val($st, $v) : $v); }
 function affected(string $sql, array $p = []): int { $st = q($sql, $p); $n = $st->rowCount(); $st->closeCursor(); return $n; }
 // Writes go through one IMMEDIATE transaction at a time: SQLite then
 // serialises every check-and-update (capacity, admission) across workers.
@@ -139,8 +170,10 @@ function tx(callable $fn)
         $depth++;
         try { return $fn(); } finally { $depth--; }
     }
-    $pdo->exec('BEGIN IMMEDIATE');
+    $mysql = db_is_mysql();
+    if ($mysql) { mysql_lock($pdo); $pdo->exec('START TRANSACTION'); } else $pdo->exec('BEGIN IMMEDIATE');
     $depth = 1;
+    $GLOBALS['TR_TX_DEPTH'] = 1;
     try {
         $out = $fn();
         $pdo->exec('COMMIT');
@@ -150,6 +183,8 @@ function tx(callable $fn)
         throw $e;
     } finally {
         $depth = 0;
+        $GLOBALS['TR_TX_DEPTH'] = 0;
+        if ($mysql) mysql_unlock($pdo);
     }
     // Work that must only happen once the data is saved (calls to payment providers).
     $after = $GLOBALS['TR_AFTER_COMMIT'] ?? [];
@@ -633,6 +668,13 @@ function limit(string $bucket, int $max, int $windowSeconds, ?string $key = null
     if (cfg('rateLimitDisabled', false)) return;
     $k = $bucket . ':' . ($key ?? client_ip());
     $now = time();
+    if (db_is_mysql()) {
+        // One atomic statement (no transaction, no write lock): start a new
+        // window if the old one ended, else count one more.
+        q('INSERT INTO rate_limits ("key", count, reset_at) VALUES (?, 1, ?) ON DUPLICATE KEY UPDATE count = IF(reset_at < ?, 1, count + 1), reset_at = IF(reset_at < ?, VALUES(reset_at), reset_at)', [$k, $now + $windowSeconds, $now, $now]);
+        if ((int) val('SELECT count FROM rate_limits WHERE "key" = ?', [$k]) > $max) throw too_many();
+        return;
+    }
     $hit = tx(function () use ($k, $now, $windowSeconds) {
         $r = row('SELECT count, reset_at FROM rate_limits WHERE key = ?', [$k]);
         if (!$r || $r['reset_at'] < $now) {

@@ -220,7 +220,7 @@ function assistant_reply(string $question, array $history, string $conversation)
     $related = array_slice(array_map(fn($x) => $x['article']['question'], array_values(array_filter($ranked, fn($x) => $x['score'] >= 3 && $x['article']['id'] !== $articleId))), 0, 3);
     q('INSERT INTO chat_messages (conversation, question, answer, source, article_id, created_at) VALUES (?,?,?,?,?,?)',
         [$conversation, mb_substr($question, 0, 500), mb_substr($out['text'], 0, 2000), $out['source'], $articleId, now_iso()]);
-    return ['id' => (int) db()->lastInsertId(), 'text' => $out['text'], 'link' => $out['article']['link_url'] ?? null, 'callback' => (bool) $out['callback'],
+    return ['id' => last_id(), 'text' => $out['text'], 'link' => $out['article']['link_url'] ?? null, 'callback' => (bool) $out['callback'],
         'suggestions' => $related, 'hours' => $hours, 'source' => $out['source']];
 }
 // Optional smart answers: Claude, grounded only in the knowledge base. Called

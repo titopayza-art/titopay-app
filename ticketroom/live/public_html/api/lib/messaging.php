@@ -65,7 +65,7 @@ function outbox_next_try(int $attempts, ?string $createdAt): ?string
 function outbox_deliver(int $limit = 25): int
 {
     $emailOff = mail_paused();
-    $claimed = tx(function () use ($limit, $emailOff) {
+    $claim = function () use ($limit, $emailOff) {
         $now = now_iso();
         $list = rows("SELECT o.*, c.organiser_id FROM message_outbox o LEFT JOIN campaigns c ON c.id = o.campaign_id
                        WHERE o.status = 'queued' AND (o.claimed_until IS NULL OR o.claimed_until < ?) AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)"
@@ -73,7 +73,10 @@ function outbox_deliver(int $limit = 25): int
         $lease = iso_in(OUTBOX_LEASE_SECONDS);
         foreach ($list as $m) q('UPDATE message_outbox SET attempts = attempts + 1, claimed_until = ? WHERE id = ?', [$lease, $m['id']]);
         return $list;
-    });
+    };
+    // MySQL: senders take turns on a lock of their own, so email never waits
+    // for bookings (or holds them up).
+    $claimed = db_is_mysql() ? mysql_with_lock('ticketroom.outbox', $claim) : tx($claim);
     $sent = 0;
     $down = false;
     foreach ($claimed as $m) {

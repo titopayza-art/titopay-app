@@ -21,7 +21,7 @@ route('GET', '/api/admin/backups/:id', function ($a) {
     $u = adm_admin();
     $path = backup_path($a['id']);
     audit('backup.downloaded', ['actor' => $u, 'entityType' => 'backup', 'entityId' => basename($path), 'ip' => client_ip()]);
-    return file_out($path, 'application/vnd.sqlite3', basename($path));
+    return file_out($path, str_ends_with($path, '.sql.gz') ? 'application/gzip' : 'application/vnd.sqlite3', basename($path));
 });
 
 // Failed messages back in the queue: one, or all of them.

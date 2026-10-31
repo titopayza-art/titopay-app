@@ -17,7 +17,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { spawn, execFileSync } = require("child_process");
-const { Client, outbox, sql, ADMIN_EMAIL } = require("../lib");
+const { Client, outbox, sql, driver, DBQ, ADMIN_EMAIL } = require("../lib");
 
 const DIR = path.resolve(process.argv[2] || "");
 const PORT = Number(process.argv[3] || 8653);
@@ -370,9 +370,9 @@ const ids = [];
   // ============================================================ secrets stay out of logs
   console.log(" nothing secret in logs or the database");
   const log = fs.readFileSync(path.join(DIR, "php.log"), "utf8");
-  const dump = execFileSync("php", ["-r", `$db = new PDO('sqlite:' . $argv[1] . '/ticketroom.sqlite'); $out = '';
-foreach ($db->query("SELECT name FROM sqlite_master WHERE type = 'table'")->fetchAll(PDO::FETCH_COLUMN) as $t) { foreach ($db->query("SELECT * FROM \\"$t\\"")->fetchAll(PDO::FETCH_ASSOC) as $r) $out .= json_encode($r, JSON_UNESCAPED_UNICODE) . "\\n"; }
-echo $out;`, DATA], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+  // Every row of every table, SQLite or MySQL.
+  const tables = JSON.parse(execFileSync("php", [DBQ, DATA, "--tables"], { encoding: "utf8" }));
+  const dump = tables.map((t) => sql(DATA, `SELECT * FROM "${t}"`).map((r) => JSON.stringify(r)).join("\n")).join("\n");
   ok(!log.includes(KEY) && !dump.includes(KEY), "the API key is in neither the server log nor the database");
   ok(ids.every((id) => !log.includes(id) && !dump.includes(id)), "full ID numbers are in neither the server log nor the database", ids.filter((id) => log.includes(id) || dump.includes(id)));
   ok(!/6200000190|6200000191/.test(dump.replace(/"to_address"[^,]*,/g, "")), "full bank account numbers are not stored in check results");

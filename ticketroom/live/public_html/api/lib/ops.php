@@ -23,7 +23,10 @@ function tr_upgrade_ops(): void
 // upgrades.
 const BACKUP_KEEP = 14;
 const BACKUP_KEEP_UPGRADE = 5;
-const BACKUP_NAME_RE = '/^ticketroom-\d{8}-\d{6}-(daily|manual|before-upgrade)(-[a-z0-9]{4})?\.sqlite$/';
+// SQLite installs keep .sqlite copies, MySQL installs gzipped SQL dumps (.sql.gz).
+const BACKUP_NAME_RE = '/^ticketroom-\d{8}-\d{6}-(daily|manual|before-upgrade)(-[a-z0-9]{4})?\.(sqlite|sql\.gz)$/';
+function backup_ext(): string { return db_is_mysql() ? '.sql.gz' : '.sqlite'; }
+function backup_id(string $name): string { return (string) preg_replace('/\.(sqlite|sql\.gz)$/', '', $name); }
 function backup_dir(): string
 {
     $d = data_dir() . '/backups';
@@ -35,10 +38,11 @@ function backup_take(string $reason = 'manual'): array
 {
     $dir = backup_dir();
     if (!is_dir($dir) || !is_writable($dir)) throw new RuntimeException('The backups folder in ticketroom-data cannot be written to. Set ticketroom-data to permission 750 or 755.');
-    $name = 'ticketroom-' . gmdate('Ymd-His') . "-$reason.sqlite";
-    if (file_exists("$dir/$name")) $name = 'ticketroom-' . gmdate('Ymd-His') . "-$reason-" . strtolower(random_code(4)) . '.sqlite';
+    $name = 'ticketroom-' . gmdate('Ymd-His') . "-$reason" . backup_ext();
+    if (file_exists("$dir/$name")) $name = 'ticketroom-' . gmdate('Ymd-His') . "-$reason-" . strtolower(random_code(4)) . backup_ext();
     $path = "$dir/$name";
-    try {
+    if (db_is_mysql()) backup_mysqldump($path);
+    else try {
         db()->exec('VACUUM INTO ' . db()->quote($path));
     } catch (PDOException $e) {
         @unlink($path);
@@ -48,17 +52,41 @@ function backup_take(string $reason = 'manual'): array
     backup_prune();
     return backup_info($path);
 }
+// A consistent dump (one snapshot, no table locks) with routines and
+// triggers, gzipped. The password goes in a private option file, never on
+// the command line where other users of the server could see it.
+function backup_mysqldump(string $path): void
+{
+    if (!function_exists('proc_open')) throw new RuntimeException('Backups need proc_open and mysqldump on the server. Use the server\'s own database backups instead.');
+    $c = (array) cfg('database', []);
+    $opt = tempnam(data_dir(), '.my');
+    @chmod($opt, 0600);
+    file_put_contents($opt, "[client]\nuser=\"" . addcslashes((string) ($c['user'] ?? ''), "\"\\") . "\"\npassword=\"" . addcslashes((string) ($c['pass'] ?? ''), "\"\\") . "\"\n"
+        . (!empty($c['socket']) ? 'socket=' . $c['socket'] . "\n" : 'host=' . ($c['host'] ?? '127.0.0.1') . "\nport=" . (int) ($c['port'] ?? 3306) . "\n"));
+    $bin = (string) cfg('database.dumpBinary', 'mysqldump');
+    $cmd = [$bin, "--defaults-extra-file=$opt", '--single-transaction', '--quick', '--routines', '--triggers', '--hex-blob', '--no-tablespaces', (string) $c['name']];
+    $gz = gzopen($path, 'wb6');
+    $p = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($p)) { gzclose($gz); @unlink($path); @unlink($opt); throw new RuntimeException('mysqldump could not be started.'); }
+    while (!feof($pipes[1])) { $chunk = fread($pipes[1], 1 << 16); if ($chunk !== false && $chunk !== '') gzwrite($gz, $chunk); }
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]); fclose($pipes[2]);
+    $code = proc_close($p);
+    gzclose($gz);
+    @unlink($opt);
+    if ($code !== 0) { @unlink($path); throw new RuntimeException('The backup could not be made: ' . trim((string) $err)); }
+}
 function backup_info(string $path): array
 {
     preg_match(BACKUP_NAME_RE, basename($path), $m);
     // The id (the name without .sqlite) is what download addresses use: web
     // servers refuse addresses ending in .sqlite.
-    return ['id' => basename($path, '.sqlite'), 'name' => basename($path), 'reason' => $m[1] ?? 'manual', 'sizeBytes' => (int) @filesize($path), 'createdAt' => iso_at((float) @filemtime($path))];
+    return ['id' => backup_id(basename($path)), 'name' => basename($path), 'reason' => $m[1] ?? 'manual', 'sizeBytes' => (int) @filesize($path), 'createdAt' => iso_at((float) @filemtime($path))];
 }
 function backup_list(): array
 {
     $out = [];
-    foreach (glob(backup_dir() . '/ticketroom-*.sqlite') ?: [] as $f) if (preg_match(BACKUP_NAME_RE, basename($f))) $out[] = backup_info($f);
+    foreach (glob(backup_dir() . '/ticketroom-*') ?: [] as $f) if (preg_match(BACKUP_NAME_RE, basename($f))) $out[] = backup_info($f);
     // Names start with the time, so the newest comes first.
     usort($out, fn($a, $b) => strcmp($b['name'], $a['name']));
     return $out;
@@ -73,7 +101,9 @@ function backup_prune(): void
 }
 function backup_path(string $id): string
 {
-    $name = str_ends_with($id, '.sqlite') ? $id : "$id.sqlite";
+    $id = backup_id($id);
+    $name = '';
+    foreach (['.sqlite', '.sql.gz'] as $ext) if (is_file(backup_dir() . "/$id$ext")) $name = "$id$ext";
     $path = backup_dir() . '/' . $name;
     if (!preg_match(BACKUP_NAME_RE, $name) || !is_file($path)) throw not_found('That backup is not there any more.');
     return $path;

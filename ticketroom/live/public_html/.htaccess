@@ -22,7 +22,7 @@ RewriteRule ^ https://ticketroom.co.za%{REQUEST_URI} [R=308,L]
 # --- Private folders --------------------------------------------------------
 # data/ holds the database, keys and uploads. tr-app/ and tr-data/ are left
 # over from the earlier package (delete them; deploy-check.php lists them).
-RewriteRule ^(data|tr-app|tr-data)(/|$) - [F,L]
+RewriteRule ^(data|tr-app|tr-data|server)(/|$) - [F,L]
 
 # --- The API ----------------------------------------------------------------
 # Everything under /api/ runs api/index.php; nothing else in api/ is served.

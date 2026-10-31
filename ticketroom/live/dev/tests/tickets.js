@@ -10,7 +10,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { execFileSync, spawn } = require("child_process");
 const { chromium } = require("playwright");
-const { Client, outbox, sql, ADMIN_EMAIL } = require("../lib");
+const { Client, outbox, sql, driver, ADMIN_EMAIL } = require("../lib");
 
 const DIR = path.resolve(process.argv[2] || "");
 const PORT = process.argv[3] || "8640";
@@ -40,11 +40,8 @@ const uniq = (p) => `${p}-${stamp}-${++n}`;
 
 // Copies a row with some columns changed (a direct database write, tests only).
 function cloneRow(table, id, changes) {
-  const php = `$db = new PDO('sqlite:' . $argv[1]); $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-$s = $db->prepare("SELECT * FROM {$argv[2]} WHERE id = ?"); $s->execute([$argv[3]]); $r = $s->fetch(PDO::FETCH_ASSOC);
-foreach (json_decode($argv[4], true) as $k => $v) $r[$k] = $v;
-$db->prepare("INSERT INTO {$argv[2]} (" . implode(',', array_keys($r)) . ') VALUES (' . implode(',', array_fill(0, count($r), '?')) . ')')->execute(array_values($r));`;
-  execFileSync("php", ["-r", php, DB, table, id, JSON.stringify(changes)]);
+  const r = { ...sql(DATA, `SELECT * FROM ${table} WHERE id = ?`, [id])[0], ...changes };
+  insertRow(table, r);
 }
 function insertRow(table, row) {
   sql(DATA, `INSERT INTO ${table} (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`, Object.values(row));
@@ -307,9 +304,14 @@ const scan = (ev, payload, extra = {}) => org.call("POST", "/api/staff/scan", { 
     const tt = one("SELECT id FROM ticket_types WHERE event_id = ? LIMIT 1", [SEED.events.free.id]);
     cloneRow("ticket_types", tt.id, { id: ttId, event_id: evId, quantity_total: 10, quantity_sold: 2, quantity_held: 0, release_after: null });
     // Another booking holds the database while the edit reads, then sells 4 more.
-    const php = `$db = new PDO('sqlite:' . $argv[1]); $db->exec('PRAGMA busy_timeout = 10000'); $db->exec('BEGIN IMMEDIATE'); fwrite(STDOUT, "locked\\n"); usleep(1500000);
+    // SQLite: an IMMEDIATE transaction; MySQL: the site's write lock and a transaction.
+    const php = driver(DATA) === "mysql"
+      ? `$GLOBALS['TR_CONFIG'] = require $argv[1] . '/config.php'; function cfg($k = null, $d = null) { $c = $GLOBALS['TR_CONFIG']; foreach (explode('.', (string) $k) as $p) { if (!is_array($c) || !array_key_exists($p, $c)) return $d; $c = $c[$p]; } return $c; }
+require $argv[3]; $db = db_connect_mysql(); mysql_lock($db); $db->exec('START TRANSACTION'); fwrite(STDOUT, "locked\\n"); usleep(1500000);
+$db->prepare('UPDATE ticket_types SET quantity_sold = 6 WHERE id = ?')->execute([$argv[2]]); $db->exec('COMMIT'); mysql_unlock($db);`
+      : `$db = new PDO('sqlite:' . $argv[1] . '/ticketroom.sqlite'); $db->exec('PRAGMA busy_timeout = 10000'); $db->exec('BEGIN IMMEDIATE'); fwrite(STDOUT, "locked\\n"); usleep(1500000);
 $db->prepare('UPDATE ticket_types SET quantity_sold = 6 WHERE id = ?')->execute([$argv[2]]); $db->exec('COMMIT');`;
-    const locker = spawn("php", ["-r", php, DB, ttId]);
+    const locker = spawn("php", ["-r", php, DATA, ttId, path.join(__dirname, "../../public_html/api/lib/mysql.php")]);
     let lockErr = "";
     locker.stderr.on("data", (d) => { lockErr += d; });
     await new Promise((res, rej) => { locker.stdout.once("data", res); locker.once("exit", (c) => rej(new Error(`lock helper ended (${c}): ${lockErr}`))); locker.once("error", rej); });

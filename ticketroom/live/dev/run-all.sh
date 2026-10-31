@@ -30,7 +30,7 @@ for t in "$HERE"/tests/*.js; do
   [ -e "$t" ] || continue
   # Every suite signs in from the same address; start each one with empty
   # rate-limit counters so one suite's sign-ins do not throttle the next.
-  php -r '$db = new PDO("sqlite:" . $argv[1]); $db->exec("DELETE FROM rate_limits");' "$DIR/ticketroom-data/ticketroom.sqlite" || true
+  php "$HERE/dbq.php" "$DIR/ticketroom-data" "DELETE FROM rate_limits" >/dev/null || true
   echo "== tests/$(basename "$t")"
   node "$t" "$DIR" "$PORT" || failed+=("tests/$(basename "$t")")
 done

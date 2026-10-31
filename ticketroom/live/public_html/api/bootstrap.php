@@ -12,6 +12,7 @@ define('TR_VERSION', '1.1.45-event-edits-footer-v6');
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 require TR_APP . '/lib/core.php';
+require TR_APP . '/lib/mysql.php';
 require TR_APP . '/lib/site.php';
 require TR_APP . '/lib/places.php';
 require TR_APP . '/lib/messaging.php';
@@ -192,7 +193,9 @@ function tr_install_with_hash(string $dir, string $hash, string $email, string $
         clearstatcache();
         if (is_file("$dir/.installed")) return;
         // An earlier package's database: keep it as it is.
-        if (val("SELECT 1 FROM sqlite_master WHERE name = 'meta'")) { file_put_contents("$dir/.installed", now_iso()); return; }
+        if (db_is_mysql() ? mysql_has_table('meta') : val("SELECT 1 FROM sqlite_master WHERE name = 'meta'")) { file_put_contents("$dir/.installed", now_iso()); return; }
+        // MySQL creates its tables outside the transaction (DDL commits by itself).
+        if (db_is_mysql()) mysql_install_schema(db());
         tx(fn() => tr_install_db($hash, $email, $name));
         file_put_contents("$dir/.installed", now_iso());
     } finally {
@@ -202,7 +205,7 @@ function tr_install_with_hash(string $dir, string $hash, string $email, string $
 }
 function tr_install_db(string $hash, ?string $adminEmail = null, ?string $adminName = null): void
 {
-    db()->exec((string) file_get_contents(TR_APP . '/schema.sql'));
+    if (!db_is_mysql()) db()->exec((string) file_get_contents(TR_APP . '/schema.sql'));
     q('INSERT INTO meta (key, value) VALUES (?, ?)', ['schema_version', (string) SCHEMA_VERSION]);
     q('INSERT INTO meta (key, value) VALUES (?, ?)', ['upgrades_done', implode(',', array_keys(UPGRADES))]);
     $email = strtolower($adminEmail ?? (string) cfg('admin.email', 'hello@ticketroom.co.za'));
@@ -229,6 +232,8 @@ const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
 const SCHEMA_VERSION = 55;
+// The last upgrade included in schema.mysql.sql.
+const MYSQL_SCHEMA_BASE = 55;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -678,7 +683,17 @@ function tr_upgrade_run(string $want): void
         $done = $doneRaw === null ? array_values(array_filter(array_keys(UPGRADES), fn($v) => $v <= $have)) : array_map('intval', array_filter(explode(',', (string) $doneRaw), 'strlen'));
         foreach (UPGRADES as $v => $steps) {
             if (in_array($v, $done, true)) continue;
-            foreach ($steps as $sql) {
+            // MySQL: schema.mysql.sql already holds every upgrade up to
+            // MYSQL_SCHEMA_BASE. Later upgrades give their MySQL statements as
+            // ['mysql' => [...]] next to the SQLite ones.
+            if (db_is_mysql()) {
+                if ($v > MYSQL_SCHEMA_BASE) foreach ((array) ($steps['mysql'] ?? []) as $sql) db()->exec($sql);
+                $done[] = $v;
+                $have = max($have, $v);
+                continue;
+            }
+            foreach ($steps as $k => $sql) {
+                if ($k === 'mysql') continue;
                 try {
                     match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), default => db()->exec($sql) };
                 } catch (PDOException $e) {
@@ -780,10 +795,12 @@ function run_due_jobs(bool $force = false, bool $cron = false): array
         $every = $name === 'deliver-outbox' ? (empty($GLOBALS['TR_OUTBOX_DIRTY']) ? 30 : 2) : max($every, 5);
         if (!$force) {
             if (($last[$name] ?? 0) > $now - $every) continue;
-            $claimed = tx(function () use ($name, $every, $now) {
+            $claim = function () use ($name, $every, $now) {
                 q('INSERT OR IGNORE INTO job_runs (name, last_run) VALUES (?, 0)', [$name]);
                 return affected('UPDATE job_runs SET last_run = ? WHERE name = ? AND last_run <= ?', [$now, $name, $now - $every]);
-            });
+            };
+            // MySQL: the UPDATE alone is the claim (atomic), no write lock needed.
+            $claimed = db_is_mysql() ? $claim() : tx($claim);
             if (!$claimed) continue;
         }
         try { $fn(); $ran[] = $name; } catch (Throwable $e) { error_log("[ticketroom] job $name: " . $e->getMessage()); }

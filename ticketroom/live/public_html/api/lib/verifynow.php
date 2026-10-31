@@ -714,7 +714,7 @@ function kyc_vn_webhook(): Response|array
     $eid = mb_substr($evt['id'], 0, 120);
     $seen = row("SELECT * FROM webhook_events WHERE provider = 'verifynow' AND event_id = ?", [$eid]);
     if ($seen && in_array($seen['status'], ['processed', 'ignored'], true)) { q('UPDATE webhook_events SET attempts = attempts + 1 WHERE id = ?', [$seen['id']]); return ['received' => true, 'duplicate' => true]; }
-    if (!$seen) { q("INSERT INTO webhook_events (provider,event_id,status,received_at) VALUES ('verifynow',?,'received',?)", [$eid, now_iso()]); $wid = (int) db()->lastInsertId(); }
+    if (!$seen) { q("INSERT INTO webhook_events (provider,event_id,status,received_at) VALUES ('verifynow',?,'received',?)", [$eid, now_iso()]); $wid = last_id(); }
     else { $wid = (int) $seen['id']; q('UPDATE webhook_events SET attempts = attempts + 1 WHERE id = ?', [$wid]); }
     $type = (string) ($evt['type'] ?? '');
     $data = is_array($evt['data'] ?? null) ? $evt['data'] : [];
