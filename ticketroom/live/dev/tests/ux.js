@@ -513,7 +513,8 @@ async function crawl(F, sessions) {
   }));
 
   await test("U19/U26 the sell page: calm wording, six tiles, cashless told once", () => onPage(DESK, [], "/sell", async (p) => {
-    const t = await p.locator("main").innerText();
+    // The site notice (admin-set, shown on public pages) is not part of the sell page copy.
+    const t = await p.locator("main").evaluate((m) => { const c = m.cloneNode(true); c.querySelector(".site-banner")?.remove(); return c.innerText; });
     assert(!/no surprises|in seconds|sorted/i.test(t), t.match(/.{0,30}(no surprises|in seconds|sorted).{0,20}/i)?.[0]);
     const tiles = await p.locator(".tiles > *:visible").count();
     assert(tiles % 3 === 0, `${tiles} tiles leave an orphan`);

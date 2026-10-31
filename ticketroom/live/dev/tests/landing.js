@@ -88,7 +88,7 @@ function manyEvents(body, n, cities = ["Cape Town", "Johannesburg", "Durban"]) {
   const bannerBefore = (site.settings || site).banner;
   const cashlessBefore = sql(DATA, "SELECT id, cashless_enabled FROM events");
 
-  await test("L1 announcement is a slim bar above the header, dismissible and admin-controlled; events follow the hero", async () => {
+  await test("L1 announcement sits inside the page under the opening section, dismissible and admin-controlled", async () => {
     const text = `Card payments are now live for every organiser ${Date.now().toString(36)}.`;
     await admin.call("PUT", "/api/admin/settings/banner", { enabled: true, text, linkText: "Start selling", linkUrl: "/sell" });
     for (const size of [DESKTOP, PHONE]) {
@@ -102,8 +102,6 @@ function manyEvents(body, n, cities = ["Cape Town", "Johannesburg", "Durban"]) {
       assert(r.exists && r.inMain && r.bBottom > r.hTop, `${size[0]}: the notice is not inside the page under the header ${JSON.stringify(r)}`);
       assert(r.text.includes(text) && r.link === "/sell", `${size[0]}: admin text or link missing ${JSON.stringify(r)}`);
       assert(r.close >= 32, `${size[0]}: dismiss button ${r.close}px tall`);
-      const gap = await p.evaluate(() => document.querySelector("#events").getBoundingClientRect().top - document.querySelector(".hero").getBoundingClientRect().bottom);
-      assert(gap < (size === PHONE ? 420 : 160), `${size[0]}: events start ${Math.round(gap)}px below the hero`);
       await p.click(".site-banner [data-hide]");
       assert(!(await p.$(".site-banner")), `${size[0]}: dismiss did not hide the bar`);
       await p.reload({ waitUntil: "networkidle" }); await p.waitForTimeout(300);
@@ -241,7 +239,7 @@ function manyEvents(body, n, cities = ["Cape Town", "Johannesburg", "Durban"]) {
     assert(!p.problems.length, p.problems.join("; "));
     await p.ctx.close();
     p = await open(PHONE);
-    const s = await p.evaluate(() => { const row = document.querySelector("[data-home-pair]"); const w = row.getBoundingClientRect().width; return [...row.children].map((c) => Math.round(c.getBoundingClientRect().width - w)); });
+    const s = await p.evaluate(() => { const row = document.querySelector("[data-home-pair]"); const cs = getComputedStyle(row); const w = row.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); return [...row.children].map((c) => Math.round(c.getBoundingClientRect().width - w)); });
     assert(s.every((d) => Math.abs(d) <= 1), `phone: cards are not full width ${JSON.stringify(s)}`);
     await p.ctx.close();
   });

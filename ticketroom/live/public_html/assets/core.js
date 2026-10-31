@@ -953,7 +953,9 @@ function placeBanner() {
   if (!b || !b.isConnected && !main) return;
   if (!main || !main.childElementCount || (main.childElementCount === 1 && main.firstElementChild.classList.contains("spinner"))) return;
   const hero = $(".hero", main);
-  if (hero) { if (hero.nextElementSibling !== b) hero.after(b); }
+  // Under the opening section (and the trust strip on the home page, which belongs to it).
+  const anchor = hero && hero.nextElementSibling?.classList.contains("home-trust") ? hero.nextElementSibling : hero;
+  if (anchor) { if (anchor.nextElementSibling !== b) anchor.after(b); }
   else if (main.firstElementChild !== b) main.prepend(b);
 }
 function showBanner(s) {
