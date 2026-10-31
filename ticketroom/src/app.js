@@ -1,0 +1,131 @@
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const config = require("./config");
+const db = require("./lib/db");
+const { securityHeaders, parseCookies, loadSession, csrf, errorHandler, wrap } = require("./middleware/http");
+const { notFound } = require("./lib/errors");
+
+const PUBLIC = path.resolve(__dirname, "..", "public");
+
+// Maintenance mode (Admin portal → Site settings). TicketRoom staff keep full
+// access. Visitors get the maintenance page for every HTML page (the admin
+// portal, assets and other static files stay open so staff can sign in and
+// switch it off), and a 503 from the API. Only what staff need to work and
+// turn it off again stays open: signing in and out, the admin API, payment
+// notifications, the health check and the site settings read.
+const API_EXEMPT = /^\/api\/(health|config|auth\/(login|logout|me|password\/reset)$|admin\/|webhooks\/)/;
+const NOT_A_PAGE = /^\/(admin(\/|\.html$|$)|api\/|assets\/|media\/|sim\/)/;
+const isPage = (p) => !NOT_A_PAGE.test(p) && (!p.split("/").pop().includes(".") || p.endsWith(".html"));
+const escHtml = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+function maintenancePage(res, message) {
+  res.status(503);
+  res.setHeader("Retry-After", "900");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'");
+  res.send('<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">'
+    + '<title>TicketRoom | Back soon</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/tr.css"></head>'
+    + '<body class="maint-on"><div class="maint-screen"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260">'
+    + `<h1>We'll be right back</h1><p>${escHtml(message)}</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main></div></body></html>`);
+}
+async function maintenance(req, res, next) {
+  const api = req.path.startsWith("/api/");
+  if (api ? API_EXEMPT.test(req.path) || (req.method === "GET" && req.path === "/api/site") : !isPage(req.path)) return next();
+  const m = await require("./modules/site/settings").get("maintenance");
+  if (!m.enabled || (req.user && req.user.platformRoles.size)) return next();
+  if (api) return res.status(503).json({ error: { code: "maintenance", message: m.message } });
+  maintenancePage(res, m.message);
+}
+
+function createApp() {
+  const app = express();
+  app.disable("x-powered-by");
+  app.set("trust proxy", config.trustProxy ? 1 : false);
+  app.use(securityHeaders);
+  app.use(parseCookies);
+
+  // Webhooks and the simulator read raw bodies; mount before the JSON parser.
+  const webhooks = require("./routes/webhooks");
+  app.use("/api/webhooks", webhooks.router);
+  app.use("/sim", webhooks.sim);
+
+  app.use(express.json({ limit: "100kb" }));
+  app.use(wrap(loadSession));
+  app.use(csrf);
+  app.use(wrap(maintenance));
+
+  app.get("/api/health", wrap(async (_req, res) => {
+    await db.query("SELECT 1");
+    res.json({ ok: true, service: "ticketroom", provider: config.payments.provider, env: config.env });
+  }));
+  app.get("/api/config", (_req, res) => res.json({
+    operator: config.operator, provider: config.payments.provider, simulatedPayments: config.payments.provider === "simulated",
+    cardPaymentsEnabled: config.payments.provider !== "none", paymentsTest: require("./modules/payments/providers").paymentsTest(), titopayWallet: config.integrations.titopay.enabled,
+    messaging: { email: config.messaging.emailProvider, sms: config.messaging.smsProvider },
+    cashless: { pinThresholdCents: config.cashless.pinThresholdCents, minTopupCents: config.cashless.minTopupCents, maxTopupCents: config.cashless.maxTopupCents, maxBalanceCents: config.cashless.maxBalanceCents },
+    fees: config.fees, holdMinutes: config.orders.holdMinutes,
+  }));
+
+  // PayFast hand-off: renders the signed form the buyer's browser posts to PayFast.
+  app.get("/pay/payfast/:paymentId", wrap(async (req, res) => {
+    // The buyer's session, or the short-lived key in the link (guest checkout).
+    const keyed = require("./lib/crypto").verifyLink(String(req.query.k || "").slice(0, 600))?.p === req.params.paymentId;
+    if (!req.user && !keyed) return res.redirect(302, "/signin");
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.paymentId)) throw notFound("Payment not found or already completed.");
+    const { rows } = await db.query(
+      `SELECT p.*, u.full_name AS buyer_full_name, u.email AS buyer_email FROM payments p JOIN users u ON u.id = p.user_id
+        WHERE p.id = $1 AND ($2::boolean OR p.user_id = $3::uuid) AND p.provider = 'payfast' AND p.status = 'pending'`, [req.params.paymentId, keyed, req.user?.id || null]);
+    if (!rows[0] || !rows[0].checkout_context) throw notFound("Payment not found or already completed.");
+    const payfast = require("./modules/payments/providers/payfast");
+    const fields = payfast.formFields(rows[0], rows[0].checkout_context, { full_name: rows[0].buyer_full_name, email: rows[0].buyer_email });
+    const action = config.integrations.payfast.processUrl;
+    const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+    res.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self'; form-action 'self' ${new URL(action).origin}; frame-ancestors 'none'; base-uri 'none'`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Redirecting to PayFast</title><link rel="stylesheet" href="/assets/tr.css"></head>
+<body class="sim"><main class="sim-card"><h1>Taking you to PayFast…</h1><p class="muted">Secure payment of R${(rows[0].amount_cents / 100).toFixed(2)}.</p>
+<form method="post" action="${esc(action)}" data-autosubmit>${fields.map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join("")}<button class="btn btn-primary btn-block">Continue to PayFast</button></form></main>
+<script src="/assets/autosubmit.js"></script></body></html>`);
+  }));
+
+  app.use("/api/site", require("./routes/site"));
+  app.use("/api/auth", require("./routes/auth").router);
+  app.use("/api/public", require("./routes/public"));
+  app.use("/api/me", require("./routes/account"));
+  app.use("/api/organiser", require("./routes/organiser"));
+  app.use("/api/staff", require("./routes/staff"));
+  app.use("/api/pos", require("./routes/pos"));
+  app.use("/api/admin", require("./routes/admin"));
+  app.use("/api", (_req, _res, next) => next(notFound("Unknown API route.")));
+
+  // Uploaded event images. Served with their sniffed type, never executed.
+  app.get("/media/:id", wrap(async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/.test(req.params.id)) throw notFound();
+    const { rows } = await db.query("SELECT mime_type FROM uploads WHERE id = $1", [req.params.id]);
+    const file = path.join(config.uploadDir, req.params.id);
+    if (!rows[0] || !fs.existsSync(file)) throw notFound();
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+    res.type(rows[0].mime_type).sendFile(file);
+  }));
+
+  app.use(express.static(PUBLIC, { index: false, maxAge: config.isProd ? "1h" : 0, extensions: ["html"] }));
+
+  // Portal entry points (each is a small single-page app).
+  const page = (file) => (_req, res) => res.sendFile(path.join(PUBLIC, file));
+  app.get(["/", "/events/:slug", "/checkout/:slug", "/orders/:ref", "/browse", "/signin", "/legal/:doc", "/help", "/contact", "/unsubscribe", "/pass", "/pay", "/sell", "/advertise", "/subscribe", "/privacy", "/cookies", "/terms"], page("index.html"));
+  app.get(["/account", "/account/*"], page("account.html"));
+  // ticketroom.co.za/organisers is the organiser dashboard; /organiser is kept as an alias.
+  app.get(["/organisers", "/organisers/*"], page("organiser.html"));
+  app.get(["/organiser", "/organiser/*"], (req, res) => res.redirect(301, req.originalUrl.replace(/^\/organiser/, "/organisers")));
+  app.get(["/scan", "/scan/*"], page("scan.html"));
+  app.get(["/pos", "/pos/*"], page("pos.html"));
+  app.get(["/admin", "/admin/*"], page("admin.html"));
+
+  app.use((req, res, next) => (req.accepts("html") ? res.status(404).sendFile(path.join(PUBLIC, "index.html")) : next(notFound())));
+  app.use(errorHandler);
+  return app;
+}
+
+module.exports = { createApp };
