@@ -29,8 +29,18 @@ const ICONS = {
   card: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
   cart: '<path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/>',
+  shield: '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
+  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  swap: '<path d="M4 8h14l-3.5-3.5"/><path d="M20 16H6l3.5 3.5"/>',
+  headset: '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><path d="M4 14h2.5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2v-3Z"/><path d="M20 14h-2.5a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1H18a2 2 0 0 0 2-2v-3Z"/><path d="M20 17v1a3 3 0 0 1-3 3h-3"/>',
+  tap: '<path d="M9 7.5a6.5 6.5 0 0 1 0 9M12.5 5a10 10 0 0 1 0 14M5.5 10a2.8 2.8 0 0 1 0 4"/>',
+  band: '<ellipse cx="12" cy="12" rx="9" ry="5.5"/><rect x="9" y="9.5" width="6" height="5" rx="1.2"/>',
+  topup: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+  refund: '<path d="M4 11a8 8 0 1 1 2.3 5.7"/><path d="M4 4v7h7"/>',
+  scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/>',
+  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
 };
-const icon = (name) => raw(`<svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
+const icon = (name, size = 16) => raw(`<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
 
 // ---------------- home / discovery ----------------
 // Event filters: what the URL carries and how each one is described in a chip.
@@ -140,24 +150,60 @@ function filtersSheet(state, apply) {
   where(); count();
 }
 
+// The hero's event card on a computer screen, drawn like a ticket with a stub.
+function heroPick(e) {
+  return html`<a class="hero-pick" href="/events/${e.slug}" data-hero-pick>
+    <span class="hp-poster">${poster(e, "fill")}<span class="hp-tag">${e.featured ? "Featured" : "Coming up"}</span></span>
+    <span class="hp-body"><span class="cat-label">${categoryLabel(e.category) || "Live event"}</span><strong class="hp-title">${e.title}</strong>
+      <span class="hp-meta">${icon("calendar")}${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })} · ${fmtTime(e.starts_at)}</span>
+      <span class="hp-meta">${icon("pin")}${e.venue_name}, ${e.city}</span></span>
+    <span class="hp-stub"><span class="hp-price">${e.from_price_cents === null ? "" : e.from_price_cents === 0 ? "Free" : html`<small>From</small> ${money(e.from_price_cents)}`}</span><span class="hp-cta">Get tickets ${svgIcon("arrow", 16)}</span></span>
+  </a>`;
+}
+// Fewer than four events: the last card says more are coming and offers alerts.
+function moreSoon() {
+  const box = document.createElement("div");
+  box.className = "more-soon"; box.dataset.moreSoon = "";
+  render(box, html`<span class="more-soon-ico">${icon("bell", 22)}</span><h3>More events are on the way</h3>
+    <p>Get an email when new events go on sale near you.</p>
+    <a class="btn btn-primary" href="/subscribe">Get event alerts</a>
+    <a class="more-soon-link" href="/sell">Putting on an event? List it with us</a>`);
+  return box;
+}
+
 async function home() {
   document.title = "TicketRoom | Event tickets in South Africa";
   const params = new URLSearchParams(location.search);
   const state = Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) || ""]));
   if (!state.categories && params.get("category")) state.categories = params.get("category");
   if (state.near && !state.nearLabel && !/^-?\d/.test(state.near)) state.nearLabel = state.near;
+  const [flags, cfg] = await Promise.all([features(), appConfig()]);
+  // What people can pay with follows the payment provider that is switched on.
+  const payText = { yoco: "Card, Apple Pay and Google Pay", peach: "Card and instant EFT" }[cfg.provider] || "Card, instant EFT, SnapScan and Zapper";
+  // Wallets are named only when TicketRoom has them set up (Admin > Integrations).
+  const wallets = [flags.walletApple && "Apple Wallet", flags.walletGoogle && "Google Wallet"].filter(Boolean);
+  const trust = [
+    ["shield", "Pay by card or EFT", payText],
+    ["phone", wallets.length ? `Tickets on your phone and in ${wallets.join(" or ")}` : "Tickets on your phone", "Show the QR code at the gate. No printing needed."],
+    ["swap", "Fair resale at face value", "Can't go? Resell for no more than you paid"],
+    ["headset", "Help with your order", "Ask our support team about any order"],
+  ];
   render(main, html`
-    <section class="hero"><div class="wrap">
-      <h1>Your event. <b>Your ticket.</b></h1>
-      <p class="lead">Concerts, comedy, sport and festivals across South Africa. Book in a minute, keep your tickets on your phone, and pass them to a friend if plans change.</p>
-      <form class="search" role="search" id="search"><label class="sr-only" for="q">Search events</label>
-        <input id="q" name="q" placeholder="Search events, artists, venues or cities" value="${state.q}" autocomplete="off">
-        <label class="sr-only" for="city">City</label><select id="city" name="city"><option value="">All cities</option></select>
-        <button class="btn btn-primary">Search</button></form>
-      <div class="feature-rail" id="featured" aria-label="Featured events" hidden></div>
+    <section class="hero"><div class="wrap hero-grid">
+      <div class="hero-main">
+        <h1>Your event. <b>Your ticket.</b></h1>
+        <p class="lead">Concerts, comedy, sport and festivals across South Africa. Book in a minute, keep your tickets on your phone, and pass them to a friend if plans change.</p>
+        <form class="search" role="search" id="search"><label class="sr-only" for="q">Search events</label>
+          <input id="q" name="q" placeholder="Search events, artists, venues or cities" value="${state.q}" autocomplete="off">
+          <label class="sr-only" for="city">City</label><select id="city" name="city"><option value="">All cities</option></select>
+          <button class="btn btn-primary">Search</button></form>
+        <div class="feature-rail" id="featured" aria-label="Featured events" hidden></div>
+      </div>
+      <div class="hero-pick-slot" id="hero-pick" hidden></div>
     </div></section>
+    <section class="home-trust" aria-label="Booking with TicketRoom"><div class="wrap"><ul class="trust-strip" data-trust>${trust.map(([ic, title, note]) => html`<li><span class="trust-ico">${icon(ic, 20)}</span><span class="trust-copy"><strong>${title}</strong><span>${note}</span></span></li>`)}</ul></div></section>
     <section class="section pt-0 hidden" id="recently-viewed"><div class="wrap"><div class="row between"><h2 class="mb-0">Recently viewed</h2><button type="button" class="btn btn-link small" data-clear-recent>Clear history</button></div><div class="event-grid mt" id="recently-viewed-grid"></div></div></section>
-    <section class="section"><div class="wrap">
+    <section class="section" id="events"><div class="wrap">
       <div class="row between events-head"><h2 class="mb-0">Upcoming events</h2>
         <button type="button" class="btn btn-ghost filter-btn" data-filters><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Filters<span class="filter-count" data-fcount hidden></span></button></div>
       <div class="chips mt" role="group" aria-label="Quick filters">${[["today", "Today"], ["weekend", "This weekend"], ["week", "Next 7 days"]].map(([v, l]) => html`<button class="chip" data-when="${v}" aria-pressed="${state.when === v}">${l}</button>`)}<button class="chip" data-free aria-pressed="${state.free === "1"}">Free</button>${CATS.filter(([v]) => v).slice(0, 5).map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.categories.split(",").includes(v)}">${l}</button>`)}</div>
@@ -166,15 +212,27 @@ async function home() {
       <p class="muted small mt" data-result-count aria-live="polite"></p>
       <div class="center mt" data-more-wrap hidden><button type="button" class="btn btn-ghost" data-more>Show more events</button></div>
     </div></section>
+    <section class="section pt-0 hidden" id="cities" aria-labelledby="cities-h"><div class="wrap"><h2 id="cities-h">Browse by city</h2><div class="city-grid mt" id="city-grid"></div></div></section>
     <section class="section pt-0 hidden" id="ads-events"><div class="wrap"><div class="row between"><div><span class="cat-label">Sponsored</span><h2 class="mb-0">Featured for event-goers</h2></div><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-events-rail"></div></div></section>
-    <section class="section pt-0 hidden" id="cashless"><div class="wrap"><div class="cashless-home">
-      <div class="cashless-intro"><span class="cat-label">Cashless events</span><h2>Tap to pay. No cash, no queues.</h2>
-        <p>At these events your wristband is your wallet. Top up on your phone, tap at the bar and food stalls, and get back what you don't spend.</p>
-        <a class="btn btn-dark btn-sm" href="/?cashless=1#grid" data-cl-all>See all cashless events</a></div>
-      <div class="cashless-rail" id="cashless-rail"></div></div></div></section>
+    <section class="section pt-0" id="cashless" aria-labelledby="cashless-h"><div class="wrap"><div class="cashless-home" data-cashless-state="how">
+      <div class="cashless-intro"><span class="cat-label">Cashless events</span><h2 id="cashless-h">Pay with your wristband</h2>
+        <p>At cashless events your wristband is your wallet. Top up on your phone, tap at the bar and food stalls, and get back what you don't spend.</p>
+        <div class="row"><a class="btn btn-dark" href="/?cashless=1#grid" data-cl-all hidden>See all cashless events</a><a class="cl-org" href="/sell" data-cl-org>Organisers: run a cashless event ${svgIcon("arrow", 16)}</a></div></div>
+      <div class="cashless-rail" id="cashless-rail" hidden></div>
+      <ol class="cl-how" id="cashless-how">${[["band", "Link your wristband", "Add the code on your band to your TicketRoom account."], ["topup", "Top up", "On your phone before you go, or at the top-up desk on the day."], ["tap", "Tap to pay", "Tap your band at the bars and food stalls. No cash or card needed."], ["refund", "Get back what you don't spend", "Ask for your unspent balance back after the event."]].map(([ic, t, d], i) => html`<li><span class="cl-how-ico">${icon(ic, 22)}<b>${i + 1}</b></span><strong>${t}</strong><span>${d}</span></li>`)}</ol>
+    </div></div></section>
     <section class="section pt-0 hidden" id="trending"><div class="wrap"><h2>Trending artists</h2><div class="artist-rail mt" id="artist-rail"></div></div></section>
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
-    <section class="section"><div class="wrap"><div class="promo-band">
+    <section class="section pt-0"><div class="wrap home-pair" data-home-pair>
+      <article class="card how-card" aria-labelledby="how-h"><span class="cat-label">How tickets work</span><h2 id="how-h">From checkout to the gate</h2>
+        <ol class="how-steps">${[["cart", "Buy", "Choose your tickets and pay."], ["phone", "Get it on your phone", "Your ticket is in your account and your email."], ["scan", "Scan at the gate", "Show the QR code at the entrance and walk in."], ["swap", "Transfer or resell", "Send it to a friend, or resell it at face value."]].map(([ic, t, d]) => html`<li><span class="how-ico">${icon(ic, 20)}</span><strong>${t}</strong><span>${d}</span></li>`)}</ol></article>
+      <a class="safety-teaser" href="/safety">
+        <span class="safety-teaser-mark" aria-hidden="true">${icon("shield", 20)}</span>
+        <span class="safety-teaser-copy"><span class="cat-label">Before you head out</span><strong>Event safety</strong><span>Simple ways to look after yourself and your friends: save the emergency numbers, plan your way home and keep an eye on your drink.</span></span>
+        <span class="safety-teaser-link">Read the guide ${svgIcon("arrow", 16)}</span>
+      </a>
+    </div></section>
+    <section class="section pt-0"><div class="wrap"><div class="promo-band">
       <div><span class="cat-label">For organisers</span><h2>Putting on an event? List it with us.</h2>
         <ul><li>QR tickets and a live view of who has booked</li><li>Your staff scan tickets at the gate on their own phones</li><li>Email the people who asked to hear from you</li><li>Cashless wristbands, vendor POS and transparent payouts</li><li>Free events cost nothing to list</li></ul></div>
       <div class="promo-actions"><div class="row"><a class="btn btn-primary" href="/sell">Start selling</a><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div>
@@ -184,12 +242,7 @@ async function home() {
       <div><span class="cat-label">Advertising</span><h2>Advertise your business on TicketRoom</h2>
         <p class="mb-0">Get a spot from <strong data-advert-price>R50</strong> per day. Your poster sits in front of people planning their next night out.</p></div>
       <a class="btn btn-primary" href="/advertise">Get a spot</a>
-    </div></div></section>
-    <section class="section pt-0"><div class="wrap"><a class="safety-teaser" href="/safety">
-      <span class="safety-teaser-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-      <span class="safety-teaser-copy"><span class="cat-label">Before you head out</span><strong>Event safety</strong><span>Simple ways to look after yourself and your friends.</span></span>
-      <span class="safety-teaser-link">Read the guide ${svgIcon("arrow", 16)}</span>
-    </a></div></section>`);
+    </div></div></section>`);
 
   const syncQuick = () => {
     $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(state.when === x.dataset.when && !state.from && !state.to)));
@@ -220,7 +273,7 @@ async function home() {
     const { events, cities, total } = await get(`/api/public/events?${query}`);
     if (sequence !== loadSequence) return;
     const sel = $("#city");
-    if (sel.options.length === 1) cities.forEach((c) => { const o = new Option(`${c.city} (${c.n})`, c.city); sel.add(o); });
+    if (sel.options.length === 1) { cities.forEach((c) => { const o = new Option(`${c.city} (${c.n})`, c.city); sel.add(o); }); cityTiles(cities); }
     sel.value = state.city;
     if (append) {
       const chunk = document.createElement("div");
@@ -231,6 +284,10 @@ async function home() {
         ? html`<div class="empty-filters card flat center" data-no-results><h3>No events found for "${state.q}"</h3><p class="muted">Check the spelling, or search for an artist, venue or town.</p><button type="button" class="btn btn-primary" data-clear-search>Clear search</button></div>`
         : html`<div class="empty-filters card flat center"><h3>No events match those filters</h3><p class="muted">Try a wider distance, other dates, or fewer filters.</p><button type="button" class="btn btn-primary" data-filters-again>Change filters</button></div>`);
       $("[data-clear-search]")?.addEventListener("click", () => { state.q = ""; if ($("#q")) $("#q").value = ""; load(); });
+      // A short list fills the row with wider cards and ends with a way to hear about new events.
+      const few = events.length > 0 && total < 4;
+      $("#grid").className = few ? `event-grid mt few few-${events.length}` : "event-grid mt";
+      if (few) $("#grid").append(moreSoon());
     }
     eventOffset = offset + events.length;
     $("[data-result-count]").textContent = total ? `Showing ${eventOffset} of ${total} events` : "";
@@ -240,7 +297,11 @@ async function home() {
     if (!append && !filterChips(state).length && !state.q) {
       const feat = events.filter((e) => e.featured).slice(0, 6);
       $("#featured").hidden = !feat.length;
-      render($("#featured"), html`${feat.map((e) => html`<a class="feature" href="/events/${e.slug}">${poster(e)}<span class="shade"></span><div class="meta"><span class="badge amber plain">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })}</span><h3>${e.title}</h3><span class="small">${e.venue_name}, ${e.city} · ${e.from_price_cents === 0 ? "Free" : `from ${money(e.from_price_cents)}`}</span></div></a>`)}`);
+      // The hero's own card (computer screens): the first featured event, or else the next big one.
+      const pick = feat[0] || events.find((e) => e.remaining >= 100) || events[0];
+      $("#hero-pick").hidden = !pick;
+      render($("#hero-pick"), pick ? heroPick(pick) : "");
+      render($("#featured"), html`${feat.map((e) => html`<a class="feature ${e === pick ? "is-pick" : ""}" href="/events/${e.slug}">${poster(e)}<span class="shade"></span><div class="meta"><span class="badge amber plain">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })}</span><h3>${e.title}</h3><span class="small">${e.venue_name}, ${e.city} · ${e.from_price_cents === 0 ? "Free" : `from ${money(e.from_price_cents)}`}</span></div></a>`)}`);
     } else if (!append) { $("#featured").hidden = true; render($("#featured"), ""); }
     } catch (err) {
       if (sequence !== loadSequence) return;
@@ -274,12 +335,25 @@ async function home() {
     }
     $$("[data-ad]").forEach((a) => a.addEventListener("click", () => { navigator.sendBeacon?.(`/api/site/posters/${a.dataset.ad}/click`) || post(`/api/site/posters/${a.dataset.ad}/click`).catch(() => {}); }));
   };
-  // Cashless events get their own band on the home page.
+  // Cities with upcoming events, as tiles (only when there is a choice to make).
+  const cityTiles = (cities) => {
+    const top = cities.slice(0, 6);
+    $("#cities").classList.toggle("hidden", top.length < 2);
+    render($("#city-grid"), top.length < 2 ? "" : html`${top.map((c) => html`<a class="city-tile" href="/?city=${encodeURIComponent(c.city)}#grid" data-city-tile="${c.city}"><span class="city-ico">${icon("pin", 20)}</span><span class="city-copy"><strong>${c.city}</strong><span>${plural(c.n, "upcoming event")}</span></span>${svgIcon("arrow", 18)}</a>`)}`);
+    $$("[data-city-tile]").forEach((a) => a.addEventListener("click", (ev) => {
+      ev.preventDefault(); state.city = a.dataset.cityTile; $("#city").value = state.city; load();
+      $("#events").scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+  };
+  // Cashless is always on the home page: events on sale as a rail, otherwise how it works.
   get("/api/public/events?cashless=1").then(({ events }) => {
     if (!events.length) return;
-    $("#cashless").classList.remove("hidden");
+    $(".cashless-home").dataset.cashlessState = "events";
+    $("#cashless-how").hidden = true;
+    $("#cashless-rail").hidden = false;
+    $("[data-cl-all]").hidden = false;
     render($("#cashless-rail"), html`${events.slice(0, 8).map(card)}`);
-    $("[data-cl-all]").addEventListener("click", (ev) => { ev.preventDefault(); for (const k of FILTER_KEYS) if (k !== "q") state[k] = ""; state.cashless = "1"; load(); $("#grid").scrollIntoView({ behavior: "smooth", block: "start" }); });
+    $("[data-cl-all]").addEventListener("click", (ev) => { ev.preventDefault(); for (const k of FILTER_KEYS) if (k !== "q") state[k] = ""; state.cashless = "1"; load(); $("#events").scrollIntoView({ behavior: "smooth", block: "start" }); });
   }).catch(() => {});
   // Trending artists: acts on upcoming events, ranked by recent sales and likes.
   get("/api/public/artists/trending").then(({ artists }) => {
