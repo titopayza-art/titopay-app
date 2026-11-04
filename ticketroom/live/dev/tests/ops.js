@@ -206,7 +206,7 @@ function smtpMock(port, { starttls = false, delayMs = 0, rcpt = () => "250 OK" }
     const dl = list.backups.find((x) => x.name === name);
     const res = await fetch(`${BASE}/api/admin/backups/${encodeURIComponent(dl.id)}`, { headers: { cookie: admin.cookieHeader() } });
     const bytes = Buffer.from(await res.arrayBuffer());
-    check(res.status === 200 && bytes.subarray(0, 15).toString() === "SQLite format 3" && /attachment/.test(res.headers.get("content-disposition") || ""), "O2 admin downloads the backup", `${res.status} ${res.headers.get("content-type")}`);
+    check(res.status === 200 && (driver(DATA) === "mysql" ? bytes[0] === 0x1f && bytes[1] === 0x8b : bytes.subarray(0, 15).toString() === "SQLite format 3") && /attachment/.test(res.headers.get("content-disposition") || ""), "O2 admin downloads the backup", `${res.status} ${res.headers.get("content-type")}`);
     const audited = sql(DATA, "SELECT action FROM audit_log WHERE action IN ('backup.created','backup.downloaded') AND entity_id = ?", [name]).map((r) => r.action);
     check(audited.includes("backup.created") && audited.includes("backup.downloaded"), "O2 making and downloading are audited", audited.join(","));
     const anon = await fetch(`${BASE}/api/admin/backups/${encodeURIComponent(dl.id)}`, { headers: { cookie: cust.cookieHeader() } });
@@ -370,7 +370,7 @@ function smtpMock(port, { starttls = false, delayMs = 0, rcpt = () => "250 OK" }
     try {
       page = execFileSync("php", ["-r", `$_SERVER['HTTPS'] = 'on'; $_SERVER['HTTP_HOST'] = 'localhost'; $_SERVER['SERVER_PORT'] = '${MOCK.closed}'; $_SERVER['DOCUMENT_ROOT'] = $argv[1]; chdir($argv[1]); include $argv[1] . '/deploy-check.php';`, PUB], { encoding: "utf8", timeout: 120000 });
     } finally { fs.writeFileSync(cfgFile, cfg); fs.rmSync(path.join(DATA, "unlock-check"), { force: true }); }
-    check(/SQLite/.test(page) && /Cron job/.test(page) && /Backups/.test(page), "O15 the deploy check covers SQLite, cron and backups");
+    check((driver(DATA) === "mysql" ? /Database \(MySQL\)/ : /SQLite/).test(page) && /Cron job/.test(page) && /Backups/.test(page), "O15 the deploy check covers the database, cron and backups");
     check(!page.includes(ADMIN_EMAIL) && !page.includes(DATA) && !page.includes(PUB), "S8 the deploy check shows no admin email or server paths");
     const logo = fs.statSync(path.join(SRC, "assets", "ticketroom-logo.png")).size;
     check(logo < 120 * 1024, "O15 the logo is small", `${Math.round(logo / 1024)} KB`);

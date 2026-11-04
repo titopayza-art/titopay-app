@@ -102,8 +102,8 @@ if ($data) {
         $add('Data', 'Database', is_file("$data/ticketroom.sqlite"), is_file("$data/ticketroom.sqlite") ? number_format(filesize("$data/ticketroom.sqlite") / 1048576, 1) . ' MB · ' . $state['users'] . ($state['users'] === 1 ? ' account · ' : ' accounts · ') . $state['events'] . ($state['events'] === 1 ? ' event' : ' events') : '');
     $add('Data', 'Ticket signing keys', is_file("$data/keys.php") || !empty(cfg('keys.qr')), 'Back up the data folder: every ticket QR code depends on these keys.');
     $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $maskEmail((string) $state['admin']['email']) . ($state['temp'] ? ' · still on the temporary password: change it under Admin portal → My password' : '') : 'No administrator found.');
-    $sqlite = (string) val('SELECT sqlite_version()');
-    $add('Data', 'SQLite ' . $sqlite, version_compare($sqlite, '3.27.0', '>='), version_compare($sqlite, '3.27.0', '>=') ? 'Backups work (they need 3.27 or newer).' : 'Backups need SQLite 3.27 or newer. cPanel → Select PHP Version → choose a newer PHP.');
+    $sqlite = db_is_mysql() ? '' : (string) val('SELECT sqlite_version()');
+    if (!db_is_mysql()) $add('Data', 'SQLite ' . $sqlite, version_compare($sqlite, '3.27.0', '>='), version_compare($sqlite, '3.27.0', '>=') ? 'Backups work (they need 3.27 or newer).' : 'Backups need SQLite 3.27 or newer. cPanel → Select PHP Version → choose a newer PHP.');
     $ops = ops_status();
     $cronAt = $ops['jobs']['cron']['lastRunAt'];
     $add('Data', 'Cron job', $ops['jobs']['cron']['fresh'], $cronAt ? 'Last ran ' . $cronAt . ' (UTC).' . ($ops['jobs']['cron']['fresh'] ? '' : ' That is too long ago: check cPanel → Cron Jobs.')

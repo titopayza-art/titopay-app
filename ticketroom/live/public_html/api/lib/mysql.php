@@ -124,6 +124,9 @@ function tr_sql_mysql(string $sql): string
     $s = preg_replace('/\bAS\s+REAL\s*\)/i', 'AS DOUBLE)', $s);
     $s = preg_replace('/\bAS\s+TEXT\s*\)/i', 'AS CHAR)', $s);
     $s = preg_replace('/\blength\s*\(/i', 'CHAR_LENGTH(', $s);
+    $s = preg_replace('/\bCOLLATE\s+NOCASE\b/i', 'COLLATE utf8mb4_general_ci', $s);
+    // SQLite's hidden rowid, used only as a tie-break after a time: dropped.
+    $s = preg_replace('/,\s*(?:\w+\.)?rowid(?:\s+(?:ASC|DESC))?\b/i', '', $s);
 
     // lower(email) lookups use the indexed email_lc column (users and
     // newsletter_subscribers, the tables with a lower(email) index).

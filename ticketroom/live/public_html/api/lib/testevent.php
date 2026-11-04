@@ -209,9 +209,9 @@ function test_event_delete(string $eventId, ?array $actor = null, string $why = 
                 q('DELETE FROM marketing_consents WHERE user_id = ? AND organiser_id = ?', [$g, $ev['organiser_id']]);
                 q('DELETE FROM consent_log WHERE user_id = ? AND organiser_id = ?', [$g, $ev['organiser_id']]);
                 $n['guests'] += affected('DELETE FROM users WHERE id = ? AND guest = 1', [$g]);
-                q('RELEASE test_guest');
+                q('RELEASE SAVEPOINT test_guest');
             } catch (PDOException $e) {
-                q('ROLLBACK TO test_guest'); q('RELEASE test_guest');
+                q('ROLLBACK TO test_guest'); q('RELEASE SAVEPOINT test_guest');
             }
         }
         return ['event' => $ev, 'removed' => array_filter($n)];

@@ -469,7 +469,7 @@ function tpl_text(string $name, array $a): array
         case 'eventDetailsUpdated':
             return ['subject' => "Updated details for {$a['event']['title']}",
                 'body' => $hi . "The organiser has changed important details for an event you have a ticket for. Your ticket is still valid.\n\n"
-                    . "Event: {$a['event']['title']}\nDate and time: " . when_str($a['event']['starts_at']) . ' to ' . when_str($a['event']['ends_at']) . "\nVenue: {$a['event']['venue_name']}, {$a['event']['city']}"
+                    . "Event: {$a['event']['title']}\nDate and time: " . when_str($a['event']['starts_at']) . (!empty($a['event']['ends_at']) ? ' to ' . when_str($a['event']['ends_at']) : '') . "\nVenue: {$a['event']['venue_name']}, {$a['event']['city']}"
                     . (!empty($a['event']['address']) ? "\nAddress: {$a['event']['address']}" : '')
                     . "\n\nCheck the latest information before travelling: {$a['eventUrl']}\nIf the change affects your plans, please use the TicketRoom contact form and include your order reference: $B/contact?topic=tickets" . FOOTER];
         case 'teamInvite':
