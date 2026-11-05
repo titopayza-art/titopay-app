@@ -55,6 +55,7 @@ function start(ev) {
     <form class="scan-type mt" id="manual"><label for="mc">Type a code</label><input id="mc" class="grow mono" placeholder="Ticket or tag code" autocomplete="off" autocapitalize="characters" enterkeyhint="go"><button class="btn btn-ghost btn-sm">Check</button></form>
     <div id="desk"></div>
     <div class="verdict idle" id="verdict" role="status" aria-live="assertive"><div class="big">READY</div><div>Point the camera at a ticket QR code</div></div>
+    <div id="extras"></div>
     <h2 class="mt-lg">Recent</h2><div id="recent"></div>
     <div class="scan-cam" id="scan-cam" hidden role="dialog" aria-modal="true" aria-label="Camera">
       <div class="scan-cam-bar"><span class="scan-cam-count" data-cam-count></span><button type="button" class="btn btn-ghost btn-sm" data-cam-close>Done</button></div>
@@ -145,6 +146,7 @@ const isTicket = (v) => /^T[RP]1\./.test(v) || /^[2-9A-HJ-NP-TV-Z]{10}$/i.test(v
 
 async function handle(value, fromNfc = false) {
   if (mode === "desk") return desk(value, fromNfc);
+  drawExtras(null);
   const body = { eventId: EVENT.id, gate: localStorage.getItem("tr_gate") || undefined };
   if (!fromNfc && isTicket(value)) body.payload = value; else body.tagInput = value;
   try {
@@ -169,9 +171,24 @@ function show(r) {
   const [kind, word] = VERDICT[r.outcome] || ["no", r.outcome];
   // A couple or table ticket lets several people in: say so in big letters.
   const big = r.outcome === "admitted" && r.admits > 1 ? `ADMIT ${r.admits}` : r.outcome === "admitted" && r.pass ? "PASS OK" : word;
-  result(kind, r.offline ? `${big} (OFFLINE)` : big, [r.testEvent ? "TEST EVENT" : "", r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
+  result(kind, r.offline ? `${big} (OFFLINE)` : big, [r.testEvent ? "TEST EVENT" : "", r.holderName, r.ticketType, r.seat ? `Seat: ${r.seat}` : "", r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : "",
     ["admitted", "already_used"].includes(r.outcome) ? ageRule(r.ageRestriction) : ""].filter(Boolean).join(" · "));
   beep(r.outcome === "admitted");
+  drawExtras(r);
+}
+// Extras bought with the ticket's order (parking, merchandise, upgrades), to hand over here.
+function drawExtras(r) {
+  const el = $("#extras");
+  if (!el) return;
+  const list = r && ["admitted", "already_used"].includes(r.outcome) ? r.extras || [] : [];
+  render(el, list.length ? html`<div class="card mt scan-extras"><strong>Extras on this order</strong>
+    ${list.map((x) => html`<div class="row between"><span>${x.quantity} × ${x.name}${x.collected ? html` <span class="small muted">(${x.collected} handed over)</span>` : ""}</span>
+      ${x.collected < x.quantity ? html`<button class="btn btn-primary btn-sm" data-collect="${x.id}" data-left="${x.quantity - x.collected}">Hand over ${x.quantity - x.collected}</button>` : html`<span class="badge good">Done</span>`}</div>`)}</div>` : "");
+  $$("[data-collect]", el).forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { const res = await post(`/api/staff/events/${EVENT.id}/extras/${b.dataset.collect}/collect`, { quantity: Number(b.dataset.left) }); drawExtras({ ...r, extras: res.extras }); }
+    catch (err) { toast(err.message, "bad"); b.disabled = false; }
+  }));
 }
 
 async function desk(value, fromNfc) {

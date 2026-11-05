@@ -52,8 +52,9 @@ function mail_pause(int $seconds, string $why): void
 function outbox_failure_kind(Throwable $e, string $channel): string
 {
     $m = $e->getMessage();
-    if ($channel !== 'sms' && ($e instanceof SmtpServerError || str_starts_with($m, 'SMTP connect failed') || str_starts_with($m, 'SMTP link lost'))) return 'pause';
-    if (preg_match('/rate.?limit|too many|throttl|exceeded|quota|slow down|^SMTP: 421/i', $m)) return $channel === 'sms' ? 'defer' : 'pause-rate';
+    if ($e instanceof WhatsAppRejected) return 'fail';
+    if ($channel === 'email' && ($e instanceof SmtpServerError || str_starts_with($m, 'SMTP connect failed') || str_starts_with($m, 'SMTP link lost'))) return 'pause';
+    if (preg_match('/rate.?limit|too many|throttl|exceeded|quota|slow down|^SMTP: 421/i', $m)) return $channel === 'email' ? 'pause-rate' : 'defer';
     if ($m === 'invalid recipient') return 'fail';
     if (preg_match('/^SMTP: 5\d\d/', $m)) return 'fail';
     return 'defer';
@@ -71,7 +72,7 @@ function outbox_deliver(int $limit = 25): int
         $now = now_iso();
         $list = rows("SELECT o.*, c.organiser_id FROM message_outbox o LEFT JOIN campaigns c ON c.id = o.campaign_id
                        WHERE o.status = 'queued' AND (o.claimed_until IS NULL OR o.claimed_until < ?) AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)"
-                       . ($emailOff ? " AND o.channel = 'sms'" : '') . " ORDER BY o.created_at LIMIT $limit", [$now, $now]);
+                       . ($emailOff ? " AND o.channel <> 'email'" : '') . " ORDER BY o.created_at LIMIT $limit", [$now, $now]);
         $lease = iso_in(OUTBOX_LEASE_SECONDS);
         foreach ($list as $m) q('UPDATE message_outbox SET attempts = attempts + 1, claimed_until = ? WHERE id = ?', [$lease, $m['id']]);
         return $list;
@@ -84,13 +85,14 @@ function outbox_deliver(int $limit = 25): int
     foreach ($claimed as $m) {
         $tries = (int) $m['attempts'] + 1;
         // Mail server unreachable: put the rest back untouched and try later.
-        if ($down && $m['channel'] !== 'sms') { q('UPDATE message_outbox SET attempts = attempts - 1, claimed_until = NULL WHERE id = ?', [$m['id']]); continue; }
+        if ($down && $m['channel'] === 'email') { q('UPDATE message_outbox SET attempts = attempts - 1, claimed_until = NULL WHERE id = ?', [$m['id']]); continue; }
         try {
             if ($m['kind'] === 'marketing') {
                 $g = val("SELECT granted FROM marketing_consents WHERE user_id = ? AND COALESCE(organiser_id,'') = COALESCE(?,'') AND channel = ?", [$m['user_id'], $m['organiser_id'], $m['channel']]);
                 if (!$g) { q("UPDATE message_outbox SET status = 'suppressed', claimed_until = NULL, last_error = 'consent withdrawn' WHERE id = ?", [$m['id']]); continue; }
             }
             if ($m['channel'] === 'sms') { $mode = sms_provider(); $msgId = sms_send($m['to_address'], $m['body']); }
+            elseif ($m['channel'] === 'whatsapp') { $mode = whatsapp_mode(); $msgId = whatsapp_send($m['to_address'], $m['body'], $m['subject']); }
             else {
                 $mode = mail_mode();
                 $msgId = send_email($mode, $m['to_address'], (string) ($m['subject'] ?: 'TicketRoom'), $m['body']);
@@ -135,8 +137,8 @@ function outbox_retry(?string $id = null): int
 // who, when and the subject. Addresses go after 180 days.
 function outbox_redact(): void
 {
-    q("UPDATE message_outbox SET body = '[redacted]' WHERE status IN ('sent','suppressed') AND COALESCE(sent_at, created_at) < ? AND body <> '[redacted]'", [iso_in(-7 * 86400)]);
-    q("UPDATE message_outbox SET body = '[redacted]' WHERE status = 'failed' AND created_at < ? AND body <> '[redacted]'", [iso_in(-30 * 86400)]);
+    q("UPDATE message_outbox SET body = '[redacted]', subject = CASE WHEN channel = 'whatsapp' THEN NULL ELSE subject END WHERE status IN ('sent','suppressed') AND COALESCE(sent_at, created_at) < ? AND body <> '[redacted]'", [iso_in(-7 * 86400)]);
+    q("UPDATE message_outbox SET body = '[redacted]', subject = CASE WHEN channel = 'whatsapp' THEN NULL ELSE subject END WHERE status = 'failed' AND created_at < ? AND body <> '[redacted]'", [iso_in(-30 * 86400)]);
     q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND to_address <> '[redacted]' AND status <> 'queued'", [iso_in(-180 * 86400)]);
 }
 
@@ -360,6 +362,8 @@ function tpl_text(string $name, array $a): array
                 'body' => $hi . ($test ? "This is a TEST order, paid while TicketRoom payments were in test mode. No real money moved and these tickets will not get you in.\n\n" : '') . ($free ? "You're booked for {$e['title']}. Your " . plural($n, 'free ticket') . " $isAre waiting in your TicketRoom account."
                                        : 'Thanks for your order. Your ' . plural($n, 'ticket') . " for {$e['title']} $isAre ready.")
                     . "\n\n" . place($e) . "\n" . when_str($e['starts_at']) . "\nOrder {$o['reference']}" . ($free ? '' : ' · ' . format_zar((int) $o['total_cents']))
+                    . (!empty($a['seats']) ? "\n\nYour " . (count($a['seats']) === 1 ? 'seat' : 'seats') . ":\n" . implode("\n", $a['seats']) : '')
+                    . (!empty($a['addons']) ? "\n\nExtras: " . implode(', ', $a['addons']) . ". Show any ticket from this order to collect them at the event." : '')
                     . (!empty($a['doorTender']) ? "\nPaid at the venue by " . str_replace('_', ' ', $a['doorTender']['method']) . "\nReceipt {$a['doorTender']['receipt_reference']}" : '')
                     . (!empty($a['guestLink'])
                         ? "\n\nView your tickets: {$a['guestLink']}\n\nKeep this email: the link opens your tickets on any phone. Want them all in one place? Create a free account with this email address at $B/account and confirm it. Your tickets will be waiting."

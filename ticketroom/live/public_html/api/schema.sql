@@ -363,6 +363,10 @@ CREATE TABLE orders (
   -- 0 when booked at a checkout into an account that already existed: the
   -- order's private link then shows its status only, not the tickets.
   link_shows_tickets  INTEGER NOT NULL DEFAULT 1,
+  -- Upgrade 56: the buyer asked for their tickets on WhatsApp; and the part
+  -- of the subtotal that is add-ons (parking, merchandise, upgrades).
+  whatsapp_opt_in     INTEGER NOT NULL DEFAULT 0,
+  addons_cents        INTEGER NOT NULL DEFAULT 0 CHECK (addons_cents >= 0),
   UNIQUE (user_id, idempotency_key)
 );
 CREATE INDEX orders_event_idx ON orders (event_id, status);
@@ -401,6 +405,9 @@ CREATE TABLE tickets (
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   test           INTEGER NOT NULL DEFAULT 0,
+  -- Upgrade 56: the reserved seat, and its label as printed ("Stalls, row C, seat 12").
+  seat_id        TEXT,
+  seat_label     TEXT,
   CHECK (status <> 'used' OR admitted_at IS NOT NULL)
 );
 CREATE INDEX tickets_owner_idx ON tickets (owner_user_id);
@@ -659,7 +666,7 @@ CREATE TABLE campaigns (
 
 CREATE TABLE message_outbox (
   id                  TEXT PRIMARY KEY,
-  channel             TEXT NOT NULL CHECK (channel IN ('email','sms')),
+  channel             TEXT NOT NULL CHECK (channel IN ('email','sms','whatsapp')),
   kind                TEXT NOT NULL CHECK (kind IN ('transactional','marketing')),
   to_address          TEXT NOT NULL,
   subject             TEXT,
@@ -1382,6 +1389,69 @@ CREATE INDEX IF NOT EXISTS resale_payouts_status_idx ON resale_payouts (status, 
 CREATE INDEX IF NOT EXISTS orders_resale_idx ON orders (resale_listing_id);
 CREATE INDEX IF NOT EXISTS wallet_topups_paid_by_idx ON wallet_topups (paid_by, event_id);
 -- exchange:end
+
+-- Add-ons and reserved seats (upgrade 56).
+-- Extras sold with a ticket: parking, merchandise, VIP upgrades and the like.
+CREATE TABLE IF NOT EXISTS event_addons (
+  id              TEXT PRIMARY KEY,
+  event_id        TEXT NOT NULL REFERENCES events(id),
+  name            TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('parking','merch','vip','food','other')),
+  description     TEXT,
+  price_cents     INTEGER NOT NULL CHECK (price_cents >= 0),
+  quantity_total  INTEGER NOT NULL CHECK (quantity_total >= 0),
+  quantity_sold   INTEGER NOT NULL DEFAULT 0 CHECK (quantity_sold >= 0),
+  quantity_held   INTEGER NOT NULL DEFAULT 0 CHECK (quantity_held >= 0),
+  per_order_limit INTEGER NOT NULL DEFAULT 4 CHECK (per_order_limit BETWEEN 1 AND 20),
+  status          TEXT NOT NULL DEFAULT 'on_sale' CHECK (status IN ('on_sale','paused','hidden')),
+  sort_order      INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  CHECK (quantity_sold + quantity_held <= quantity_total)
+);
+CREATE INDEX IF NOT EXISTS event_addons_event_idx ON event_addons (event_id);
+-- Add-ons on an order. Collected at the event: staff scan any ticket of the
+-- order (or type its reference) and mark what was handed over.
+CREATE TABLE IF NOT EXISTS order_addons (
+  id                TEXT PRIMARY KEY,
+  order_id          TEXT NOT NULL REFERENCES orders(id),
+  addon_id          TEXT NOT NULL REFERENCES event_addons(id),
+  event_id          TEXT NOT NULL REFERENCES events(id),
+  quantity          INTEGER NOT NULL CHECK (quantity > 0),
+  unit_price_cents  INTEGER NOT NULL CHECK (unit_price_cents >= 0),
+  collected         INTEGER NOT NULL DEFAULT 0 CHECK (collected >= 0),
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','valid','refunded','cancelled')),
+  collected_at      TEXT,
+  collected_by      TEXT REFERENCES users(id),
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  CHECK (collected <= quantity)
+);
+CREATE INDEX IF NOT EXISTS order_addons_order_idx ON order_addons (order_id);
+CREATE INDEX IF NOT EXISTS order_addons_addon_idx ON order_addons (addon_id);
+-- Reserved seating. One row per seat; a seated ticket type sells exactly its
+-- seats. A seat is held with the order while the buyer pays, then sold to a ticket.
+CREATE TABLE IF NOT EXISTS seats (
+  id             TEXT PRIMARY KEY,
+  event_id       TEXT NOT NULL REFERENCES events(id),
+  ticket_type_id TEXT NOT NULL REFERENCES ticket_types(id),
+  section        TEXT NOT NULL,
+  section_order  INTEGER NOT NULL DEFAULT 0,
+  row_label      TEXT NOT NULL,
+  row_order      INTEGER NOT NULL DEFAULT 0,
+  seat_number    INTEGER NOT NULL,
+  pos            INTEGER NOT NULL DEFAULT 0,
+  step_free      INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','held','sold','blocked')),
+  order_id       TEXT REFERENCES orders(id),
+  ticket_id      TEXT REFERENCES tickets(id),
+  updated_at     TEXT NOT NULL,
+  UNIQUE (event_id, section, row_label, seat_number)
+);
+CREATE INDEX IF NOT EXISTS seats_event_idx ON seats (event_id, status);
+CREATE INDEX IF NOT EXISTS seats_type_idx ON seats (ticket_type_id, status);
+CREATE INDEX IF NOT EXISTS seats_order_idx ON seats (order_id);
+-- End of upgrade 56 tables.
 
 -- Organiser verification (FICA / KYC). Kept in its own tables: documents
 -- live encrypted in the data folder's private/ folder, never in public_html.

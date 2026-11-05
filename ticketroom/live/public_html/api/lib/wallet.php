@@ -121,7 +121,7 @@ function wallet_google_ready(): bool
 }
 
 // ---------------------------------------------------------------- tickets
-const WALLET_TICKET_SQL = "SELECT t.id, t.code, t.qr_version, t.status, t.holder_name, t.owner_user_id, t.test, t.order_id, tt.name AS ticket_type, tt.admits, o.reference, o.buyer_name,
+const WALLET_TICKET_SQL = "SELECT t.id, t.code, t.qr_version, t.status, t.holder_name, t.seat_label, t.owner_user_id, t.test, t.order_id, tt.name AS ticket_type, tt.admits, o.reference, o.buyer_name,
                      e.id AS event_id, e.title, e.slug, e.venue_name, e.address, e.city, e.starts_at, e.ends_at, e.doors_open_at, e.is_test AS test_event, org.name AS organiser
                 FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
                 JOIN events e ON e.id = t.event_id JOIN organisers org ON org.id = e.organiser_id";
@@ -210,6 +210,7 @@ function wallet_pass_json(array $t, array $a, bool $void = false): array
     if ($test) array_unshift($back, ['key' => 'test', 'label' => 'TEST', 'value' => $test]);
     $aux = [['key' => 'type', 'label' => 'TICKET', 'value' => (string) $t['ticket_type']], ['key' => 'holder', 'label' => 'HOLDER', 'value' => (string) ($t['holder_name'] ?: $t['buyer_name'] ?: 'Not set')]];
     if ((int) ($t['admits'] ?? 1) > 1) $aux[] = ['key' => 'admits', 'label' => 'ADMITS', 'value' => (int) $t['admits'] . ' people'];
+    if (!empty($t['seat_label'])) array_unshift($aux, ['key' => 'seat', 'label' => 'SEAT', 'value' => (string) $t['seat_label']]);
     $serial = wallet_serial($t);
     $pass = [
         'formatVersion' => 1,
@@ -314,6 +315,7 @@ function wallet_google_payload(array $t, string $issuer, bool $void = false): ar
         ['id' => 'support', 'header' => 'Help', 'body' => 'Email ' . WALLET_SUPPORT . '. ' . WALLET_FOOTER],
     ];
     if ($test) array_unshift($modules, ['id' => 'test', 'header' => 'TEST', 'body' => $test]);
+    if (!empty($t['seat_label'])) array_unshift($modules, ['id' => 'seat', 'header' => 'Seat', 'body' => (string) $t['seat_label']]);
     $logo = ['sourceUri' => ['uri' => wallet_google_logo_url()], 'contentDescription' => $text('TicketRoom')];
     return [
         'eventTicketClasses' => [[

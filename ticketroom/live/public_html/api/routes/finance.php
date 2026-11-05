@@ -603,7 +603,7 @@ route('GET', '/api/me/refunds', function () {
 });
 
 // ============================================================== integrations
-const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'payouts' => 'Payouts', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'verifynow' => 'VerifyNow', 'google' => 'Sign in with Google', 'wallet' => 'Apple Wallet and Google Wallet'];
+const INTEGRATION_NAMES = ['mail' => 'Email', 'payments' => 'Card payments', 'payouts' => 'Payouts', 'sms' => 'SMS', 'kyc' => 'Identity verification', 'verifynow' => 'VerifyNow', 'google' => 'Sign in with Google', 'wallet' => 'Apple Wallet and Google Wallet', 'whatsapp' => 'WhatsApp tickets'];
 function fin_integration(string $group): array
 {
     $form = integration_form($group);
@@ -663,6 +663,12 @@ function fin_integration(string $group): array
             'environment' => $apple && $google ? 'live' : ($apple ? 'Apple only' : ($google ? 'Google only' : 'not set up')), 'status' => $apple || $google ? 'active' : 'not set up',
             'apple' => $apple, 'google' => $google, 'endpoint' => 'Apple Wallet and Google Wallet', 'webServiceUrl' => wallet_web_service_url(), 'credentials' => $creds ?: (object) [], 'fields' => $form];
     }
+    if ($group === 'whatsapp') {
+        $m = whatsapp_mode();
+        return ['key' => 'whatsapp', 'group' => 'whatsapp', 'label' => 'WhatsApp tickets', 'provider' => $m, 'environment' => $m === 'log' ? 'practice' : ($m === 'cloud' ? 'live' : 'not set up'),
+            'status' => whatsapp_ready() ? 'active' : 'not set up', 'endpoint' => 'graph.facebook.com', 'credentials' => $creds ?: (object) [], 'fields' => $form,
+            'sent' => (int) val("SELECT count(*) FROM message_outbox WHERE channel = 'whatsapp' AND status = 'sent' AND created_at > ?", [iso_in(-30 * 86400)])];
+    }
     $p = sms_provider();
     return ['key' => 'sms', 'group' => 'sms', 'label' => 'SMS', 'provider' => $p, 'environment' => $p === 'none' ? 'not set up' : 'live', 'status' => sms_ready() ? 'active' : 'not set up',
         'endpoint' => $p === 'bulksms' ? 'api.bulksms.com' : ($p === 'clickatell' ? 'platform.clickatell.com' : '–'), 'credentials' => $creds ?: (object) [], 'fields' => $form];
@@ -671,14 +677,14 @@ route('GET', '/api/admin/integrations', function () {
     adm_admin(); // provider settings are for admins only
     return [
         'defaults' => ['bookingFeeCents' => (int) (settings_all()['fees']['ticketFeeFixedCents'] ?? 1000), 'bookingFeeBps' => (int) (settings_all()['fees']['ticketFeeBps'] ?? 0), 'organiserCommissionBps' => (int) (settings_all()['fees']['organiserCommissionBps'] ?? 500), 'organiserCommissionFixedCents' => (int) (settings_all()['fees']['organiserCommissionFixedCents'] ?? 250)],
-        'integrations' => [fin_integration('payments'), fin_integration('payouts'), fin_integration('mail'), fin_integration('sms'), fin_integration('google'), fin_integration('kyc'), fin_integration('verifynow'), fin_integration('wallet')],
+        'integrations' => [fin_integration('payments'), fin_integration('payouts'), fin_integration('mail'), fin_integration('sms'), fin_integration('whatsapp'), fin_integration('google'), fin_integration('kyc'), fin_integration('verifynow'), fin_integration('wallet')],
     ];
 });
 // Saving needs the admin's own password: these settings move money and send mail as TicketRoom.
 route('PUT', '/api/admin/integrations/:key', function ($a) {
     $u = adm_admin();
     limit('integsave', 20, 3600, $u['id']);
-    $group = ['email' => 'mail', 'payments' => 'payments', 'payouts' => 'payouts', 'sms' => 'sms', 'identity' => 'kyc', 'verifynow' => 'verifynow', 'google' => 'google', 'wallet' => 'wallet'][$a['key']] ?? null;
+    $group = ['email' => 'mail', 'payments' => 'payments', 'payouts' => 'payouts', 'sms' => 'sms', 'whatsapp' => 'whatsapp', 'identity' => 'kyc', 'verifynow' => 'verifynow', 'google' => 'google', 'wallet' => 'wallet'][$a['key']] ?? null;
     if (!$group) throw not_found('Unknown integration.');
     $b = check(body(), ['currentPassword' => R::str(['max' => 200]), 'values' => R::obj([], ['optional' => true]), 'clear' => R::arr(R::str(['max' => 60]), ['optional' => true, 'max' => 20])]);
     if (!verify_secret($b['currentPassword'], (string) val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Your password is incorrect.', ['currentPassword' => 'Incorrect.']);
@@ -768,6 +774,7 @@ route('POST', '/api/admin/integrations/:key/health', function ($a) {
     $key = $a['key'];
     if ($key === 'email') $result = smtp_health();
     elseif ($key === 'sms') $result = sms_health();
+    elseif ($key === 'whatsapp') $result = whatsapp_health();
     elseif ($key === 'payments') $result = fin_payments_health();
     elseif ($key === 'payouts') $result = fin_payouts_health();
     elseif ($key === 'identity') $result = fin_identity_health();
@@ -879,6 +886,14 @@ route('POST', '/api/admin/integrations/:key/test', function ($a) {
     if ($a['key'] === 'sms') {
         $b = check(body(), ['phone' => R::phone()]);
         try { sms_send($b['phone'], 'TicketRoom test SMS. If you can read this, SMS works.'); return ['ok' => true, 'detail' => "Sent to {$b['phone']}."]; }
+        catch (Throwable $e) { return ['ok' => false, 'detail' => integration_scrub($e->getMessage())]; }
+    }
+    if ($a['key'] === 'whatsapp') {
+        // The real template, to a number the admin types, sent straight away.
+        $b = check(body(), ['phone' => R::phone()]);
+        $msg = whatsapp_ticket_message(['buyer_name' => $u['fullName']], ['title' => 'TicketRoom test', 'starts_at' => now_iso()], 1, base_url() . '/account#/tickets');
+        try { $id = whatsapp_send($b['phone'], $msg['body'], $msg['subject']); audit('integration.test_whatsapp', ['actor' => $u, 'entityType' => 'integration', 'entityId' => 'whatsapp', 'details' => ['ok' => true]]);
+            return ['ok' => true, 'detail' => $id === 'log' ? "Practice mode: nothing was sent. The message would read: {$msg['body']}" : "Sent to {$b['phone']}."]; }
         catch (Throwable $e) { return ['ok' => false, 'detail' => integration_scrub($e->getMessage())]; }
     }
     if ($a['key'] === 'identity') {

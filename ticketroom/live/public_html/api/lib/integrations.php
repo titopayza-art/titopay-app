@@ -70,6 +70,15 @@ const INTEGRATION_FIELDS = [
         'httpNumberFormat' => ['label' => 'Number format', 'provider' => 'http', 'options' => ['plus' => '+27821234567', 'intl' => '27821234567', 'local' => '0821234567']],
         'senderId' => ['label' => 'Sender name', 'placeholder' => 'TicketRoom', 'hint' => 'Only if your provider has approved it.'],
     ],
+    // Tickets on WhatsApp (lib/extras.php): Meta's WhatsApp Business Cloud API.
+    // Business messages must use a template Meta has approved.
+    'whatsapp' => [
+        'provider' => ['label' => 'WhatsApp tickets', 'options' => ['none' => 'Off', 'cloud' => 'On: WhatsApp Business (Meta Cloud API)', 'log' => 'Practice: show messages under Messages, send nothing']],
+        'phoneNumberId' => ['label' => 'Phone number ID', 'provider' => 'cloud', 'placeholder' => '123456789012345', 'hint' => 'Meta for Developers → your app → WhatsApp → API setup. Not the phone number itself.'],
+        'accessToken' => ['label' => 'Access token', 'secret' => true, 'provider' => 'cloud', 'hint' => 'A permanent token for a system user with the whatsapp_business_messaging permission (Business settings → System users).'],
+        'templateName' => ['label' => 'Template name', 'provider' => 'cloud', 'placeholder' => 'ticket_ready', 'hint' => 'A Utility template with four values: Hi {{1}}, your tickets for {{2}} on {{3}} are ready. Open them here: {{4}}'],
+        'templateLanguage' => ['label' => 'Template language code', 'provider' => 'cloud', 'placeholder' => 'en', 'hint' => 'As approved in WhatsApp Manager, for example en or en_US.'],
+    ],
     // Organiser identity checks (FICA). See lib/verification.php.
     'kyc' => [
         'provider' => ['label' => 'Identity checks by', 'options' => ['manual' => 'TicketRoom staff (every document reviewed by a person)', 'sandbox' => 'Sandbox: simulated checks for testing, nothing real is checked', 'http' => 'My own provider (any web API)']],

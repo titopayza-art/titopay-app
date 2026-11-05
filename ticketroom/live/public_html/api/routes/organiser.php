@@ -989,6 +989,8 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId/ticket-types/:ttId', funct
     $b = org_release_after($event['id'], $a['ttId'], $b);
     $cur = row('SELECT * FROM ticket_types WHERE id = ? AND event_id = ?', [$a['ttId'], $event['id']]);
     if (!$cur) throw not_found('Ticket type not found.');
+    // A seated ticket type sells exactly its seats: the seat map sets the quantity.
+    if (isset($b['quantityTotal']) && in_array($cur['id'], seated_type_ids($event['id']), true)) unset($b['quantityTotal']);
     $price = $b['priceCents'] ?? null;
     if ($event['is_free'] && $price > 0) throw conflict('This is a free event, so every ticket type costs R0.', 'free_event');
     if ($price > 0 && $price < 1000) throw bad('Paid tickets must cost at least R10.', ['priceCents' => 'Minimum R10, or R0 for free.']);
@@ -1076,12 +1078,12 @@ route('GET', '/api/organiser/:orgId/events/:eventId/orders', function ($a) {
 route('GET', '/api/organiser/:orgId/events/:eventId/attendees', function ($a) {
     $u = require_auth();
     ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ['owner', 'manager', 'viewer']);
-    $sql = 'SELECT t.code, t.status, t.holder_name, tt.name AS ticket_type, o.reference, o.buyer_email, t.admitted_at
+    $sql = 'SELECT t.code, t.status, t.holder_name, tt.name AS ticket_type, o.reference, o.buyer_email, t.admitted_at, t.seat_label
               FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id WHERE t.event_id = ?';
     if (qs('format') === 'csv') {
         @set_time_limit(120);
         $st = q($sql . ' ORDER BY t.holder_name NULLS LAST, t.created_at', [$event['id']]);
-        $out = "code,status,holder_name,ticket_type,order_reference,buyer_email,admitted_at\n";
+        $out = "code,status,holder_name,ticket_type,order_reference,buyer_email,admitted_at,seat\n";
         $n = 0;
         while ($x = $st->fetch(PDO::FETCH_NUM)) { $out .= implode(',', array_map('org_csv_esc', array_map(fn($v) => $v ?? '', $x))) . "\n"; $n++; }
         $st->closeCursor();

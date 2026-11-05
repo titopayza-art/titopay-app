@@ -16,7 +16,7 @@ route('GET', '/api/config', fn() => [
     // with card payments, because top-ups are card payments. Each event then
     // opts in with its own "cashless event" setting. tagRegistry: organisers
     // register their own wristbands (this edition's organiser portal).
-    'features' => ['payments' => pay_ready(), 'cashless' => cashless_ready(), 'pos' => cashless_ready(), 'finance' => true, 'sms' => sms_ready(), 'tags' => cashless_ready(), 'tagRegistry' => cashless_ready(), 'cashDesk' => cashless_ready(), 'promote' => true,
+    'features' => ['payments' => pay_ready(), 'cashless' => cashless_ready(), 'pos' => cashless_ready(), 'finance' => true, 'sms' => sms_ready(), 'whatsapp' => whatsapp_ready(), 'tags' => cashless_ready(), 'tagRegistry' => cashless_ready(), 'cashDesk' => cashless_ready(), 'promote' => true,
         'walletApple' => wallet_apple_ready(), 'walletGoogle' => wallet_google_ready()],
     'messaging' => ['email' => mail_mode(), 'sms' => sms_provider()],
     'cashless' => cashless_limits(),

@@ -272,6 +272,9 @@ function waitlist_tickets_returned(array $ticketIds, string $kind): void
         $free = min((int) $r['n'], $waiting);
         if ($free <= 0) continue;
         q('UPDATE ticket_types SET quantity_sold = MAX(quantity_sold - ?, 0) WHERE id = ?', [$free, $r['ticket_type_id']]);
+        // Reserved seats of the returned tickets open again for the waitlist.
+        $back = array_column(rows('SELECT id FROM tickets WHERE ticket_type_id = ? AND seat_id IS NOT NULL AND id IN (' . placeholders($ticketIds) . ') LIMIT ' . $free, array_merge([$r['ticket_type_id']], $ticketIds)), 'id');
+        seats_free_tickets($back);
         $events[$r['event_id']] = true;
     }
     foreach (array_keys($events) as $id) waitlist_sweep($id);
@@ -477,7 +480,9 @@ function resale_payment_confirmed(array $order, array $p): void
     $item = row('SELECT * FROM order_items WHERE order_id = ?', [$order['id']]);
     $new = insert('tickets', ['id' => uuid(), 'code' => new_pass_code(), 'qr_version' => 1, 'order_id' => $order['id'], 'order_item_id' => $item['id'], 'event_id' => $order['event_id'],
         'ticket_type_id' => $item['ticket_type_id'], 'owner_user_id' => $order['user_id'], 'holder_name' => $order['buyer_name'], 'price_cents' => $price, 'fee_cents' => (int) $item['unit_fee_cents'],
-        'status' => 'valid', 'test' => $test ? 1 : 0, 'created_at' => $now, 'updated_at' => $now]);
+        'status' => 'valid', 'test' => $test ? 1 : 0, 'created_at' => $now, 'updated_at' => $now, 'seat_id' => $t['seat_id'] ?? null, 'seat_label' => $t['seat_label'] ?? null]);
+    // A resold seat stays the same seat: it now belongs to the new ticket.
+    if (!empty($t['seat_id'])) q('UPDATE seats SET ticket_id = ?, order_id = ?, updated_at = ? WHERE id = ?', [$new['id'], $order['id'], $now, $t['seat_id']]);
     q("UPDATE orders SET status = 'paid', paid_at = ?, updated_at = ?, test = ? WHERE id = ?", [$now, $now, $test ? 1 : 0, $order['id']]);
     q("UPDATE resale_listings SET status = 'sold', held_order_id = ?, new_ticket_id = ?, sold_at = ?, updated_at = ? WHERE id = ?", [$order['id'], $new['id'], $now, $now, $l['id']]);
     $payout = resale_payout_create(row('SELECT * FROM resale_listings WHERE id = ?', [$l['id']]), $t, $test);

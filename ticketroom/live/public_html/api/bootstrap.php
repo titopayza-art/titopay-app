@@ -32,11 +32,12 @@ require TR_APP . '/lib/ops.php';
 require TR_APP . '/lib/testevent.php';
 require TR_APP . '/lib/team.php';
 require TR_APP . '/lib/seo.php';
+require TR_APP . '/lib/extras.php';
 
 // The API's route files, loaded by name. A file left behind by an older
 // upload (one no longer in this list) is never run. A new route file must be
 // added here.
-const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
+const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'extras', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
 function tr_load_routes(): void
 {
     foreach (TR_ROUTE_FILES as $f) require_once TR_APP . "/routes/$f.php";
@@ -232,9 +233,9 @@ const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT
 const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 55;
+const SCHEMA_VERSION = 56;
 // The last upgrade included in schema.mysql.sql.
-const MYSQL_SCHEMA_BASE = 55;
+const MYSQL_SCHEMA_BASE = 56;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -605,6 +606,15 @@ const UPGRADES = [
         'ALTER TABLE vendors ADD COLUMN contact_email TEXT',
         'ALTER TABLE vendors ADD COLUMN contact_phone TEXT',
     ],
+    // WhatsApp ticket delivery, add-ons and reserved seats.
+    56 => [
+        '@outbox56',
+        'ALTER TABLE orders ADD COLUMN whatsapp_opt_in INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE orders ADD COLUMN addons_cents INTEGER NOT NULL DEFAULT 0 CHECK (addons_cents >= 0)',
+        'ALTER TABLE tickets ADD COLUMN seat_id TEXT',
+        'ALTER TABLE tickets ADD COLUMN seat_label TEXT',
+        '@extras56',
+    ],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -631,6 +641,30 @@ function tr_verification_tables(): void
     $at = strpos($sql, '-- Organiser verification (FICA / KYC).');
     if ($at === false) throw new RuntimeException('schema.sql has no verification tables');
     db()->exec(substr($sql, $at));
+}
+// A part of schema.sql between two marker lines, run as it is written there.
+function tr_schema_section(string $from, string $to): void
+{
+    $sql = (string) file_get_contents(TR_APP . '/schema.sql');
+    $a = strpos($sql, $from); $b = $a === false ? false : strpos($sql, $to, $a);
+    if ($a === false || $b === false) throw new RuntimeException("schema.sql has no section $from");
+    db()->exec(substr($sql, $a, $b - $a));
+}
+// SQLite cannot change a CHECK in place, so the message queue is rebuilt as
+// schema.sql now has it (WhatsApp added to the channels), rows and indexes kept.
+function tr_upgrade_outbox_channels(): void
+{
+    $sql = (string) file_get_contents(TR_APP . '/schema.sql');
+    if (!preg_match('/CREATE TABLE message_outbox \(.*?\n\);/s', $sql, $m)) throw new RuntimeException('schema.sql has no message_outbox');
+    $cols = array_column(rows("SELECT name FROM pragma_table_info('message_outbox')"), 'name');
+    db()->exec(str_replace('CREATE TABLE message_outbox (', 'CREATE TABLE message_outbox_v56 (', $m[0]));
+    $keep = array_values(array_intersect($cols, array_column(rows("SELECT name FROM pragma_table_info('message_outbox_v56')"), 'name')));
+    $list = implode(', ', $keep);
+    db()->exec("INSERT INTO message_outbox_v56 ($list) SELECT $list FROM message_outbox");
+    db()->exec('DROP TABLE message_outbox');
+    db()->exec('ALTER TABLE message_outbox_v56 RENAME TO message_outbox');
+    preg_match_all('/^CREATE (?:UNIQUE )?INDEX [^;]* ON message_outbox \([^;]*;/m', $sql, $ix);
+    foreach ($ix[0] as $stmt) db()->exec(preg_replace('/^CREATE (UNIQUE )?INDEX /', 'CREATE $1INDEX IF NOT EXISTS ', $stmt));
 }
 // The platform owner is the first administrator. Nobody else can change
 // their roles, suspend them or reset their password.
@@ -696,7 +730,7 @@ function tr_upgrade_run(string $want): void
             foreach ($steps as $k => $sql) {
                 if ($k === 'mysql') continue;
                 try {
-                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), default => db()->exec($sql) };
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), '@outbox56' => tr_upgrade_outbox_channels(), '@extras56' => tr_schema_section('-- Add-ons and reserved seats (upgrade 56).', '-- End of upgrade 56 tables.'), default => db()->exec($sql) };
                 } catch (PDOException $e) {
                     if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
                 }

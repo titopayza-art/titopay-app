@@ -238,7 +238,7 @@ function tt_release_state(array $tt): array
     return ['state' => 'on_sale'];
 }
 
-function order_quote(array $event, array $items, ?string $promoCode): array
+function order_quote(array $event, array $items, ?string $promoCode, array $addons = []): array
 {
     if (!sales_open($event)) throw conflict('Ticket sales for this event are closed.', 'sales_closed');
     $seen = [];
@@ -260,7 +260,10 @@ function order_quote(array $event, array $items, ?string $promoCode): array
     }
     if ($count === 0) throw bad('Choose at least one ticket.');
     if ($count > MAX_TICKETS_PER_ORDER) throw conflict('At most ' . MAX_TICKETS_PER_ORDER . ' tickets per order.', 'limit_exceeded');
+    // Promo codes and booking fees are for tickets; extras are added at their price.
     $subtotal = array_sum(array_map(fn($l) => $l['unitPrice'] * $l['quantity'], $lines));
+    $addonLines = addon_lines($event, $addons, $count);
+    $addonsCents = array_sum(array_map(fn($l) => $l['unitPrice'] * $l['quantity'], $addonLines));
     $discount = 0;
     $promo = null;
     if ($promoCode) {
@@ -273,12 +276,15 @@ function order_quote(array $event, array $items, ?string $promoCode): array
     $fee = array_sum(array_map(fn($l) => $l['unitFee'] * $l['quantity'], $lines));
     $organiserServiceFee = array_sum(array_map(fn($l) => $l['unitOrganiserServiceFee'] * $l['quantity'], $lines));
     if ($subtotal - $discount === 0) { $fee = 0; $organiserServiceFee = 0; foreach ($lines as &$l) { $l['unitFee'] = 0; $l['unitOrganiserServiceFee'] = 0; } unset($l); }
-    return ['lines' => $lines, 'subtotal' => $subtotal, 'discount' => $discount, 'fee' => $fee, 'organiserServiceFee' => $organiserServiceFee, 'total' => $subtotal - $discount + $fee, 'promo' => $promo];
+    return ['lines' => $lines, 'ticketSubtotal' => $subtotal, 'addonLines' => $addonLines, 'addons' => $addonsCents, 'subtotal' => $subtotal + $addonsCents, 'discount' => $discount, 'fee' => $fee,
+        'organiserServiceFee' => $organiserServiceFee, 'total' => $subtotal + $addonsCents - $discount + $fee, 'promo' => $promo];
 }
 function public_quote(array $qt): array
 {
     return [
         'lines' => array_map(fn($l) => ['ticketTypeId' => $l['ticketType']['id'], 'name' => $l['ticketType']['name'], 'quantity' => $l['quantity'], 'unitPriceCents' => $l['unitPrice'], 'unitFeeCents' => $l['unitFee']], $qt['lines']),
+        'addons' => array_map(fn($l) => ['addonId' => $l['addon']['id'], 'name' => $l['addon']['name'], 'kind' => $l['addon']['kind'], 'quantity' => $l['quantity'], 'unitPriceCents' => $l['unitPrice']], $qt['addonLines'] ?? []),
+        'ticketSubtotalCents' => $qt['ticketSubtotal'] ?? $qt['subtotal'], 'addonsCents' => $qt['addons'] ?? 0,
         'subtotalCents' => $qt['subtotal'], 'discountCents' => $qt['discount'], 'feeCents' => $qt['fee'], 'totalCents' => $qt['total'],
         'promoCode' => $qt['promo']['code'] ?? null, 'currency' => 'ZAR',
     ];
@@ -331,7 +337,7 @@ function create_order(array $user, array $in): array
         }
         // A waitlist offer: the place held for this person goes to this order.
         $waitEntry = !empty($in['waitlistOffer']) ? waitlist_take_primary($in['waitlistOffer'], $event, $in['items']) : null;
-        $qt = order_quote($event, $in['items'], $in['promoCode'] ?? null);
+        $qt = order_quote($event, $in['items'], $in['promoCode'] ?? null, $in['addons'] ?? []);
         if ($qt['promo'] && (int) ($qt['promo']['max_uses_per_email'] ?? 0) > 0) {
             $alreadyUsed = (int) val("SELECT count(*) FROM orders WHERE event_id = ? AND promo_code_id = ? AND lower(buyer_email) = lower(?) AND status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded','refunded')",
                 [$event['id'], $qt['promo']['id'], (string) ($user['email'] ?? '')]);
@@ -348,7 +354,7 @@ function create_order(array $user, array $in): array
         // every account whose address folds to the same mailbox (dots and
         // "+" tags in Gmail addresses and the like).
         $mailKey = email_key((string) ($user['email'] ?? ''));
-        foreach ($qt['total'] > 0 ? [] : $qt['lines'] as $l) {
+        foreach ($qt['ticketSubtotal'] - $qt['discount'] > 0 ? [] : $qt['lines'] as $l) {
             $have = (int) val("SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi JOIN orders o ON o.id = oi.order_id
                                 WHERE (o.user_id = ? OR o.user_id IN (SELECT id FROM users WHERE email_key = ?)) AND o.event_id = ? AND oi.ticket_type_id = ? AND o.status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded')",
                 [$user['id'], $mailKey, $event['id'], $l['ticketType']['id']]);
@@ -388,12 +394,15 @@ function create_order(array $user, array $in): array
             'promo_code_id' => $qt['promo']['id'] ?? null, 'tracking_link_id' => $trackingId ?: null, 'idempotency_key' => $in['idempotencyKey'],
             'expires_at' => iso_in(HOLD_MINUTES * 60), 'created_at' => $now, 'updated_at' => $now,
             'link_shows_tickets' => order_link_shows_tickets($user),
+            'addons_cents' => $qt['addons'], 'whatsapp_opt_in' => !empty($in['whatsapp']) && ($in['buyerPhone'] ?? $user['phone'] ?? null) && whatsapp_ready() ? 1 : 0,
         ]);
         if ($waitEntry) q('UPDATE waitlist_entries SET order_id = ? WHERE id = ?', [$order['id'], $waitEntry]);
         if ($queueEntry) q("UPDATE presale_queue_entries SET status = 'used', order_id = ? WHERE id = ? AND status = 'admitted'", [$order['id'], $queueEntry['id']]);
         foreach ($qt['lines'] as $l) {
             insert('order_items', ['id' => uuid(), 'order_id' => $order['id'], 'ticket_type_id' => $l['ticketType']['id'], 'quantity' => $l['quantity'], 'unit_price_cents' => $l['unitPrice'], 'unit_fee_cents' => $l['unitFee'], 'unit_organiser_service_fee_cents' => $l['unitOrganiserServiceFee']]);
         }
+        addons_hold($order, $qt['addonLines']);
+        seats_hold($order, $qt['lines'], $in['seats'] ?? []);
         foreach (['email', 'sms'] as $ch) if (!empty($in['marketingOptIn'][$ch])) set_consent($user['id'], $event['organiser_id'], $ch, true, "checkout:{$order['reference']}");
         // Free orders are done now; paid ones wait for the provider to confirm payment.
         if ((int) $order['total_cents'] === 0) $order = fulfil_order($order['id'])['order'];
@@ -412,24 +421,38 @@ function fulfil_order(string $orderId): array
     q("UPDATE orders SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ?", [$now, $now, $orderId]);
     $order = row('SELECT * FROM orders WHERE id = ?', [$orderId]);
     $n = 0;
+    $seatLabels = [];
+    $seated = array_flip(seated_type_ids($order['event_id']));
     foreach ($items as $it) {
         for ($i = 0; $i < $it['quantity']; $i++) {
-            insert('tickets', ['id' => uuid(), 'code' => new_pass_code(), 'qr_version' => 1, 'order_id' => $orderId, 'order_item_id' => $it['id'], 'event_id' => $order['event_id'],
+            // A seated ticket takes the seat held for it (or the best one still open).
+            $seat = isset($seated[$it['ticket_type_id']]) ? seat_for_ticket($orderId, $it['ticket_type_id']) : null;
+            $tid = uuid();
+            insert('tickets', ['id' => $tid, 'code' => new_pass_code(), 'qr_version' => 1, 'order_id' => $orderId, 'order_item_id' => $it['id'], 'event_id' => $order['event_id'],
                 'ticket_type_id' => $it['ticket_type_id'], 'owner_user_id' => $order['user_id'], 'holder_name' => $order['buyer_name'], 'price_cents' => $it['unit_price_cents'],
-                'fee_cents' => $it['unit_fee_cents'], 'status' => 'valid', 'test' => (int) ($order['test'] ?? 0), 'created_at' => $now, 'updated_at' => $now]);
+                'fee_cents' => $it['unit_fee_cents'], 'status' => 'valid', 'test' => (int) ($order['test'] ?? 0), 'created_at' => $now, 'updated_at' => $now,
+                'seat_id' => $seat['id'] ?? null, 'seat_label' => $seat ? seat_label($seat) : null]);
+            if ($seat) { seat_sold($seat, $orderId, $tid); $seatLabels[] = seat_label($seat); }
             $n++;
         }
     }
+    addons_fulfil($orderId);
+    seats_release($orderId); // any held seat left over
     // A waitlist place that was held for this order is now used.
     q("UPDATE waitlist_entries SET status = 'claimed', offer_token_hash = NULL, updated_at = ? WHERE order_id = ? AND status = 'offered'", [$now, $orderId]);
     $event = row('SELECT * FROM events WHERE id = ?', [$order['event_id']]);
     $guest = (int) val('SELECT guest FROM users WHERE id = ?', [$order['user_id']]) === 1;
     $link = order_email_link($order);
     $doorReceipt = row('SELECT method, receipt_reference, amount_cents FROM door_tenders WHERE order_id = ?', [$orderId]);
-    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $link, 'doorTender' => $doorReceipt]));
-    // A short SMS too, when the buyer gave a mobile number and SMS is set up.
-    if ($order['buyer_phone'] && sms_ready()) {
-        $testEv = (int) ($event['is_test'] ?? 0) === 1;
+    outbox_enqueue(['to' => $order['buyer_email'], 'userId' => $order['user_id']] + tpl('orderConfirmed', ['order' => $order, 'event' => $event, 'ticketCount' => $n, 'guestLink' => $link, 'doorTender' => $doorReceipt,
+        'seats' => $seatLabels, 'addons' => addon_text(order_addon_list($orderId))]));
+    $testEv = (int) ($event['is_test'] ?? 0) === 1;
+    // The tickets on WhatsApp when the buyer asked for that; otherwise a
+    // short SMS, when they gave a mobile number and SMS is set up.
+    if ($order['buyer_phone'] && (int) ($order['whatsapp_opt_in'] ?? 0) === 1 && whatsapp_ready()) {
+        outbox_enqueue(['channel' => 'whatsapp', 'to' => $order['buyer_phone'], 'userId' => $order['user_id'], 'eventId' => $testEv ? $event['id'] : null]
+            + whatsapp_ticket_message($order, ['title' => ($testEv ? 'TEST EVENT ' : '') . $event['title']] + $event, $n, $guest ? order_link($order) : base_url() . '/account#/tickets'));
+    } elseif ($order['buyer_phone'] && sms_ready()) {
         outbox_enqueue(['channel' => 'sms', 'to' => $order['buyer_phone'], 'userId' => $order['user_id'], 'eventId' => $testEv ? $event['id'] : null,
             'body' => ($testEv ? 'TEST EVENT. ' : '') . "TicketRoom: you're booked for {$event['title']} (" . plural($n, 'ticket') . "). Order {$order['reference']}. " . ($guest ? 'Tickets: ' . order_link($order) : ($link ? 'Your tickets are in your email.' : 'Tickets: ' . base_url() . '/account#/tickets'))]);
     }
@@ -454,6 +477,8 @@ function release_holds(array $order): void
         if ($free > 0) q('UPDATE ticket_types SET quantity_held = MAX(quantity_held - ?, 0) WHERE id = ?', [$free, $it['ticket_type_id']]);
     }
     if ($order['promo_code_id']) q('UPDATE promo_codes SET used_count = used_count - 1 WHERE id = ? AND used_count > 0', [$order['promo_code_id']]);
+    addons_release($order['id']);
+    seats_release($order['id']);
     // Places that come free go to the waitlist first.
     if (val("SELECT 1 FROM waitlist_entries WHERE event_id = ? AND status = 'waiting' LIMIT 1", [$order['event_id']])) waitlist_sweep($order['event_id']);
 }
@@ -641,7 +666,7 @@ const PASS_AFTER_H = 24;
 
 function tickets_for_user(string $userId): array
 {
-    $list = rows("SELECT t.id, t.code, t.status, t.revoked_reason, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test, t.order_id, t.ticket_type_id, e.resale_enabled, e.doors_open_at,
+    $list = rows("SELECT t.id, t.code, t.status, t.revoked_reason, t.holder_name, t.admitted_at, t.qr_version, t.price_cents, t.test, t.order_id, t.ticket_type_id, t.seat_label, e.resale_enabled, e.doors_open_at,
                          tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
                          e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, e.is_test AS test_event, o.reference AS order_reference
                     FROM tickets t JOIN events e ON e.id = t.event_id JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
@@ -731,6 +756,13 @@ function admit_scan(array $staff, array $b): array
     return tx(function () use ($staff, $b) {
         $logged = null;
         $r = admit_decide($staff, $b, $logged);
+        // The gate also sees the seat and the extras bought with the ticket.
+        if ($logged && $logged['ticket'] && in_array($r['outcome'] ?? '', ['admitted', 'already_used'], true)) {
+            $t = row('SELECT order_id, seat_label FROM tickets WHERE id = ?', [$logged['ticket']]);
+            if ($t['seat_label']) $r['seat'] = $t['seat_label'];
+            $x = order_addon_list($t['order_id']);
+            if ($x) { $r['extras'] = $x; $r['orderId'] = $t['order_id']; }
+        }
         // One line per scan, with what the gate was told (the reason) next to
         // its broad outcome, so every refusal can be counted by reason.
         if ($logged) admission_record($staff, $b, $logged, (string) ($r['outcome'] ?? $logged['outcome']));

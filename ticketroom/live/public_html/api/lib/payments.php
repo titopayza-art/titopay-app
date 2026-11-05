@@ -506,7 +506,13 @@ function payment_fulfil(array $order, array $payment): void
         if (affected('UPDATE ticket_types SET quantity_held = quantity_held + ? WHERE id = ? AND quantity_sold + quantity_held + ? <= quantity_total', [$it['quantity'], $it['ticket_type_id'], $it['quantity']]) === 0) break;
         $got[] = $it;
     }
-    if (count($got) === count($items)) {
+    // Seats: the best ones still open are given when the tickets are made.
+    $seatsOk = true;
+    foreach ($got as $it) {
+        if (in_array($it['ticket_type_id'], seated_type_ids($order['event_id']), true)
+            && (int) val("SELECT count(*) FROM seats WHERE ticket_type_id = ? AND status = 'open'", [$it['ticket_type_id']]) < (int) $it['quantity']) $seatsOk = false;
+    }
+    if (count($got) === count($items) && $seatsOk && addons_rehold($order['id'])) {
         q("UPDATE orders SET status = 'pending_payment', updated_at = ? WHERE id = ?", [now_iso(), $order['id']]);
         fulfil_order($order['id']);
         return;
@@ -618,10 +624,14 @@ function refund_create(array $order, ?array $actor, array $ticketIds, bool $incl
         // is worked out on everything refunded so far plus these tickets, less
         // what was already worked out, so rounding never adds up to more than
         // the order's ticket money however the tickets are split.
-        $gross = (int) $order['subtotal_cents'];
-        $share = fn(int $price) => $gross > 0 ? (int) round($price * ((int) $order['subtotal_cents'] - (int) $order['discount_cents']) / $gross) : 0;
+        // Extras (add-ons) are not part of the tickets' share: they are given
+        // back with the order's last tickets.
+        $gross = (int) $order['subtotal_cents'] - (int) ($order['addons_cents'] ?? 0);
+        $share = fn(int $price) => $gross > 0 ? (int) round($price * ($gross - (int) $order['discount_cents']) / $gross) : 0;
         $before = (int) val("SELECT COALESCE(SUM(price_cents),0) FROM tickets WHERE order_id = ? AND status = 'refunded'", [$order['id']]);
         $amount = $share($before + array_sum(array_map(fn($t) => (int) $t['price_cents'], $open))) - $share($before);
+        $allLeft = (int) val("SELECT count(*) FROM tickets WHERE order_id = ? AND status IN ('valid','used')", [$order['id']]);
+        if (count($open) === $allLeft) $amount += addons_open_cents($order['id']);
         $fee = $includeFees ? array_sum(array_map(fn($t) => (int) $t['fee_cents'], $open)) : 0;
         $ids = array_column($open, 'id');
     }
@@ -734,6 +744,8 @@ function refund_complete(string $refundId, string $providerRef, ?array $actor): 
         // A refunded ticket comes off TicketRoom Exchange, and its place goes to the waitlist.
         foreach (rows("SELECT * FROM resale_listings WHERE ticket_id IN (" . placeholders($ids) . ") AND status IN ('active','offered')", $ids) as $l) resale_close_listing($l, 'closed', 'refunded');
         waitlist_tickets_returned($ids, $r['kind']);
+        // The last tickets of the order: its extras were refunded with them.
+        if (!val("SELECT 1 FROM tickets WHERE order_id = ? AND status IN ('valid','used')", [$r['order_id']])) q("UPDATE order_addons SET status = 'refunded', updated_at = ? WHERE order_id = ? AND status = 'valid'", [$now, $r['order_id']]);
     }
     $order = row('SELECT * FROM orders WHERE id = ?', [$r['order_id']]);
     $refunded = (int) $order['refunded_cents'] + $total;
@@ -1010,6 +1022,12 @@ function clear_test_orders(array $actor): array
     return tx(function () use ($actor) {
         $now = now_iso();
         $freed = 0;
+        // Their seats and extras go back on sale too.
+        q("UPDATE seats SET status = 'open', order_id = NULL, ticket_id = NULL, updated_at = ? WHERE ticket_id IN (SELECT id FROM tickets WHERE test = 1 AND status IN ('valid','used'))", [$now]);
+        foreach (rows("SELECT x.id, x.addon_id, x.quantity FROM order_addons x JOIN orders o ON o.id = x.order_id WHERE o.test = 1 AND x.status = 'valid'") as $x) {
+            q('UPDATE event_addons SET quantity_sold = MAX(quantity_sold - ?, 0) WHERE id = ?', [(int) $x['quantity'], $x['addon_id']]);
+            q("UPDATE order_addons SET status = 'cancelled', updated_at = ? WHERE id = ?", [$now, $x['id']]);
+        }
         foreach (rows("SELECT ticket_type_id, count(*) AS n FROM tickets WHERE test = 1 AND status IN ('valid','used') GROUP BY ticket_type_id") as $r) {
             q('UPDATE ticket_types SET quantity_sold = MAX(quantity_sold - ?, 0) WHERE id = ?', [(int) $r['n'], $r['ticket_type_id']]);
             $freed += (int) $r['n'];

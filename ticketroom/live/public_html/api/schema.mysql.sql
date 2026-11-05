@@ -448,9 +448,11 @@ CREATE TABLE orders (
   test BIGINT NOT NULL DEFAULT 0,
   resale_listing_id VARCHAR(191),
   link_shows_tickets BIGINT NOT NULL DEFAULT 1,
+  whatsapp_opt_in BIGINT NOT NULL DEFAULT 0,
+  addons_cents BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_orders_31 (user_id, idempotency_key),
-  UNIQUE KEY uq_orders_32 (reference),
+  UNIQUE KEY uq_orders_33 (user_id, idempotency_key),
+  UNIQUE KEY uq_orders_34 (reference),
   FOREIGN KEY (retail_partner_id) REFERENCES retail_partners (id),
   FOREIGN KEY (tracking_link_id) REFERENCES tracking_links (id),
   FOREIGN KEY (promo_code_id) REFERENCES promo_codes (id),
@@ -464,7 +466,8 @@ CREATE TABLE orders (
   CHECK (organiser_commission_fixed_cents >= 0),
   CHECK (organiser_service_fee_cents >= 0),
   CHECK (retail_commission_share_cents >= 0),
-  CHECK (retail_service_share_cents >= 0)
+  CHECK (retail_service_share_cents >= 0),
+  CHECK (addons_cents >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
 ;;
 CREATE INDEX orders_event_idx ON orders (event_id, status)
@@ -515,8 +518,10 @@ CREATE TABLE tickets (
   created_at MEDIUMTEXT NOT NULL,
   updated_at VARCHAR(40) NOT NULL,
   test BIGINT NOT NULL DEFAULT 0,
+  seat_id MEDIUMTEXT,
+  seat_label MEDIUMTEXT,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_tickets_19 (code),
+  UNIQUE KEY uq_tickets_21 (code),
   FOREIGN KEY (admitted_by) REFERENCES users (id),
   FOREIGN KEY (owner_user_id) REFERENCES users (id),
   FOREIGN KEY (ticket_type_id) REFERENCES ticket_types (id),
@@ -899,7 +904,7 @@ CREATE TABLE message_outbox (
   g_message_outbox_campaign_user_uq_1 VARCHAR(191) GENERATED ALWAYS AS (CASE WHEN campaign_id IS NOT NULL THEN user_id END) STORED INVISIBLE,
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (campaign_id) REFERENCES campaigns (id),
-  CHECK (channel IN ('email','sms')),
+  CHECK (channel IN ('email','sms','whatsapp')),
   CHECK (kind IN ('transactional','marketing')),
   CHECK (status IN ('queued','sent','failed','suppressed'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
@@ -1885,6 +1890,94 @@ CREATE TABLE resale_payouts (
 CREATE UNIQUE INDEX resale_payouts_listing_uq ON resale_payouts (listing_id)
 ;;
 CREATE INDEX resale_payouts_status_idx ON resale_payouts (status, created_at)
+;;
+CREATE TABLE event_addons (
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  name MEDIUMTEXT NOT NULL,
+  kind MEDIUMTEXT NOT NULL DEFAULT ('other'),
+  description MEDIUMTEXT,
+  price_cents BIGINT NOT NULL,
+  quantity_total BIGINT NOT NULL,
+  quantity_sold BIGINT NOT NULL DEFAULT 0,
+  quantity_held BIGINT NOT NULL DEFAULT 0,
+  per_order_limit BIGINT NOT NULL DEFAULT 4,
+  status MEDIUMTEXT NOT NULL DEFAULT ('on_sale'),
+  sort_order BIGINT NOT NULL DEFAULT 0,
+  created_at MEDIUMTEXT NOT NULL,
+  updated_at MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (id),
+  FOREIGN KEY (event_id) REFERENCES events (id),
+  CHECK (kind IN ('parking','merch','vip','food','other')),
+  CHECK (price_cents >= 0),
+  CHECK (quantity_total >= 0),
+  CHECK (quantity_sold >= 0),
+  CHECK (quantity_held >= 0),
+  CHECK (per_order_limit BETWEEN 1 AND 20),
+  CHECK (status IN ('on_sale','paused','hidden')),
+  CHECK (quantity_sold + quantity_held <= quantity_total)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
+CREATE INDEX event_addons_event_idx ON event_addons (event_id)
+;;
+CREATE TABLE order_addons (
+  id VARCHAR(191) NOT NULL,
+  order_id VARCHAR(191) NOT NULL,
+  addon_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  quantity BIGINT NOT NULL,
+  unit_price_cents BIGINT NOT NULL,
+  collected BIGINT NOT NULL DEFAULT 0,
+  status MEDIUMTEXT NOT NULL DEFAULT ('pending'),
+  collected_at MEDIUMTEXT,
+  collected_by VARCHAR(191),
+  created_at MEDIUMTEXT NOT NULL,
+  updated_at MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (id),
+  FOREIGN KEY (collected_by) REFERENCES users (id),
+  FOREIGN KEY (event_id) REFERENCES events (id),
+  FOREIGN KEY (addon_id) REFERENCES event_addons (id),
+  FOREIGN KEY (order_id) REFERENCES orders (id),
+  CHECK (quantity > 0),
+  CHECK (unit_price_cents >= 0),
+  CHECK (collected >= 0),
+  CHECK (status IN ('pending','valid','refunded','cancelled')),
+  CHECK (collected <= quantity)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
+CREATE INDEX order_addons_order_idx ON order_addons (order_id)
+;;
+CREATE INDEX order_addons_addon_idx ON order_addons (addon_id)
+;;
+CREATE TABLE seats (
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  ticket_type_id VARCHAR(191) NOT NULL,
+  section VARCHAR(191) NOT NULL,
+  section_order BIGINT NOT NULL DEFAULT 0,
+  row_label VARCHAR(191) NOT NULL,
+  row_order BIGINT NOT NULL DEFAULT 0,
+  seat_number BIGINT NOT NULL,
+  pos BIGINT NOT NULL DEFAULT 0,
+  step_free BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(191) NOT NULL DEFAULT 'open',
+  order_id VARCHAR(191),
+  ticket_id VARCHAR(191),
+  updated_at MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_seats_15 (event_id, section, row_label, seat_number),
+  FOREIGN KEY (ticket_id) REFERENCES tickets (id),
+  FOREIGN KEY (order_id) REFERENCES orders (id),
+  FOREIGN KEY (ticket_type_id) REFERENCES ticket_types (id),
+  FOREIGN KEY (event_id) REFERENCES events (id),
+  CHECK (status IN ('open','held','sold','blocked'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
+CREATE INDEX seats_event_idx ON seats (event_id, status)
+;;
+CREATE INDEX seats_type_idx ON seats (ticket_type_id, status)
+;;
+CREATE INDEX seats_order_idx ON seats (order_id)
 ;;
 CREATE TABLE organiser_verification (
   organiser_id VARCHAR(191) NOT NULL,

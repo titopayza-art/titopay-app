@@ -44,7 +44,7 @@ function ticketCard(t, offline = false) {
     ${Number(t.test) === 1 ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : Number(t.test_event) === 1 ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · not a real event</p>` : ""}
     <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${t.title}</h3>
       <p class="tk-when">${fmtDate(t.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(t.starts_at)}</p><p class="tk-where">${place}</p></header>
-    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || "Not set"}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${t.order_reference}</dd></div></dl>
+    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div>${t.seat_label ? html`<div class="tk-seat"><dt>Seat</dt><dd>${t.seat_label}</dd></div>` : ""}<div><dt>Holder</dt><dd>${t.holder_name || "Not set"}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${t.order_reference}</dd></div></dl>
       <div class="t-qr">${live && qrSrc ? html`<img src="${qrSrc}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
       <p class="tk-scan">${t.status === "used" ? `Scanned ${fmtDateTime(t.admitted_at)}` : live ? "Scan at the entrance" : ""}</p></div>
     <div class="tk-perf" aria-hidden="true"></div>
@@ -60,7 +60,7 @@ function ticketCard(t, offline = false) {
       ${t.resale?.open && t.resale.faceValueCents > 0 && !t.resale.listing && !t.pending_transfer && !t.refund_open ? html`<button class="btn btn-ghost btn-sm" data-sell="${t.id}">Sell</button>` : ""}
       <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
     <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
-      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}" data-test="${Number(t.test) === 1 ? "1" : ""}" data-test-event="${Number(t.test_event) === 1 ? "1" : ""}"></div></div>` : ""}
+      data-type="${t.ticket_type}" data-seat="${t.seat_label || ""}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}" data-test="${Number(t.test) === 1 ? "1" : ""}" data-test-event="${Number(t.test_event) === 1 ? "1" : ""}"></div></div>` : ""}
   </div>`;
 }
 
@@ -83,7 +83,7 @@ async function walletButtons() {
         const svg = await fetch(`/api/me/tickets/${id}/qr.svg`, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
         const d = box.dataset;
         const png = await ticketPng(svg, { test: d.test === "1", testEvent: d.testEvent === "1", title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, code: d.code,
-          rows: [["Ticket", d.type], ["Holder", d.holder || "Not set"], ...(Number(d.admits) > 1 ? [["Admits", `${d.admits} people`]] : []), ["Order", d.order]] });
+          rows: [["Ticket", d.type], ...(d.seat ? [["Seat", d.seat]] : []), ["Holder", d.holder || "Not set"], ...(Number(d.admits) > 1 ? [["Admits", `${d.admits} people`]] : []), ["Order", d.order]] });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(png); a.download = `ticket-${box.dataset.code}.png`; document.body.append(a); a.click(); a.remove();
         toast("Saved. Show this picture at the gate if you have no signal.", "good");

@@ -1691,6 +1691,22 @@ export function calendarFile({ title, starts, ends, place = "", url = "" }) {
 }
 
 // ---------- ticket kinds and age groups (same lists as php/api/lib/domain.php) ----------
+// A seat map (from /seats): the stage, then each section's rows of seats as
+// buttons. canPick decides which seats can be tapped; picked are shown as chosen.
+export function seatMapHtml(sections, { canPick = () => true, picked = new Set(), showBlocked = false, dim = () => false } = {}) {
+  return html`<div class="seatmap-stage">Stage</div>${sections.map((sec) => html`<section class="seat-sec${dim(sec) ? " seat-sec-off" : ""}" aria-label="${sec.name}">
+    <h4>${sec.name} <span class="tiny muted">${sec.ticketType && sec.ticketType !== sec.name ? `${sec.ticketType} · ` : ""}${sec.priceCents ? moneyExact(sec.priceCents) : "Free"}</span></h4>
+    ${sec.rows.map((r) => html`<div class="seat-row"><span class="seat-rl" aria-hidden="true">${r.label}</span><div class="seat-line">${r.seats.map((st) => {
+      const sel = picked.has(st.id);
+      if (st.s === "blocked" && !showBlocked) return html`<span class="seat gap" aria-hidden="true"></span>`;
+      const state = sel ? " sel" : st.s === "blocked" ? " blocked" : st.s !== "open" ? " taken" : "";
+      const name = `${sec.name}, row ${r.label}, seat ${st.n}`;
+      const note = st.s === "taken" && !sel ? ", taken" : st.s === "blocked" ? ", not for sale" : "";
+      return html`<button type="button" class="seat${st.a ? " step" : ""}${state}" data-seat="${st.id}" data-short="${r.label}${st.n}" data-full="${name}" aria-label="${name}${note}${st.a ? ", step-free" : ""}" aria-pressed="${sel ? "true" : "false"}" ${raw(canPick(sec, st, sel) ? "" : "disabled")}>${st.n}</button>`;
+    })}</div><span class="seat-rl" aria-hidden="true">${r.label}</span></div>`)}</section>`)}`;
+}
+// Extras sold with tickets (lib/extras.php ADDON_KINDS).
+export const ADDON_KINDS = { parking: "Parking", merch: "Merchandise", vip: "VIP upgrade", food: "Food and drink", other: "Extra" };
 export const TICKET_KINDS = {
   general: { label: "General admission" }, early_bird: { label: "Early bird" }, vip: { label: "VIP" }, vvip: { label: "VVIP" },
   golden_circle: { label: "Golden circle" }, seated: { label: "Reserved seating" }, standing: { label: "Standing" },

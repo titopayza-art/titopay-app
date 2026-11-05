@@ -6,7 +6,9 @@ What is ready, what only you can do, and the first marketing steps.
 
 - Buying, free and paid tickets, guest checkout, transfers, face-value
   resale, waitlist, cashless wristbands, vendors, box office, event teams,
-  gate scanner with offline mode, test events, VerifyNow checks, wallet passes.
+  gate scanner with offline mode, test events, VerifyNow checks, wallet passes,
+  reserved seating with seat maps, extras sold with tickets (parking,
+  merchandise, VIP upgrades) and tickets on WhatsApp.
 - Every automated test suite passes, on SQLite (Afrihost) and on MySQL
   (your own server). No overselling under load.
 - Security: HTTPS only, strict security headers, rate limits, signed tickets,
@@ -33,13 +35,17 @@ What is ready, what only you can do, and the first marketing steps.
 5. **VerifyNow API key** (Integrations) before the first paid organiser
    payout.
 6. **SMS provider** (Integrations), for sign-in codes and gate alerts.
-7. **Apple and Google Wallet certificates**, if you want the wallet buttons
+7. **WhatsApp tickets** (optional, Integrations → WhatsApp tickets): a
+   WhatsApp Business number on Meta's Cloud API, a permanent access token and
+   an approved Utility template with four values (name, event, date, link).
+   Use Practice mode first, then send yourself a test message.
+8. **Apple and Google Wallet certificates**, if you want the wallet buttons
    on day one. The site works without them.
-8. **Policies.** Read the Terms, Privacy Policy and refund rules once more.
+9. **Policies.** Read the Terms, Privacy Policy and refund rules once more.
    Admin portal → Site settings → Legal: fill in your POPIA Information
    Officer (the Privacy Policy and PAIA manual show it).
-9. **Remove sample content.** Make sure no test or sample events are
-   published (test events never show to the public, but check drafts too).
+10. **Remove sample content.** Make sure no test or sample events are
+    published (test events never show to the public, but check drafts too).
 
 ## Launch week: marketing
 

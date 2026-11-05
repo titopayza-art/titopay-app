@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { svgIcon, html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
+import { svgIcon, html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, ADDON_KINDS, seatMapHtml, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 import { teamSection, teamActivity } from "/assets/team.js";
@@ -240,7 +240,7 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["wristbands", "Wristbands & desk"], ["checks", "Permits & checks"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["extras", "Extras"], ["seating", "Seat map"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["wristbands", "Wristbands & desk"], ["checks", "Permits & checks"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "", vendor, section }) {
   const d = await get(`${base()}/events/${id}`);
@@ -312,7 +312,7 @@ async function eventWorkspace({ id, tab = "", vendor, section }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, team: teamTab, passes: passesTab, vendors: vendorsTab, wristbands: wristbandsTab, checks: checksTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, extras: extrasTab, seating: seatingTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, team: teamTab, passes: passesTab, vendors: vendorsTab, wristbands: wristbandsTab, checks: checksTab, details: detailsTab };
   render(el, spinner());
   await fns[tab](el, d, () => eventWorkspace({ id, tab, vendor, section }), { vendor, section });
 }
@@ -464,6 +464,100 @@ async function ticketsTab(el, d, reload) {
   $$("[data-edit]", el).forEach((b) => b.addEventListener("click", () => form(d.ticketTypes.find((t) => t.id === b.dataset.edit))));
 }
 
+// ---------------- extras (add-ons) ----------------
+// Parking, merchandise, VIP upgrades and the like, bought with tickets and
+// handed over at the gate when any ticket of the order is scanned.
+async function extrasTab(el, d) {
+  const editable = can("owner", "manager") && !["cancelled", "completed"].includes(d.event.status);
+  const url = `${base()}/events/${d.event.id}/addons`;
+  const draw = async () => {
+    const { addons } = await get(url);
+    render(el, html`<section class="card"><div class="card-title"><h3>Extras</h3>${editable ? html`<button class="btn btn-primary btn-sm" data-add>Add an extra</button>` : ""}</div>
+      <p class="small muted">Sell parking, merchandise, VIP upgrades or food with your tickets. Buyers add them at checkout. At the event, your gate team sees them when they scan any ticket from the order and marks them as handed over.</p>
+      ${addons.length ? html`<div class="table-wrap"><table><thead><tr><th>Extra</th><th>Kind</th><th class="num">Price</th><th>Sold</th><th>Handed over</th><th>Status</th><th></th></tr></thead><tbody>
+        ${addons.map((x) => html`<tr><td><strong>${x.name}</strong>${x.description ? html`<div class="small muted">${x.description}</div>` : ""}</td><td>${ADDON_KINDS[x.kind] || x.kind}</td>
+          <td class="num">${x.price_cents ? moneyExact(x.price_cents) : "Free"}</td><td>${x.quantity_sold}${x.quantity_held ? `, ${x.quantity_held} reserved` : ""} / ${x.quantity_total}</td>
+          <td>${x.collected}</td><td>${badge(x.status)}</td><td>${editable ? html`<button class="btn btn-ghost btn-sm" data-edit="${x.id}">Edit</button>` : ""}</td></tr>`)}</tbody></table></div>`
+      : empty("No extras yet. Parking and event merchandise are the most asked for.")}</section>`);
+    $("[data-add]", el)?.addEventListener("click", () => form());
+    $$("[data-edit]", el).forEach((b) => b.addEventListener("click", () => form(addons.find((x) => x.id === b.dataset.edit))));
+  };
+  const form = (x = {}) => {
+    const sold = Number(x.quantity_sold || 0) + Number(x.quantity_held || 0);
+    const dlg = dialog(x.id ? "Edit extra" : "Add an extra", html`<form class="stack">
+      <div class="grid-2"><div class="field"><label for="xk">Kind</label><select id="xk" name="kind">${Object.entries(ADDON_KINDS).map(([k, l]) => html`<option value="${k}" ${raw(k === (x.kind || "parking") ? "selected" : "")}>${l}</option>`)}</select></div>
+        <div class="field"><label for="xn">Name</label><input id="xn" name="name" required minlength="2" maxlength="80" value="${x.name || ""}" placeholder="e.g. Parking, Tour T-shirt, VIP lounge upgrade"></div></div>
+      <div class="field"><label for="xd">Description <span class="muted">(optional)</span></label><input id="xd" name="description" maxlength="240" value="${x.description || ""}" placeholder="e.g. Secure parking at the venue, one car"></div>
+      <div class="grid-2"><div class="field"><label for="xp">Price (R)</label><input id="xp" name="price" inputmode="decimal" required value="${x.price_cents !== undefined ? x.price_cents / 100 : ""}" ${raw(sold ? "disabled" : "")}>
+          <span class="hint">${d.event.is_free ? "Free event: extras are free too." : sold ? "Some are sold, so the price stays." : "R0 for free, otherwise at least R5. No booking fee is added."}</span></div>
+        <div class="field"><label for="xq">How many to sell</label><input id="xq" name="quantityTotal" type="number" min="${sold}" max="200000" required value="${x.quantity_total ?? ""}"></div></div>
+      <div class="grid-2"><div class="field"><label for="xl">Max per order</label><input id="xl" name="perOrderLimit" type="number" min="1" max="20" value="${x.per_order_limit || 4}"></div>
+        <div class="field"><label for="xs">Status</label><select id="xs" name="status">${[["on_sale", "On sale"], ["paused", "Paused"], ["hidden", "Hidden"]].map(([k, l]) => html`<option value="${k}" ${raw(k === (x.status || "on_sale") ? "selected" : "")}>${l}</option>`)}</select></div></div>
+      <div class="row between"><button class="btn btn-primary">Save</button>${x.id && !sold ? html`<button type="button" class="btn btn-ghost" data-del>Delete</button>` : ""}</div></form>`);
+    onSubmit($("form", dlg), async (v) => {
+      const body = { name: v.name, kind: v.kind, description: v.description || undefined, quantityTotal: Number(v.quantityTotal), perOrderLimit: Number(v.perOrderLimit), status: v.status };
+      if (v.price !== undefined) { const c = parseRand(v.price); if (c === null) throw Object.assign(new Error("Check the price."), { details: { price: "Enter an amount like 50 or 0." } }); body.priceCents = c; }
+      if (x.id) await patch(`${url}/${x.id}`, body); else await post(url, body);
+      dlg.close(); toast("Saved.", "good"); draw();
+    });
+    $("[data-del]", dlg)?.addEventListener("click", async () => { try { await del(`${url}/${x.id}`); dlg.close(); toast("Deleted.", "good"); draw(); } catch (err) { toast(err.message, "bad"); } });
+  };
+  await draw();
+}
+
+// ---------------- seat map ----------------
+// Reserved seating: sections of rows and seats, each belonging to a ticket
+// type, which then sells exactly those seats. Seats can be kept off sale.
+async function seatingTab(el, d) {
+  const editable = can("owner", "manager") && !["cancelled", "completed"].includes(d.event.status);
+  const url = `${base()}/events/${d.event.id}/seats`;
+  let data = await get(url);
+  let blocking = false;
+  const chosen = new Set();
+  const draw = () => {
+    const sum = data.summary;
+    render(el, html`<section class="card stack"><div class="card-title"><h3>Seat map</h3>${editable ? html`<div class="row">${data.sections.length ? html`<button class="btn btn-ghost btn-sm" data-blockmode>${blocking ? "Done" : "Keep seats off sale"}</button>` : ""}<button class="btn btn-primary btn-sm" data-add>Add a section</button></div>` : ""}</div>
+      <p class="small muted mb-0">For theatres, halls, arenas and stadiums. Each section belongs to one ticket type, which then sells exactly its seats. Buyers choose their seats on this map, or take the best seats available, side by side where possible.</p>
+      ${sum.length ? html`<div class="table-wrap"><table><thead><tr><th>Section</th><th>Ticket type</th><th class="num">Seats</th><th class="num">Sold</th><th class="num">Being paid for</th><th class="num">Off sale</th><th></th></tr></thead><tbody>
+        ${sum.map((r) => html`<tr><td><strong>${r.section}</strong></td><td>${r.ticket_type}</td><td class="num">${r.seats}</td><td class="num">${r.sold}</td><td class="num">${r.held}</td><td class="num">${r.blocked}</td>
+          <td>${editable && !Number(r.sold) && !Number(r.held) ? html`<button class="btn btn-ghost btn-sm" data-remove="${r.section}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>`
+        : empty("No seats yet. Add a section, for example Stalls with rows A to J and 20 seats in each row.")}
+      ${blocking ? html`<p class="callout small mb-0">Tap seats to choose them, then keep them off sale (a sound desk, a pillar, house seats) or put them back on sale. Sold seats cannot be changed.</p>
+        <div class="row"><span class="small">${chosen.size} chosen</span><button class="btn btn-ghost btn-sm" data-apply="block" ${raw(chosen.size ? "" : "disabled")}>Keep off sale</button><button class="btn btn-ghost btn-sm" data-apply="free" ${raw(chosen.size ? "" : "disabled")}>Put on sale</button></div>` : ""}
+      ${data.sections.length ? html`<div class="seatmap org-map">${seatMapHtml(data.sections, { picked: chosen, showBlocked: true, canPick: (sec, st) => blocking && (st.s === "open" || st.s === "blocked") })}</div>
+        <div class="seat-legend tiny"><span><i class="seat"></i>On sale</span><span><i class="seat taken"></i>Sold or being paid for</span><span><i class="seat blocked"></i>Off sale</span><span><i class="seat step"></i>Step-free</span></div>` : ""}</section>`);
+    $("[data-add]", el)?.addEventListener("click", addSection);
+    $("[data-blockmode]", el)?.addEventListener("click", () => { blocking = !blocking; chosen.clear(); draw(); });
+    $$("[data-seat]", el).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.seat; if (chosen.has(id)) chosen.delete(id); else chosen.add(id); draw(); $(`[data-seat="${id}"]`, el)?.focus(); }));
+    $$("[data-apply]", el).forEach((b) => b.addEventListener("click", async () => {
+      try { data = await post(`${url}/block`, { seatIds: [...chosen], blocked: b.dataset.apply === "block" }); toast(`${data.changed} ${data.changed === 1 ? "seat" : "seats"} changed.`, "good"); chosen.clear(); draw(); }
+      catch (err) { toast(err.message, "bad"); }
+    }));
+    $$("[data-remove]", el).forEach((b) => b.addEventListener("click", async () => {
+      if (!(await confirmDialog(`Remove ${b.dataset.remove}?`, "Its seats are deleted from the map. The ticket type stays, as general admission.", { confirm: "Remove section" }))) return;
+      try { data = await post(`${url}/sections/remove`, { section: b.dataset.remove }); draw(); } catch (err) { toast(err.message, "bad"); }
+    }));
+  };
+  const addSection = () => {
+    const types = d.ticketTypes.filter((t) => t.status !== "hidden");
+    if (!types.length) { toast("Add a ticket type first (Tickets & pricing), for example Stalls or Balcony.", "bad"); return; }
+    const dlg = dialog("Add a section", html`<form class="stack">
+      <div class="grid-2"><div class="field"><label for="sn">Section name</label><input id="sn" name="section" required maxlength="40" placeholder="e.g. Stalls, Balcony, Block 104"></div>
+        <div class="field"><label for="stt">Sold as</label><select id="stt" name="ticketTypeId">${types.map((t) => html`<option value="${t.id}">${t.name} (${t.price_cents ? moneyExact(t.price_cents) : "Free"})</option>`)}</select><span class="hint">The ticket type's price is the seat price.</span></div></div>
+      <div class="grid-2"><div class="field"><label for="sr">Rows</label><input id="sr" name="rows" required maxlength="400" placeholder="A-J"><span class="hint">A range like A-J or 1-20, or a list like AA,BB,CC.</span></div>
+        <div class="field"><label for="sp">Seats in each row</label><input id="sp" name="seatsPerRow" type="number" min="1" max="120" required value="20"></div></div>
+      <div class="grid-2"><div class="field"><label for="ss">First seat number</label><input id="ss" name="startNumber" type="number" min="1" max="9999" value="1"></div>
+        <div class="field"><label for="sa">Step-free rows <span class="muted">(optional)</span></label><input id="sa" name="accessibleRows" maxlength="100" placeholder="e.g. A"><span class="hint">Shown to buyers who need seats without steps.</span></div></div>
+      <p class="tiny muted mb-0">Seats are numbered left to right as the audience faces the stage. Keep single seats off sale afterwards with "Keep seats off sale".</p>
+      <button class="btn btn-primary">Add section</button></form>`);
+    onSubmit($("form", dlg), async (v) => {
+      data = await post(`${url}/sections`, { section: v.section, ticketTypeId: v.ticketTypeId, rows: v.rows, seatsPerRow: Number(v.seatsPerRow), startNumber: Number(v.startNumber || 1), accessibleRows: v.accessibleRows || undefined });
+      dlg.close(); toast("Section added.", "good"); draw();
+    });
+  };
+  draw();
+}
+
 // Owner/manager event tab and cashier scanner both use the same online-only
 // Box Office, permission checks, tender recording, and cash-up screens.
 async function boxOfficeTab(el, d) {
@@ -543,7 +637,7 @@ async function attendeesTab(el, d) {
     const checkedIn = r.checkedIn ?? list.filter((a) => a.status === "used").length;
     $("#att-sum").textContent = `${total.toLocaleString("en-ZA")} ticket${total === 1 ? "" : "s"} · ${checkedIn.toLocaleString("en-ZA")} checked in`;
     render($("#att-list"), html`${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Holder</th><th>Ticket</th><th>Code</th><th>Order</th><th>Status</th><th>Checked in</th></tr></thead><tbody>
-      ${list.map((a) => html`<tr><td>${a.holder_name || "–"}</td><td>${a.ticket_type}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty(q ? "No tickets match that search." : "No attendees yet.")}
+      ${list.map((a) => html`<tr><td>${a.holder_name || "–"}</td><td>${a.ticket_type}${a.seat_label ? html`<div class="small muted">${a.seat_label}</div>` : ""}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty(q ? "No tickets match that search." : "No attendees yet.")}
       ${page > 1 || r.more ? html`<div class="row between mt"><button class="btn btn-ghost btn-sm" data-pg="-1" ${raw(page > 1 ? "" : "disabled")}>Previous</button><span class="small muted">Page ${page}</span><button class="btn btn-ghost btn-sm" data-pg="1" ${raw(r.more ? "" : "disabled")}>Next</button></div>` : ""}`);
     $("#att-list").querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => { page += Number(b.dataset.pg); draw(); }));
   }

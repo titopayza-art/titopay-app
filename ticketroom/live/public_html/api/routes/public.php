@@ -107,8 +107,10 @@ route('GET', '/api/public/events/:slug', function ($a) {
                      FROM ticket_types WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, price_cents", [$ev['id']]);
     $cust = user() && account_type(user()) === 'customer' ? user() : null;
     $mine = $cust ? array_column(rows("SELECT ticket_type_id, status FROM waitlist_entries WHERE event_id = ? AND user_id = ? AND status IN ('waiting','offered')", [$ev['id'], $cust['id']]), 'status', 'ticket_type_id') : [];
+    $seated = array_flip(seated_type_ids($ev['id']));
     foreach ($types as &$t) {
         $t['fee_cents'] = event_ticket_fee($ev, (int) $t['price_cents']); $t['on_waitlist'] = isset($mine[$t['id']]);
+        $t['seated'] = isset($seated[$t['id']]);
         // Phases and sales windows: on_sale, next (after another ticket sells out), scheduled or ended.
         $r = tt_release_state($t); $t['release_state'] = $r['state']; $t['release_after_name'] = $r['after'] ?? null;
         unset($t['event_id']);
@@ -122,7 +124,21 @@ route('GET', '/api/public/events/:slug', function ($a) {
     $ev['cashless'] = cashless_open_event($ev);
     $ev['cashless_enabled'] = $ev['cashless'];
     $ev['liked'] = user() ? (bool) val('SELECT 1 FROM event_likes WHERE user_id = ? AND event_id = ?', [user()['id'], $ev['id']]) : false;
+    // Extras sold with tickets: parking, merchandise, upgrades.
+    $ev['addons'] = array_map(fn($x) => ['id' => $x['id'], 'name' => $x['name'], 'kind' => $x['kind'], 'description' => $x['description'], 'priceCents' => (int) $x['price_cents'],
+        'perOrderLimit' => (int) $x['per_order_limit'], 'remaining' => max(0, (int) $x['remaining'])],
+        rows("SELECT id, name, kind, description, price_cents, per_order_limit, quantity_total - quantity_sold - quantity_held AS remaining FROM event_addons WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, name", [$ev['id']]));
+    $ev['seated'] = (bool) $seated;
     return ['event' => $ev, 'ticketTypes' => $types];
+});
+
+// The seat map: which seats are open. Polled while a buyer is choosing.
+route('GET', '/api/public/events/:slug/seats', function ($a) {
+    limit('seatmap', 240, 60);
+    $ev = row("SELECT id FROM events WHERE slug = ? AND status IN ('published','cancelled','completed')", [$a['slug']]);
+    if (!$ev) throw not_found('Event not found.');
+    release_lapsed_holds($ev['id']);
+    return ['sections' => seat_map($ev['id'])];
 });
 
 route('POST', '/api/public/events/:slug/view', function ($a) {
@@ -246,19 +262,22 @@ route('POST', '/api/public/events/:slug/click', function ($a) {
 });
 
 function items_rule(): Closure { return R::arr(R::obj(['ticketTypeId' => R::uuid(), 'quantity' => R::int(['min' => 1, 'max' => 50])]), ['min' => 1, 'max' => 10]); }
+function addons_rule(): Closure { return R::arr(R::obj(['addonId' => R::uuid(), 'quantity' => R::int(['min' => 1, 'max' => 20])]), ['optional' => true, 'max' => 10]); }
+function seats_rule(): Closure { return R::arr(R::uuid(), ['optional' => true, 'max' => 50]); }
 
 route('POST', '/api/public/checkout/quote', function () {
     limit('quote', 120, 60);
-    $b = check(body(), ['eventSlug' => R::str(['max' => 120]), 'items' => items_rule(), 'promoCode' => R::str(['optional' => true, 'max' => 40])]);
+    $b = check(body(), ['eventSlug' => R::str(['max' => 120]), 'items' => items_rule(), 'addons' => addons_rule(), 'promoCode' => R::str(['optional' => true, 'max' => 40])]);
     $ev = row('SELECT * FROM events WHERE slug = ?', [$b['eventSlug']]);
     if (!$ev) throw not_found('Event not found.');
-    return ['quote' => public_quote(order_quote($ev, $b['items'], $b['promoCode'] ?? null))];
+    return ['quote' => public_quote(order_quote($ev, $b['items'], $b['promoCode'] ?? null, $b['addons'] ?? []))];
 });
 
 // Booking. Signed in, or as a guest with a name and email: no account needed.
 route('POST', '/api/public/orders', function () {
     $b = check(body(), [
         'eventSlug' => R::str(['max' => 120]), 'items' => items_rule(), 'promoCode' => R::str(['optional' => true, 'max' => 40]),
+        'addons' => addons_rule(), 'seats' => seats_rule(), 'whatsapp' => R::bool(['optional' => true]),
         'ref' => R::str(['optional' => true, 'max' => 40, 'pattern' => '/^[A-Za-z0-9_-]+$/']), 'buyerPhone' => R::phone(['optional' => true]),
         'marketingOptIn' => R::obj(['email' => R::bool(), 'sms' => R::bool()], ['optional' => true]), 'idempotencyKey' => R::idemKey(),
         'paymentMethod' => R::oneOf(['card', 'titopay_wallet'], ['optional' => true, 'fallback' => 'card']),
@@ -317,7 +336,7 @@ route('GET', '/api/public/orders/:ref', function ($a) {
     }
     $items = rows('SELECT oi.quantity, oi.unit_price_cents, oi.unit_fee_cents, tt.name FROM order_items oi JOIN ticket_types tt ON tt.id = oi.ticket_type_id WHERE oi.order_id = ?', [$o['id']]);
     $owner = row('SELECT email, guest FROM users WHERE id = ?', [$o['user_id']]);
-    $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.test, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
+    $tickets = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.test, t.seat_label, tt.name AS ticket_type, tt.admits FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
                       WHERE t.order_id = ? AND t.owner_user_id = ? ORDER BY t.created_at", [$o['id'], $o['user_id']]);
     // Booked into an account this visitor has not shown to be theirs: the
     // order's status only. The tickets went to that account's email.
@@ -336,7 +355,8 @@ route('GET', '/api/public/orders/:ref', function ($a) {
         ],
         'guest' => !$hidden && (int) $owner['guest'] === 1, 'email' => !$hidden && (int) $owner['guest'] === 1 ? $owner['email'] : null,
         'ticketsHidden' => $hidden, 'ticketCount' => $ticketCount,
-        'items' => $items, 'tickets' => $tickets, 'payment' => order_payment_view($o),
+        'items' => $items, 'addons' => order_addon_list($o['id'], true), 'tickets' => $tickets, 'payment' => order_payment_view($o),
+        'whatsapp' => (int) ($o['whatsapp_opt_in'] ?? 0) === 1,
     ];
 });
 

@@ -1,4 +1,4 @@
-import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
+import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, seatMapHtml, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js?build=2026-10-22-phases";
 
 const main = $("#main");
@@ -423,6 +423,10 @@ async function eventPage(slug, opts = {}) {
   // The organiser link that brought the buyer here: kept for later visits only with functional consent.
   if (ref) { if (consent("functional")) { try { sessionStorage.setItem(`tr_ref_${slug}`, ref); } catch { /* private mode */ } } post(`/api/public/events/${slug}/click`, { ref }).catch(() => {}); }
   const qty = Object.fromEntries(ticketTypes.map((t) => [t.id, 0]));
+  // Extras sold with tickets (parking, merchandise, upgrades), and seats picked on the seat map.
+  const extras = e.addons || [];
+  const xqty = Object.fromEntries(extras.map((x) => [x.id, 0]));
+  const seatPick = {};
   const closed = !e.salesOpen;
   const lineup = Array.isArray(e.lineup) ? e.lineup : [];
   const place = [e.venue_name, e.address, e.city, e.province].filter(Boolean).join(", ");
@@ -581,12 +585,43 @@ async function eventPage(slug, opts = {}) {
     setTimeout(() => { queueInWindow = false; drawSelect(); }, Math.max(0, Date.parse(e.sales_start_at) + 60 * 60 * 1000 - Date.now()));
   }
   const selection = () => ticketTypes.filter((t) => qty[t.id] > 0).map((t) => ({ ticketTypeId: t.id, quantity: qty[t.id] }));
+  const addonSel = () => extras.filter((x) => xqty[x.id] > 0).map((x) => ({ addonId: x.id, quantity: xqty[x.id] }));
+  const seatSel = () => Object.entries(seatPick).filter(([id]) => qty[id] > 0).flatMap(([, list]) => list.map((st) => st.id));
+  // The seat map for one ticket type: tap seats to choose them, or take the best available.
+  const chooseSeats = async (t) => {
+    let map;
+    try { map = (await get(`/api/public/events/${encodeURIComponent(slug)}/seats`)).sections; } catch (err) { toast(err.message, "bad"); return; }
+    const max = Math.max(1, Math.min(t.per_order_limit, t.remaining + (seatPick[t.id]?.length || 0)));
+    const picked = new Map((seatPick[t.id] || []).map((st) => [st.id, st]));
+    const d = dialog(`Choose your seats`, html`<div class="seatmap-wrap"><p class="small muted mb-0">${t.name}. Tap a seat to choose it, tap again to let it go.</p>
+      <div class="seatmap" data-map></div>
+      <div class="seat-legend tiny"><span><i class="seat"></i>Open</span><span><i class="seat sel"></i>Yours</span><span><i class="seat taken"></i>Taken</span><span><i class="seat step"></i>Step-free</span></div>
+      <div class="seat-foot"><span data-picked class="small"></span><div class="row"><button type="button" class="btn btn-ghost btn-sm" data-best>Best available</button><button type="button" class="btn btn-primary" data-done>Done</button></div></div></div>`, { wide: true });
+    const draw = () => {
+      render($("[data-map]", d), seatMapHtml(map, { picked: new Set(picked.keys()), dim: (sec) => sec.ticketTypeId !== t.id, canPick: (sec, st, sel) => sec.ticketTypeId === t.id && (st.s === "open" || sel) }));
+      $("[data-picked]", d).textContent = picked.size ? `${picked.size} ${picked.size === 1 ? "seat" : "seats"}: ${[...picked.values()].map((st) => st.short).join(", ")}` : `Choose up to ${max} ${max === 1 ? "seat" : "seats"}.`;
+      $$("[data-seat]", d).forEach((b) => b.addEventListener("click", () => {
+        const id = b.dataset.seat;
+        if (picked.has(id)) picked.delete(id);
+        else if (picked.size < max) picked.set(id, { id, short: b.dataset.short, label: b.dataset.full });
+        else { toast(`You can choose up to ${max} ${max === 1 ? "seat" : "seats"} here.`, "bad"); return; }
+        draw();
+        $(`[data-seat="${id}"]`, d)?.focus();
+      }));
+    };
+    draw();
+    $("[data-done]", d).addEventListener("click", () => { if (picked.size) { seatPick[t.id] = [...picked.values()]; qty[t.id] = picked.size; } d.close(); drawSelect(); });
+    $("[data-best]", d).addEventListener("click", () => { delete seatPick[t.id]; if (!qty[t.id]) qty[t.id] = 1; d.close(); drawSelect(); });
+  };
   let openGroups = null;
   const drawSelect = () => {
     if (queueInWindow && (!queueState || queueState.status !== "admitted")) { drawQueue(); return; }
     const count = Object.values(qty).reduce((a, b) => a + b, 0);
     const sub = ticketTypes.reduce((s, t) => s + t.price_cents * qty[t.id], 0);
     const fee = ticketTypes.reduce((s, t) => s + t.fee_cents * qty[t.id], 0);
+    if (!count) for (const x of extras) xqty[x.id] = 0;
+    const xsub = extras.reduce((s, x) => s + x.priceCents * xqty[x.id], 0);
+    const xcount = Object.values(xqty).reduce((a, b) => a + b, 0);
     setStep(0);
     // Ticket groups (e.g. General, VIP, Tables) as panels that open and close, each with its own banner.
     const cfgGroups = Array.isArray(e.ticket_groups) ? e.ticket_groups : [];
@@ -606,12 +641,14 @@ async function eventPage(slug, opts = {}) {
           ${!buyable(t) ? html`<div class="meta">${phaseNote(t)}</div>` : ""}
           ${t.admits > 1 || TICKET_KINDS[t.kind]?.note ? html`<div class="meta">${[t.admits > 1 ? `Admits ${t.admits} people` : "", TICKET_KINDS[t.kind]?.note || ""].filter(Boolean).join(" · ")}</div>` : ""}
           ${t.description ? html`<div class="meta">${t.description}</div>` : ""}
+          ${t.seated && buyable(t) && !closed && t.remaining > 0 ? html`<div class="tt-seats">${seatPick[t.id]?.length && qty[t.id] ? html`<span class="small">Seats ${seatPick[t.id].map((st) => st.short).join(", ")}</span>` : qty[t.id] ? html`<span class="small muted">Best available seats</span>` : ""}
+            <button type="button" class="btn btn-ghost btn-sm" data-seats="${t.id}">${seatPick[t.id]?.length && qty[t.id] ? "Change seats" : "Choose seats"}</button></div>` : ""}
           ${t.remaining === 0 && buyable(t) && !closed && !succeeded(t) ? (t.on_waitlist ? html`<p class="wl-on" role="status">You're on the waitlist. We'll email you when one comes up.</p>`
             : html`<button type="button" class="btn btn-ghost btn-sm wl-join" data-wl="${t.id}">Join the waitlist</button>`) : ""}</div>
         <div class="stepper" role="group" aria-label="${t.name} quantity"><button data-dec="${t.id}" aria-label="Fewer ${t.name}" ${raw(qty[t.id] === 0 ? "disabled" : "")}>−</button><output aria-live="polite">${qty[t.id]}</output><button data-inc="${t.id}" aria-label="More ${t.name}" ${raw(closed || !buyable(t) || qty[t.id] >= Math.min(t.per_order_limit, t.remaining) ? "disabled" : "")}>+</button></div></div>`;
     const groupStatus = (g) => { const open = g.types.filter((t) => t.remaining > 0 && buyable(t)); if (open.length) { const p = Math.min(...open.map((t) => t.price_cents)); return p === 0 ? "Free" : `From ${money(p)}`; } return g.types.some((t) => t.release_state === "next" || t.release_state === "scheduled") ? "Coming soon" : "Sold out"; };
     const picked = ticketTypes.filter((t) => qty[t.id] > 0);
-    const disabled = count === 0 || closed || (!cfg.cardPaymentsEnabled && sub > 0);
+    const disabled = count === 0 || closed || (!cfg.cardPaymentsEnabled && sub + xsub > 0);
     render(box, html`<div class="tix-grid"><div class="tix-list">
       <h2 id="tix-h" class="sr-only">Choose tickets</h2>
       ${closed ? html`<p class="callout warn">${e.preview ? "Preview only. Tickets go on sale once the event is published." : e.status === "cancelled" ? "Sales are closed." : "Ticket sales are not open right now."}</p>` : ""}
@@ -622,24 +659,38 @@ async function eventPage(slug, opts = {}) {
               <span class="tix-group-side"><span class="tix-group-status">${groupStatus(g)}</span>${icon("chevron")}</span></span></summary>
           <div class="tix-group-body">${g.types.map(row)}</div></details>`)
         : html`<section class="card tix-plain">${ticketTypes.map(row)}</section>`}
+      ${extras.length && !closed ? html`<section class="card tix-extras" aria-labelledby="ex-h"><h3 id="ex-h">Extras</h3>
+        <p class="small muted">Add them to your order. Show any ticket from the order to collect them at the event.</p>
+        ${extras.map((x) => html`<div class="tt"><div class="info"><div class="name">${x.name}</div>
+          <div class="meta">${x.priceCents ? html`<strong class="tt-price">${moneyExact(x.priceCents)}</strong>` : "Free"}${x.remaining === 0 ? html` · <span class="tt-out">Sold out</span>` : x.remaining < 20 ? ` · Only ${x.remaining} left` : ""}</div>
+          ${x.description ? html`<div class="meta">${x.description}</div>` : ""}</div>
+          <div class="stepper" role="group" aria-label="${x.name} quantity"><button data-xdec="${x.id}" aria-label="Fewer ${x.name}" ${raw(xqty[x.id] === 0 ? "disabled" : "")}>−</button><output aria-live="polite">${xqty[x.id]}</output><button data-xinc="${x.id}" aria-label="More ${x.name}" ${raw(count === 0 || xqty[x.id] >= Math.min(x.perOrderLimit, x.remaining) ? "disabled" : "")}>+</button></div></div>`)}
+        ${count === 0 ? html`<p class="tiny muted mb-0">Choose a ticket first.</p>` : ""}</section>` : ""}
       ${e.resale?.length ? html`<section class="resale-box card" aria-labelledby="rs-h"><h3 id="rs-h">Resale tickets</h3>
         <p class="small muted">Sold out, but these fans can't make it. Every resale ticket costs no more than they paid, and you get a brand new ticket with its own code.</p>
         ${e.resale.map((l) => html`<div class="tt resale-tt"><div class="info"><div class="name">${l.ticketType}</div><div class="meta">${moneyExact(l.priceCents)} <span>+ ${moneyExact(l.feeCents)} service fee</span></div></div>
           <button type="button" class="btn btn-primary btn-sm" data-resale="${l.id}">Buy</button></div>`)}</section>` : ""}
       </div>
       <aside class="tix-cart card" aria-label="Your cart"><h2 class="tix-cart-h">${icon("cart")}Cart</h2>
-        ${picked.length ? html`<div class="tix-lines">${picked.map((t) => html`<div class="line"><span>${qty[t.id]} × ${t.name}</span><span>${moneyExact(t.price_cents * qty[t.id])}</span></div>`)}</div>` : html`<p class="muted small">Your cart is empty.</p>`}
+        ${picked.length ? html`<div class="tix-lines">${picked.map((t) => html`<div class="line"><span>${qty[t.id]} × ${t.name}</span><span>${moneyExact(t.price_cents * qty[t.id])}</span></div>`)}
+          ${extras.filter((x) => xqty[x.id] > 0).map((x) => html`<div class="line"><span>${xqty[x.id]} × ${x.name}</span><span>${moneyExact(x.priceCents * xqty[x.id])}</span></div>`)}</div>` : html`<p class="muted small">Your cart is empty.</p>`}
         <div class="totals"><div class="line"><span>${count} ticket${count === 1 ? "" : "s"}</span><span>${moneyExact(sub)}</span></div>
+          ${xcount ? html`<div class="line"><span>${xcount} extra${xcount === 1 ? "" : "s"}</span><span>${moneyExact(xsub)}</span></div>` : ""}
           ${e.is_free && !fee ? "" : html`<div class="line"><span>Booking fee</span><span>${moneyExact(fee)}</span></div>`}
-          <div class="line total"><span>Total</span><span>${e.is_free && !sub && !fee ? "Free" : moneyExact(sub + fee)}</span></div></div>
-        ${!cfg.cardPaymentsEnabled && sub > 0 ? html`<p class="callout warn mt">Paid tickets go on sale soon. Free tickets are available now.</p>` : ""}
+          <div class="line total"><span>Total</span><span>${e.is_free && !sub && !fee && !xsub ? "Free" : moneyExact(sub + fee + xsub)}</span></div></div>
+        ${!cfg.cardPaymentsEnabled && sub + xsub > 0 ? html`<p class="callout warn mt">Paid tickets go on sale soon. Free tickets are available now.</p>` : ""}
         <button class="btn btn-primary btn-block mt" data-continue ${raw(disabled ? "disabled" : "")}>Continue</button>
         <p class="trust mt mb-0">${e.is_free ? "This event is free. Choose how many tickets you need and register." : html`${icon("lock")}${e.service_fee_payer === "organiser" ? "The organiser covers the service fee. Got a promo code or voucher? Add it on the next step." : "The service fee is shown beside each ticket before checkout. Got a promo code or voucher? Add it on the next step."}`}</p>
       </aside></div>
-      ${count ? html`<div class="tix-bar"><div class="row between"><span><span class="small">${count} ticket${count === 1 ? "" : "s"}</span><strong>${moneyExact(sub + fee)}</strong></span><button class="btn btn-primary" data-continue ${raw(disabled ? "disabled" : "")}>Continue</button></div></div>` : ""}`);
+      ${count ? html`<div class="tix-bar"><div class="row between"><span><span class="small">${count} ticket${count === 1 ? "" : "s"}${xcount ? ` + ${xcount} extra${xcount === 1 ? "" : "s"}` : ""}</span><strong>${moneyExact(sub + fee + xsub)}</strong></span><button class="btn btn-primary" data-continue ${raw(disabled ? "disabled" : "")}>Continue</button></div></div>` : ""}`);
     $$("[data-group]", box).forEach((d) => d.addEventListener("toggle", () => { if (d.open) openGroups.add(d.dataset.group); else openGroups.delete(d.dataset.group); }));
     $$("[data-inc]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.inc]++; drawSelect(); $(`[data-inc="${b.dataset.inc}"]`, box)?.focus(); }));
     $$("[data-dec]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.dec]--; drawSelect(); $(`[data-dec="${b.dataset.dec}"]`, box)?.focus(); }));
+    // Changing the count of a seated ticket by hand goes back to the best available seats.
+    $$("[data-inc],[data-dec]", box).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.inc || b.dataset.dec; if (seatPick[id]) { delete seatPick[id]; drawSelect(); } }));
+    $$("[data-seats]", box).forEach((b) => b.addEventListener("click", () => chooseSeats(ticketTypes.find((t) => t.id === b.dataset.seats))));
+    $$("[data-xinc]", box).forEach((b) => b.addEventListener("click", () => { xqty[b.dataset.xinc]++; drawSelect(); $(`[data-xinc="${b.dataset.xinc}"]`, box)?.focus(); }));
+    $$("[data-xdec]", box).forEach((b) => b.addEventListener("click", () => { xqty[b.dataset.xdec]--; drawSelect(); $(`[data-xdec="${b.dataset.xdec}"]`, box)?.focus(); }));
     // No account needed: signed-in people check out as themselves, anyone else as a guest.
     $$("[data-continue]", box).forEach((b) => b.addEventListener("click", async () => drawCheckout(await me())));
     $$("[data-wl]", box).forEach((b) => b.addEventListener("click", () => joinWaitlist(ticketTypes.find((t) => t.id === b.dataset.wl))));
@@ -698,7 +749,7 @@ async function eventPage(slug, opts = {}) {
     if (u) try { pm = await get("/api/me/payment-methods"); } catch { /* card only */ }
     const titopay = pm.links.find((l) => l.provider === "titopay");
     let quote;
-    try { quote = (await post("/api/public/checkout/quote", { eventSlug: slug, items: selection(), promoCode: promo || undefined })).quote; }
+    try { quote = (await post("/api/public/checkout/quote", { eventSlug: slug, items: selection(), addons: addonSel(), promoCode: promo || undefined })).quote; }
     catch (err) { if (promo) { toast(err.message, "bad"); return drawCheckout(u, ""); } throw err; }
     // A free event booked at no charge: no payment step, fees or promo codes.
     const freeOrder = !!e.is_free && quote.totalCents === 0;
@@ -706,7 +757,9 @@ async function eventPage(slug, opts = {}) {
     sessionStorage.setItem(`tr_idem_${slug}`, key);
     setStep(1);
     render(box, html`<div class="tix-single card"><h2 id="tix-h">Your details</h2>
-      <div class="totals">${quote.lines.map((l) => html`<div class="line"><span>${l.quantity} × ${l.name}</span><span>${moneyExact(l.unitPriceCents * l.quantity)}</span></div>`)}</div>
+      <div class="totals">${quote.lines.map((l) => html`<div class="line"><span>${l.quantity} × ${l.name}</span><span>${moneyExact(l.unitPriceCents * l.quantity)}</span></div>`)}
+        ${(quote.addons || []).map((l) => html`<div class="line"><span>${l.quantity} × ${l.name}</span><span>${l.unitPriceCents ? moneyExact(l.unitPriceCents * l.quantity) : "Free"}</span></div>`)}</div>
+      ${seatSel().length ? html`<p class="small mb-0">Your seats: ${Object.values(seatPick).flat().map((st) => st.label).join("; ")}</p>` : selection().some((l) => ticketTypes.find((t) => t.id === l.ticketTypeId)?.seated) ? html`<p class="small muted mb-0">We'll give you the best seats available, side by side where we can.</p>` : ""}
       ${freeOrder ? html`<div class="totals"><div class="line total"><span>Total</span><span>Free</span></div></div>` : html`<div class="totals"><div class="line"><span>Subtotal</span><span>${moneyExact(quote.subtotalCents)}</span></div>
         ${quote.discountCents ? html`<div class="line"><span>Code ${quote.promoCode}</span><span>−${moneyExact(quote.discountCents)}</span></div>` : ""}
         <div class="line"><span>Service fee</span><span>${moneyExact(quote.feeCents)}</span></div>
@@ -714,13 +767,15 @@ async function eventPage(slug, opts = {}) {
       ${freeOrder ? "" : html`<form class="row mt" id="promo"><label class="sr-only" for="pc">Promo code or voucher</label><input id="pc" name="code" placeholder="Promo code or voucher" class="grow" value="${quote.promoCode || ""}" maxlength="40" autocomplete="off"><button class="btn btn-ghost btn-sm">Apply</button></form>`}
       <form class="stack mt" id="pay">
         ${u ? html`<p class="small mb-0">Tickets go to <strong>${u.email}</strong>.</p>
-        <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>`
+        <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>
+        ${cfg.features?.whatsapp ? html`<label class="check"><input type="checkbox" name="whatsapp"><span>Also send my tickets on WhatsApp <span class="muted">(to this mobile number)</span></span></label>` : ""}`
         : html`<fieldset class="stack card flat"><legend class="label">Your details</legend>
           <p class="small muted mb-0">No account needed. We email your tickets, and you can add them to an account later. <button type="button" class="btn-link" data-signin>Sign in instead</button></p>
           <div class="field"><label for="g-name">Full name</label><input id="g-name" name="gName" autocomplete="name" required maxlength="120"></div>
           <div class="field"><label for="g-email">Email</label><input id="g-email" name="gEmail" type="email" autocomplete="email" required></div>
           <div class="field"><label for="g-email2">Confirm email</label><input id="g-email2" name="gEmail2" type="email" autocomplete="email" required><span class="hint">Your tickets are sent here, so check it twice.</span></div>
-          <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" autocomplete="tel" placeholder="082 123 4567"></div></fieldset>`}
+          <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" autocomplete="tel" placeholder="082 123 4567"></div>
+        ${cfg.features?.whatsapp ? html`<label class="check"><input type="checkbox" name="whatsapp"><span>Also send my tickets on WhatsApp <span class="muted">(to this mobile number)</span></span></label>` : ""}</fieldset>`}
         ${quote.totalCents > 0 ? html`<fieldset class="stack card flat"><legend class="label">Pay with</legend>
           <label class="check"><input type="radio" name="paymentMethod" value="card" checked><span>Card, EFT or instant EFT</span></label>
           ${pm.titopayAvailable ? (titopay ? html`<label class="check"><input type="radio" name="paymentMethod" value="titopay_wallet"><span>TitoPay wallet <span class="muted small">${titopay.display_handle}</span></span></label>`
@@ -744,8 +799,9 @@ async function eventPage(slug, opts = {}) {
       if (!u && String(v.gEmail || "").trim().toLowerCase() !== String(v.gEmail2 || "").trim().toLowerCase()) {
         throw Object.assign(new Error("The two email addresses don't match."), { details: { gEmail2: "Must match the email above." } });
       }
+      if (v.whatsapp && !String(v.buyerPhone || "").trim()) throw Object.assign(new Error("Add your mobile number for WhatsApp."), { details: { buyerPhone: "Needed to send your tickets on WhatsApp." } });
       const body = {
-        eventSlug: slug, items: selection(), promoCode: quote.promoCode || undefined, ref: ref || sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
+        eventSlug: slug, items: selection(), addons: addonSel(), seats: seatSel(), whatsapp: !!v.whatsapp, promoCode: quote.promoCode || undefined, ref: ref || sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
         retailPartnerRef: new URLSearchParams(location.search).get("retailer") || sessionStorage.getItem(`tr_retail_${slug}`) || undefined,
         ...(queueToken ? { presaleQueueToken: queueToken } : {}),
         buyerPhone: v.buyerPhone, marketingOptIn: { email: !!v.mEmail, sms: !!v.mSms }, idempotencyKey: key, paymentMethod: v.paymentMethod || "card",
@@ -811,7 +867,7 @@ function orderTicket(t, o, f, q) {
   return html`<div class="tk-wrap"><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"} ${test ? "is-test" : ""}" aria-label="${test ? "Test ticket" : "Ticket"} ${t.code}">
     ${test ? html`<p class="tk-test" role="note">TEST TICKET · not valid for entry</p>` : testEvent ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · not a real event</p>` : ""}
     <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${o.event.title}</h3><p class="tk-when">${when}</p><p class="tk-where">${o.event.venue}, ${o.event.city}</p></header>
-    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || o.buyerName}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${o.reference}</dd></div></dl>
+    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div>${t.seat_label ? html`<div class="tk-seat"><dt>Seat</dt><dd>${t.seat_label}</dd></div>` : ""}<div><dt>Holder</dt><dd>${t.holder_name || o.buyerName}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${o.reference}</dd></div></dl>
       <div class="t-qr">${live ? html`<img src="${t.qrUrl}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
       <p class="tk-scan">${t.status === "used" ? `Scanned ${fmtDateTime(t.admitted_at)}` : live ? "Scan at the entrance" : ""}</p></div>
     <div class="tk-perf" aria-hidden="true"></div>
@@ -830,7 +886,7 @@ async function orderPage(ref) {
   const q = k ? `?k=${encodeURIComponent(k)}` : "";
   let tries = 0;
   const draw = async () => {
-    const { order: o, items, tickets, payment, guest, email, ticketsHidden, ticketCount } = await get(`/api/public/orders/${encodeURIComponent(ref)}${q}`);
+    const { order: o, items, addons, tickets, payment, guest, email, ticketsHidden, ticketCount, whatsapp } = await get(`/api/public/orders/${encodeURIComponent(ref)}${q}`);
     const wallet = payment?.method === "titopay_wallet";
     const f = await features();
     document.title = `Order ${o.reference} | TicketRoom`;
@@ -841,7 +897,7 @@ async function orderPage(ref) {
       ${o.testEvent ? html`<p class="tk-test" role="note" data-test-event>TEST EVENT · made by TicketRoom to try bookings and the gate, not a real event</p>` : ""}
       ${o.test ? html`<p class="callout warn mb-0"><strong>Test order.</strong> This was paid while TicketRoom payments were in test mode. No real money moved, and these tickets will not open the gate.</p>` : ""}
       ${paid && ticketsHidden ? html`<h1>Booking confirmed</h1><p>${ticketCount} ticket${ticketCount === 1 ? " is" : "s are"} booked for <strong>${o.event.title}</strong> and sent to the email address on the order. To see them, open the link in that confirmation email, or sign in with that email address.</p>`
-        : paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you as well.</p>
+        : paid ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've emailed them to you${whatsapp ? " and sent them on WhatsApp" : ""} as well.</p>
           ${guest ? html`<div class="callout"><strong>Keep your tickets in one place.</strong> Create a free account with <strong>${email}</strong> and confirm it: these tickets, and any you buy later, will be waiting there. You can then pass a ticket to a friend or change the name on it.
             <div class="row mt"><button class="btn btn-primary btn-sm" data-make-account>Create my account</button></div></div>`
           : html`<div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>`}
@@ -854,6 +910,7 @@ async function orderPage(ref) {
         : html`<h1>${o.status === "expired" ? "Reservation expired" : o.status === "cancelled" ? "Order cancelled" : "Order " + o.status.replace(/_/g, " ")}</h1><p>No tickets were issued${o.status === "expired" || o.status === "cancelled" ? " and nothing was charged" : ""}.</p><a class="btn btn-primary" href="/events/${o.event.slug}">Try again</a>`}
       <div class="card flat"><h3>${o.event.title}</h3><p class="muted small mb-0">${fmtDateTime(o.event.startsAt)} · ${o.event.venue}, ${o.event.city}</p>
         <div class="totals">${items.map((i) => html`<div class="line"><span>${i.quantity} × ${i.name}</span><span>${moneyExact(i.unit_price_cents * i.quantity)}</span></div>`)}
+        ${(addons || []).filter((x) => x.status !== "cancelled").map((x) => html`<div class="line"><span>${x.quantity} × ${x.name}${x.status === "refunded" ? " (refunded)" : x.collected ? ` (${x.collected} collected)` : ""}</span><span>${x.unitPriceCents ? moneyExact(x.unitPriceCents * x.quantity) : "Free"}</span></div>`)}
         ${o.discountCents ? html`<div class="line"><span>Discount</span><span>−${moneyExact(o.discountCents)}</span></div>` : ""}
         <div class="line"><span>Service fee</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div>
         ${o.refundedCents ? html`<div class="line"><span>Refunded</span><span>−${moneyExact(o.refundedCents)}</span></div>` : ""}</div></div>
@@ -872,7 +929,7 @@ async function orderPage(ref) {
       try {
         const svg = await fetch(t.qrUrl, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
         const png = await ticketPng(svg, { test: Number(t.test) === 1, testEvent: !!o.testEvent, title: o.event.title, when: `${fmtDate(o.event.startsAt, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(o.event.startsAt)}`, place: `${o.event.venue}, ${o.event.city}`, code: t.code,
-          rows: [["Ticket", t.ticket_type], ["Holder", t.holder_name || o.buyerName], ...(t.admits > 1 ? [["Admits", `${t.admits} people`]] : []), ["Order", o.reference]] });
+          rows: [["Ticket", t.ticket_type], ...(t.seat_label ? [["Seat", t.seat_label]] : []), ["Holder", t.holder_name || o.buyerName], ...(t.admits > 1 ? [["Admits", `${t.admits} people`]] : []), ["Order", o.reference]] });
         const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `ticket-${t.code}.png`; document.body.append(a); a.click(); a.remove();
         toast("Saved. Show this picture at the gate if you have no signal.", "good");
       } catch (err) { toast(err.message, "bad"); }

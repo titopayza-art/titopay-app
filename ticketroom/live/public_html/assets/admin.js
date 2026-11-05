@@ -1262,6 +1262,7 @@ const INTEG_HELP = {
   payouts: "Choose manual EFT or Peach Payments. Test approved payouts in Peach sandbox first; sandbox transfers never settle real organiser balances. Production transfers require a separate finance action after approval and cannot be recalled.",
   email: "The mailbox TicketRoom sends from: confirmations, tickets, password links and updates.",
   sms: "Optional. Buyers who give a mobile number get a short SMS with their tickets. Use BulkSMS or Clickatell, or connect your own provider through its web API.",
+  whatsapp: "Optional. Buyers who give a mobile number can choose to get their tickets on WhatsApp, with a link that opens them. Messages go from your WhatsApp Business number through Meta, using a template Meta has approved. Practice mode shows each message under Messages without sending it.",
   verifynow: "Electronic checks on organisers by VerifyNow: SA ID numbers with Home Affairs (always), and the checks you choose below. They run in the background after the organiser gives permission, and anything VerifyNow cannot confirm comes to Verification for a person to decide.",
   identity: "How organisers' ID documents are checked (FICA). Staff review works now. The sandbox simulates a provider for testing. Your own provider is called with the ID number when an ID document is uploaded; anything it does not confirm goes to staff.",
   google: "Optional. Lets customers and organisers sign in or sign up with their Google account, no password needed. Staff always use the admin password sign-in.",
@@ -1301,7 +1302,7 @@ function integrationCard(i) {
     <form class="stack" data-form="${i.key}" autocomplete="off"><div class="grid-2">${i.fields.map(field)}</div>
       ${isA() ? html`<div class="row"><button class="btn btn-primary">Save ${i.label.toLowerCase()} settings</button>${i.key === "wallet" ? html`<button type="button" class="btn btn-ghost" data-test="wallet">Test</button>` : html`<button type="button" class="btn btn-ghost" data-health="${i.key}">${i.key === "verifynow" ? "Test connection" : "Check connection"}</button>`}
           ${i.key === "payments" && i.provider === "yoco" ? html`<button type="button" class="btn btn-ghost" data-yoco-page="test">Test payment page (Test)</button><button type="button" class="btn btn-ghost" data-yoco-page="live">Test payment page (Live)</button>` : ""}
-          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : i.key === "identity" ? html`<button type="button" class="btn btn-ghost" data-test="identity">Try a check</button>` : ""}</div>
+          ${i.key === "email" ? html`<button type="button" class="btn btn-ghost" data-test="email">Send a test email</button>` : i.key === "sms" ? html`<button type="button" class="btn btn-ghost" data-test="sms">Send a test SMS</button>` : i.key === "whatsapp" ? html`<button type="button" class="btn btn-ghost" data-test="whatsapp">Send a test message</button>` : i.key === "identity" ? html`<button type="button" class="btn btn-ghost" data-test="identity">Try a check</button>` : ""}</div>
         <p class="tiny muted mb-0">Saving asks for your password. Saved keys and passwords are encrypted and never shown again, not even to admins.</p>` : html`<p class="small muted mb-0">Only admins can change these settings.</p>`}
     </form></section>`;
 }
@@ -1375,6 +1376,7 @@ async function integrations() {
     let body = {};
     if (b.dataset.test === "wallet") body = {};
     else if (b.dataset.test === "identity") { const number = await confirmDialog("Try an identity check", "Type a test SA ID or passport number. It is checked on this server first, then sent to the provider you saved. Nothing is stored.", { confirm: "Check", input: { label: "ID or passport number", required: true } }); if (!number) return; body = { number }; }
+    else if (b.dataset.test === "whatsapp") { const phone = await confirmDialog("Send a test WhatsApp", "We'll send your ticket template once to this number, with sample details.", { confirm: "Send", input: { label: "Mobile number on WhatsApp", required: true, placeholder: "082 123 4567", type: "tel" } }); if (!phone) return; body = { phone }; }
     else if (b.dataset.test === "sms") { const phone = await confirmDialog("Send a test SMS", "We'll send one short SMS to this number.", { confirm: "Send", input: { label: "Mobile number", required: true, placeholder: "082 123 4567", type: "tel" } }); if (!phone) return; body = { phone }; }
     else { const to = await confirmDialog("Send a test email", "We'll send one short email to this address straight away and tell you what happened.", { confirm: "Send", input: { label: "Email address", type: "email", required: true, value: (await me()).email } }); if (!to) return; body = { to }; }
     b.disabled = true;
