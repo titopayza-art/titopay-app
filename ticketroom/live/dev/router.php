@@ -11,7 +11,7 @@
  *   - /api/* and /media/* run api/index.php; nothing else in api/ is served
  *   - maintenance mode sends pages (except admin, contact, scan, pos) through index.php
  *   - moved addresses, /x.html, /index and trailing slashes redirect (301)
- *   - /events/<slug>[/tickets] -> event.html, /orders/<ref> -> order.html
+ *   - /events/<slug>[/tickets] and /sitemap.xml -> index.php (event page with its own meta), /orders/<ref> -> order.html
  *   - clean addresses serve the matching .html file
  *   - hidden files, .md/.sql/.sqlite/.zip/..., START-HERE.txt and error_log are 403
  *   - the .htaccess response headers (CSP, nosniff, no-store pages, ...)
@@ -89,7 +89,7 @@ $serve = function (string $file, int $status = 200) use ($root, $types, $always)
 if (str_contains($path, "\0") || str_contains($path, '\\')) return $deny(400);
 
 // --- Private folders
-if (preg_match('#^(data|tr-app|tr-data)(/|$)#', $rel)) return $deny();
+if (preg_match('#^(data|tr-app|tr-data|server)(/|$)#', $rel)) return $deny();
 
 // --- Never served (FilesMatch): hidden files, notes, archives, databases.
 foreach (explode('/', $rel) as $seg) if ($seg !== '' && $seg[0] === '.') return $deny();
@@ -120,7 +120,8 @@ if (preg_match('#^(.+?)\.html$#i', $rel, $m)) return $redirect('/' . $m[1]);
 if ($rel !== '' && str_ends_with($rel, '/') && !is_dir("$root/$rel")) return $redirect('/' . rtrim($rel, '/'));
 
 // Event and order pages share one page each.
-if (preg_match('#^events/[^/]+(/tickets)?$#', $rel)) return $serve('event.html');
+// Event pages and the sitemap go through index.php, as .htaccess sends them.
+if (preg_match('#^events/[^/]+(/tickets)?$#', $rel) || $rel === 'sitemap.xml') return $runPhp('index.php', '/index.php');
 if (preg_match('#^orders/[^/]+$#', $rel)) return $serve('order.html');
 
 // Root-level PHP scripts (setup.php, deploy-check.php, set-password.php, index.php).

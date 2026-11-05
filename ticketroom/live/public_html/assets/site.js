@@ -391,7 +391,7 @@ async function eventPage(slug, opts = {}) {
   const pv = new URLSearchParams(location.search).get("preview");
   const [{ event: e, ticketTypes }, cfg] = await Promise.all([get(`/api/public/events/${encodeURIComponent(slug)}${pv ? `?preview=${encodeURIComponent(pv)}` : ""}`), get("/api/config")]);
   // Previews are private: keep them out of search engines.
-  if (e.preview || e.is_test) { const m = document.createElement("meta"); m.name = "robots"; m.content = "noindex"; document.head.append(m); }
+  if ((e.preview || e.is_test) && !document.querySelector('meta[name="robots"]')) { const m = document.createElement("meta"); m.name = "robots"; m.content = "noindex"; document.head.append(m); }
   document.title = `${e.title} | TicketRoom`;
   if (!ticketsMode && !e.preview && e.status === "published") post(`/api/public/events/${encodeURIComponent(slug)}/view`, {}).catch(() => {});
   const ref = new URLSearchParams(location.search).get("ref");

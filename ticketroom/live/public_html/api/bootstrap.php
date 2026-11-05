@@ -31,6 +31,7 @@ require TR_APP . '/lib/exchange.php';
 require TR_APP . '/lib/ops.php';
 require TR_APP . '/lib/testevent.php';
 require TR_APP . '/lib/team.php';
+require TR_APP . '/lib/seo.php';
 
 // The API's route files, loaded by name. A file left behind by an older
 // upload (one no longer in this list) is never run. A new route file must be

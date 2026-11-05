@@ -1513,5 +1513,9 @@ body.venue .welcome .lead, body.venue .welcome p { color: #C8D4EA; }
 .home-pair .safety-teaser-link { margin: auto 0 0; min-height: 40px; font-size: .9rem; }
 @media (max-width: 420px) { .home-pair .safety-teaser { padding: 16px; } }
 
-/* The Help button floats; the end of the page leaves room for it. */
-body:has(.chat-fab) .site-footer { padding-bottom: 88px; }
+/* The Help button floats at the bottom right. The footer ends with normal
+   spacing; on phones its last row keeps the right side clear, so the button
+   sits beside the country picker instead of over a link. */
+body:has(.chat-fab) .site-footer { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+body:has(.chat-fab) .site-footer .legal-line { padding-right: 150px; }
+@media (max-width: 520px) { body:has(.chat-fab) .site-footer .legal-line { padding-right: 76px; } }

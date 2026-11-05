@@ -59,7 +59,10 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^(.+)/$ /$1 [R=301,L]
 
 # Event and order pages share one page each; the address says which.
-RewriteRule ^events/[^/]+(/tickets)?$ /event.html [L]
+# Event pages go through index.php, which writes the event's own title,
+# picture and Google event data into the page (link previews, search).
+RewriteRule ^events/[^/]+(/tickets)?$ /index.php [L]
+RewriteRule ^sitemap\.xml$ /index.php [L]
 RewriteRule ^orders/[^/]+$ /order.html [L]
 
 # The clean address serves the matching .html file.

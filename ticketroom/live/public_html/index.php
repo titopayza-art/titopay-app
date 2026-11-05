@@ -98,6 +98,19 @@ $maintenancePage = function (string $message): void {
         . '<h1>We\'ll be right back</h1><p>' . $e($message) . '</p><p class="small">Need help? <a href="/contact">Use our contact form</a>; we\'ll email you a reference.</p></main></div></body></html>';
 };
 
+// The sitemap for search engines: public pages and events on sale.
+if ($key === 'sitemap.xml') {
+    try {
+        require_once $root . '/api/bootstrap.php';
+        tr_load();
+        $xml = seo_sitemap();
+        header('Content-Type: application/xml; charset=utf-8');
+        header('Cache-Control: public, max-age=3600');
+        echo $xml;
+    } catch (Throwable $e) { http_response_code(503); header('Retry-After: 300'); }
+    exit;
+}
+
 foreach ($candidates as $rel) {
     $full = realpath("$root/$rel");
     if ($full === false || !is_file($full) || !str_starts_with($full, $root . DIRECTORY_SEPARATOR)) continue;
@@ -115,6 +128,18 @@ foreach ($candidates as $rel) {
         header('X-Frame-Options: DENY');
     }
     header('Cache-Control: ' . (in_array($ext, ['html', 'css', 'js', 'webmanifest'], true) ? 'no-cache' : 'public, max-age=86400'));
+    // An event page carries its own title, picture and Google event data, so
+    // shared links and search results show the event. Any problem: the plain page.
+    if ($name === 'event.html' && preg_match('#^events/([^/]+)#', $key, $em)) {
+        $page = (string) file_get_contents($full);
+        try {
+            require_once $root . '/api/bootstrap.php';
+            tr_load();
+            $page = seo_event_html($em[1], $page);
+        } catch (Throwable $e) { error_log('[ticketroom] event page meta: ' . $e->getMessage()); }
+        echo $page;
+        exit;
+    }
     readfile($full);
     exit;
 }

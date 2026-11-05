@@ -3,6 +3,10 @@ TICKETROOM WEBSITE: READ THIS FIRST
 
 This is build 2026-10-22-phases.
 
+GOING LIVE: read LAUNCH-CHECKLIST.md (what is ready, what only you can do,
+and the first marketing steps). Moving to your own server with MySQL:
+DEPLOY-SERVER.md.
+
 UPDATING A SITE THAT IS ALREADY LIVE
 ------------------------------------
   1. Keep maintenance ON for the whole update (gate scanners, the top-up

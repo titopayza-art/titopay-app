@@ -8,3 +8,5 @@ Disallow: /orders/
 Disallow: /unsubscribe
 Disallow: /pass
 Disallow: /pay
+
+Sitemap: https://ticketroom.co.za/sitemap.xml
