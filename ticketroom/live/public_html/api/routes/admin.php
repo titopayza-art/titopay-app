@@ -406,16 +406,19 @@ route('GET', '/api/admin/users', function () {
     adm_admin_or_support();
     $s = adm_search('q');
     $type = (string) qs('type', '');
-    if (!in_array($type, ['', 'customer', 'organiser'], true)) $type = '';
+    if (!in_array($type, ['', 'customer', 'organiser', 'deleted'], true)) $type = '';
+    $deleted = $type === 'deleted' ? 1 : 0;
+    if ($deleted) $type = '';
     $like = "%$s%";
     $list = rows("SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_type, u.guest, u.created_at, u.email_verified_at,
                          (SELECT group_concat(o.name, ', ') FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = u.id) AS organisations
                     FROM users u
-                   WHERE u.account_type <> 'staff' AND (? = '' OR u.account_type = ?)
+                   WHERE u.account_type <> 'staff' AND (? = '' OR u.account_type = ?) AND (u.status = 'deleted') = (? = 1)
                      AND (? = '' OR lower(u.email) LIKE lower(?) OR lower(u.full_name) LIKE lower(?) OR lower(COALESCE(u.phone,'')) LIKE lower(?))
-                   ORDER BY u.created_at DESC LIMIT 100", [$type, $type, $s, $like, $like, $like]);
+                   ORDER BY u.created_at DESC LIMIT 100", [$type, $type, $deleted, $s, $like, $like, $like]);
     $counts = [];
-    foreach (rows("SELECT account_type, count(*) AS n FROM users WHERE account_type <> 'staff' GROUP BY account_type") as $r) $counts[$r['account_type']] = (int) $r['n'];
+    foreach (rows("SELECT account_type, count(*) AS n FROM users WHERE account_type <> 'staff' AND status <> 'deleted' GROUP BY account_type") as $r) $counts[$r['account_type']] = (int) $r['n'];
+    $counts['deleted'] = (int) val("SELECT count(*) FROM users WHERE account_type <> 'staff' AND status = 'deleted'");
     return ['users' => $list, 'counts' => $counts];
 });
 
@@ -446,6 +449,45 @@ route('POST', '/api/admin/users/:id/status', function ($a) {
         if ($b['status'] === 'suspended') q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [$now, $a['id']]);
     });
     audit("user.{$b['status']}", ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['reason' => $b['reason']]]);
+    return ['ok' => true];
+});
+
+// Deleting a customer or organiser account: they can no longer sign in and
+// drop out of the lists, but nothing they did is removed. Orders, tickets,
+// payments and the audit trail stay as they are (orders keep their own copy of
+// the buyer's email). The account's email is swapped for a placeholder so the
+// address is free to sign up again; the original name, email and phone are
+// kept in the audit log, and Restore puts them back.
+const DELETED_EMAIL_DOMAIN = 'deleted.ticketroom.invalid';
+route('POST', '/api/admin/users/:id/delete', function ($a) {
+    $u = adm_admin();
+    $b = check(body(), ['reason' => R::str(['min' => 3, 'max' => 400])]);
+    if ($a['id'] === $u['id']) throw bad('You cannot delete your own account.');
+    adm_guard_owner($u, $a['id']);
+    $was = tx(function () use ($a) {
+        $t = row("SELECT id, email, full_name, phone, account_type FROM users WHERE id = ? AND status <> 'deleted' AND account_type <> 'staff'", [$a['id']]);
+        if (!$t) throw not_found('User not found.');
+        $now = now_iso();
+        $placeholder = "deleted.{$t['id']}@" . DELETED_EMAIL_DOMAIN;
+        q("UPDATE users SET status = 'deleted', email = ?, email_key = ?, updated_at = ? WHERE id = ?", [$placeholder, email_key($placeholder), $now, $t['id']]);
+        q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [$now, $t['id']]);
+        return $t;
+    });
+    audit('user.deleted', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['reason' => $b['reason'],
+        'email' => $was['email'], 'fullName' => $was['full_name'], 'phone' => $was['phone'], 'accountType' => $was['account_type']]]);
+    return ['ok' => true];
+});
+route('POST', '/api/admin/users/:id/restore', function ($a) {
+    $u = adm_admin();
+    $b = check(body(), ['reason' => R::str(['min' => 3, 'max' => 400])]);
+    $logged = row("SELECT details FROM audit_log WHERE action = 'user.deleted' AND entity_id = ? ORDER BY id DESC LIMIT 1", [$a['id']]);
+    $email = (string) ($logged['details']['email'] ?? '');
+    if ($email === '') throw not_found('This account has no saved email to restore.');
+    tx(function () use ($a, $email) {
+        if (user_by_email($email)) throw conflict("$email now belongs to another account, so this one cannot be restored.", 'email_taken');
+        if (!affected("UPDATE users SET status = 'active', email = ?, email_key = ?, updated_at = ? WHERE id = ? AND status = 'deleted' AND account_type <> 'staff'", [$email, email_key($email), now_iso(), $a['id']])) throw not_found('User not found.');
+    });
+    audit('user.restored', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['reason' => $b['reason']]]);
     return ['ok' => true];
 });
 

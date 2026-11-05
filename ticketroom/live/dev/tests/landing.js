@@ -1,8 +1,8 @@
 // The public home page (landing page), L1-L8:
 //   L1 the announcement is a slim, dismissible bar above the site header (still
 //      set in Admin > Site settings), and the events follow the hero directly
-//   L2 trust strip under the hero: one row on a computer, wrapping on a phone,
-//      payment methods as plain text (no third-party logos), wallets only when on
+//   L2 the sample ticket: in the opening section on a phone (realistic size),
+//      in "This is what you get" on a computer, wallets named only when on
 //   L3 the "Cashless events" band is always there: a rail when cashless events
 //      are on sale, otherwise four "how it works" steps and a link for organisers
 //   L4 "Browse by city" tiles from the API's city list (hidden under 2 cities)
@@ -117,34 +117,24 @@ function manyEvents(body, n, cities = ["Cape Town", "Johannesburg", "Durban"]) {
     await admin.call("PUT", "/api/admin/settings/banner", bannerBefore);
   });
 
-  await test("L2 trust strip: one row on a computer, wraps on a phone, plain payment text, wallets only when on", async () => {
-    for (const size of [DESKTOP, PHONE]) {
-      const p = await open(size, { config: (c) => ({ ...c, features: { ...(c.features || {}), walletApple: false, walletGoogle: false } }) });
-      const r = await p.evaluate(() => {
-        const s = document.querySelector("[data-trust]");
-        const items = s ? [...s.children].map((li) => { const b = li.getBoundingClientRect(); return { top: Math.round(b.top), right: b.right, svg: !!li.querySelector("svg"), text: li.innerText }; }) : [];
-        const hero = document.querySelector(".hero").getBoundingClientRect().bottom, top = s?.closest("section").getBoundingClientRect().top;
-        return { items, imgs: s ? [...s.querySelectorAll("img")].map((i) => i.src) : [], gapToHero: top - hero, vw: document.documentElement.clientWidth };
-      });
-      assert(r.items.length === 4, `${size[0]}: expected 4 trust items, got ${r.items.length}`);
-      assert(Math.abs(r.gapToHero) < 2, `${size[0]}: the strip is not straight under the hero (${r.gapToHero})`);
-      assert(r.items.every((i) => i.svg) && !r.imgs.length, `${size[0]}: icons must be line icons, no images ${JSON.stringify(r.imgs)}`);
-      const all = r.items.map((i) => i.text).join(" | ");
-      for (const want of ["Pay by card or EFT", "Card, instant EFT, SnapScan and Zapper", "Tickets on your phone", "Fair resale at face value", "Help with your order"]) assert(all.includes(want), `${size[0]}: "${want}" missing in ${all}`);
-      assert(!/Wallet/.test(all), `${size[0]}: wallets named while switched off: ${all}`);
-      if (size === DESKTOP) assert(new Set(r.items.map((i) => i.top)).size === 1, `desktop: trust items not in one row ${JSON.stringify(r.items.map((i) => i.top))}`);
-      else assert(new Set(r.items.map((i) => i.top)).size > 1 && r.items.every((i) => i.right <= r.vw + 1), `phone: trust items do not wrap ${JSON.stringify(r.items)}`);
-      assert(!p.problems.length, p.problems.join("; "));
-      await p.ctx.close();
-    }
-    const p = await open(DESKTOP, { config: (c) => ({ ...c, features: { ...(c.features || {}), walletApple: true, walletGoogle: true } }) });
-    const t = await p.locator("[data-trust]").innerText();
-    assert(/Apple Wallet/.test(t) && /Google Wallet/.test(t), `wallets on but not named: ${t}`);
+  await test("L2 sample ticket: in the opening section on a phone at a realistic size, \"This is what you get\" on a computer, wallets named only when on", async () => {
+    const p = await open(PHONE, { config: (c) => ({ ...c, features: { ...(c.features || {}), walletApple: false, walletGoogle: false } }) });
+    const r = await p.evaluate(() => {
+      const t = document.querySelector(".hero .hero-ticket .ticket");
+      const b = t && t.getBoundingClientRect();
+      return { shown: !!b && b.width > 0, width: b ? Math.round(b.width) : 0, vw: document.documentElement.clientWidth, trust: !!document.querySelector("[data-trust], .home-trust"), lead: document.querySelector("#your-ticket .lead")?.textContent || "" };
+    });
+    assert(r.shown, "phone: no sample ticket in the opening section");
+    assert(r.width <= r.vw * 0.5, `phone: the sample ticket is too big (${r.width}px of ${r.vw}px)`);
+    assert(!r.trust, "the trust strip is back");
+    assert(!/Wallet/.test(r.lead), `wallets named while switched off: ${r.lead}`);
+    assert(!p.problems.length, p.problems.join("; "));
     await p.ctx.close();
-    const q = await open(DESKTOP, { config: (c) => ({ ...c, features: { ...(c.features || {}), walletApple: false, walletGoogle: true } }) });
-    const t2 = await q.locator("[data-trust]").innerText();
-    assert(!/Apple Wallet/.test(t2) && /Google Wallet/.test(t2), `only Google Wallet on: ${t2}`);
-    await q.ctx.close();
+    const d = await open(DESKTOP, { config: (c) => ({ ...c, features: { ...(c.features || {}), walletApple: true, walletGoogle: true } }) });
+    const r2 = await d.evaluate(() => ({ art: !!document.querySelector("#your-ticket .ticket-demo-art .ticket")?.getBoundingClientRect().width, lead: document.querySelector("#your-ticket .lead")?.textContent || "" }));
+    assert(r2.art, "desktop: no sample ticket in \"This is what you get\"");
+    assert(/Apple Wallet/.test(r2.lead) && /Google Wallet/.test(r2.lead), `wallets on but not named: ${r2.lead}`);
+    await d.ctx.close();
   });
 
   await test("L3 cashless band is always there: steps when nothing is on sale, a rail when it is", async () => {
@@ -274,7 +264,7 @@ function manyEvents(body, n, cities = ["Cape Town", "Johannesburg", "Durban"]) {
         const lum = (c) => { const m = c.match(/[\d.]+/g).map(Number); const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return [0.2126 * f(m[0]) + 0.7152 * f(m[1]) + 0.0722 * f(m[2]), m[3] ?? 1]; };
         const bgOf = (el) => { for (let e = el; e; e = e.parentElement) { const s = getComputedStyle(e); const bg = s.backgroundColor; if (s.backgroundImage !== "none" && !/^url/.test(s.backgroundImage)) { const cs = s.backgroundImage.match(/rgba?\([^)]+\)|#[0-9a-f]{3,6}/gi); if (cs) return cs; } if (bg && lum(bg)[1] > 0.5) return [bg]; } return ["rgb(255,255,255)"]; };
         const low = [];
-        for (const el of document.querySelectorAll(".site-banner *, .home-trust *, #cities *, #cashless *, #grid .more-soon *, [data-home-pair] *, .hero-pick *")) {
+        for (const el of document.querySelectorAll(".site-banner *, #your-ticket *, #cities *, #cashless *, #grid .more-soon *, [data-home-pair] *, .hero-pick *")) {
           if (!el.childNodes.length || ![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
           const r = el.getBoundingClientRect(); if (!r.width || getComputedStyle(el).visibility === "hidden") continue;
           const fg = lum(getComputedStyle(el).color)[0];

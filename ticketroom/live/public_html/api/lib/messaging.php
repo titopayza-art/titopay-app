@@ -7,6 +7,8 @@ declare(strict_types=1);
 function outbox_enqueue(array $m): ?string
 {
     if (empty($m['to'])) return null;
+    // A deleted account's placeholder address (routes/admin.php) gets nothing.
+    if (str_ends_with(strtolower((string) $m['to']), '@deleted.ticketroom.invalid')) return null;
     $id = uuid();
     q('INSERT OR IGNORE INTO message_outbox (id, channel, kind, to_address, subject, body, campaign_id, user_id, created_at, event_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
         [$id, $m['channel'] ?? 'email', $m['kind'] ?? 'transactional', $m['to'], $m['subject'] ?? null, $m['body'], $m['campaignId'] ?? null, $m['userId'] ?? null, now_iso(), $m['eventId'] ?? null]);

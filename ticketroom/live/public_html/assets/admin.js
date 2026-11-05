@@ -440,7 +440,7 @@ async function users(params, type = "") {
     $$("[data-u]").forEach((b) => b.addEventListener("click", () => userDialog(b.dataset.u, () => draw(q))));
   };
   render(main, html`${head("Customers & organisers", "Everyone who buys tickets or runs events. TicketRoom staff are managed under Staff & roles.")}
-    <div class="row chip-select mb" role="group" aria-label="Show">${[["", "Everyone"], ["customer", "Customers"], ["organiser", "Organisers"]].map(([k, l]) => html`<button type="button" class="chip" data-type="${k}" aria-pressed="${k === type}">${l} <span class="n">·</span></button>`)}</div>
+    <div class="row chip-select mb" role="group" aria-label="Show">${[["", "Everyone"], ["customer", "Customers"], ["organiser", "Organisers"], ["deleted", "Deleted"]].map(([k, l]) => html`<button type="button" class="chip" data-type="${k}" aria-pressed="${k === type}">${l} <span class="n">·</span></button>`)}</div>
     <form class="row" id="us"><input id="uq" class="grow" placeholder="Search name, email or phone" aria-label="Search"><button class="btn btn-ghost">Search</button></form><div id="ul" class="mt">${spinner()}</div>`);
   $("#us").addEventListener("submit", (e) => { e.preventDefault(); draw($("#uq").value); });
   $$("[data-type]").forEach((b) => b.addEventListener("click", () => { type = b.dataset.type; draw($("#uq").value); }));
@@ -452,10 +452,19 @@ async function userDialog(id, done) {
   const u = d.user;
   const kind = u.account_type === "organiser" ? "Organiser account" : u.guest ? "Guest buyer (no password yet)" : "Customer account";
   const dlg = dialog(u.full_name, html`<p class="small">${kind} · ${u.email} · ${u.phone || "no phone"} · joined ${fmtDate(u.created_at)} · ${badge(u.status)}</p>
-    ${isA() ? html`<div class="row">${u.status === "active" ? html`<button class="btn btn-danger btn-sm" data-st="suspended">Suspend account</button>` : u.status === "suspended" ? html`<button class="btn btn-good btn-sm" data-st="active">Reactivate account</button>` : ""}</div>` : ""}
+    ${isA() ? html`<div class="row">${u.status === "active" ? html`<button class="btn btn-danger btn-sm" data-st="suspended">Suspend account</button>` : u.status === "suspended" ? html`<button class="btn btn-good btn-sm" data-st="active">Reactivate account</button>` : ""}${u.status === "deleted" ? html`<button class="btn btn-good btn-sm" data-restore>Restore account</button>` : html`<button class="btn btn-ghost btn-sm" data-delete>Delete account</button>`}</div>
+      ${u.status === "deleted" ? html`<p class="callout mt">Deleted. Their orders, tickets and payments are kept. Restore brings the account back with its original email.</p>` : ""}` : ""}
     ${d.organisations?.length ? html`<h3 class="mt">Organisations</h3>${tbl(["Organisation", "ID", "Role", "Status"], d.organisations.map((o) => html`<tr><td>${o.name}</td><td class="mono small">${o.ref || ""}</td><td>${o.role}</td><td>${badge(o.status)}</td></tr>`))}` : ""}
     ${u.account_type === "organiser" ? "" : html`<h3 class="mt">Orders</h3>${tbl(["Ref", "Event", "Status", "#Total"], d.orders.map((o) => html`<tr><td class="mono">${o.reference}</td><td>${o.title}</td><td>${badge(o.status)}</td><td class="num">${moneyExact(o.total_cents)}</td></tr>`))}
     <h3 class="mt">Tickets</h3>${tbl(["Code", "Event", "Status"], d.tickets.map((t) => html`<tr><td class="mono">${t.code}</td><td>${t.title}</td><td>${badge(t.status)}</td></tr>`))}`}`, { wide: true, onClose: done });
+  $("[data-delete]", dlg)?.addEventListener("click", async () => {
+    const why = await reason("Delete this account?", "They can no longer sign in and leave the lists. Nothing they bought or did is removed, and you can restore the account later. This is logged.");
+    if (why && await act(() => post(`/api/admin/users/${id}/delete`, { reason: why }), "Account deleted. Their records are kept.")) dlg.close();
+  });
+  $("[data-restore]", dlg)?.addEventListener("click", async () => {
+    const why = await reason("Restore this account?", "It gets its original email back and can sign in again. This is logged.");
+    if (why && await act(() => post(`/api/admin/users/${id}/restore`, { reason: why }), "Account restored.")) dlg.close();
+  });
   $$("[data-st]", dlg).forEach((b) => b.addEventListener("click", async () => { const why = await reason(b.dataset.st === "suspended" ? "Suspend this account?" : "Reactivate this account?", "They are signed out straight away if suspended. This is logged."); if (why && await act(() => post(`/api/admin/users/${id}/status`, { status: b.dataset.st, reason: why }))) dlg.close(); }));
 }
 

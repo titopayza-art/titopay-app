@@ -151,6 +151,17 @@ function filtersSheet(state, apply) {
 }
 
 // The hero's event card on a computer screen, drawn like a ticket with a stub.
+// The sample ticket (home page): the real ticket design with sample details.
+function sampleTicket() {
+  return html`<div class="tk-wrap"><article class="ticket ticket-sample" aria-label="Sample TicketRoom ticket">
+          <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>Your next night out</h3><p class="tk-when">Concerts, comedy, sport, festivals</p><p class="tk-where">Across South Africa</p></header>
+          <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>General admission</dd></div><div><dt>Holder</dt><dd>You</dd></div><div><dt>Order</dt><dd class="mono">TR-SAMPLE</dd></div></dl>
+            <div class="t-qr"><img src="/assets/sample-ticket-qr.svg" alt="Sample QR code" width="220" height="220" loading="lazy"></div>
+            <p class="tk-scan">Scan at the entrance</p></div>
+          <div class="tk-perf" aria-hidden="true"></div>
+          <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">TICKETROOM</span><p class="tk-note">Sample ticket. Yours shows your event, your name and your own code.</p></div>
+        </article></div>`;
+}
 function heroPick(e) {
   return html`<a class="hero-pick" href="/events/${e.slug}" data-hero-pick>
     <span class="hp-poster">${poster(e, "fill")}<span class="hp-tag">${e.featured ? "Featured" : "Coming up"}</span></span>
@@ -177,17 +188,9 @@ async function home() {
   const state = Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) || ""]));
   if (!state.categories && params.get("category")) state.categories = params.get("category");
   if (state.near && !state.nearLabel && !/^-?\d/.test(state.near)) state.nearLabel = state.near;
-  const [flags, cfg] = await Promise.all([features(), appConfig()]);
-  // What people can pay with follows the payment provider that is switched on.
-  const payText = { yoco: "Card, Apple Pay and Google Pay", peach: "Card and instant EFT" }[cfg.provider] || "Card, instant EFT, SnapScan and Zapper";
+  const flags = await features();
   // Wallets are named only when TicketRoom has them set up (Admin > Integrations).
   const wallets = [flags.walletApple && "Apple Wallet", flags.walletGoogle && "Google Wallet"].filter(Boolean);
-  const trust = [
-    ["shield", "Pay by card or EFT", payText],
-    ["phone", wallets.length ? `Tickets on your phone and in ${wallets.join(" or ")}` : "Tickets on your phone", "Show the QR code at the gate. No printing needed."],
-    ["swap", "Fair resale at face value", "Can't go? Resell for no more than you paid"],
-    ["headset", "Help with your order", "Ask our support team about any order"],
-  ];
   render(main, html`
     <section class="hero"><div class="wrap hero-grid">
       <div class="hero-main">
@@ -200,8 +203,8 @@ async function home() {
         <div class="feature-rail" id="featured" aria-label="Featured events" hidden></div>
       </div>
       <div class="hero-pick-slot" id="hero-pick" hidden></div>
+      <div class="hero-ticket" aria-hidden="true">${sampleTicket()}</div>
     </div></section>
-    <section class="home-trust" aria-label="Booking with TicketRoom"><div class="wrap"><ul class="trust-strip" data-trust>${trust.map(([ic, title, note]) => html`<li><span class="trust-ico">${icon(ic, 20)}</span><span class="trust-copy"><strong>${title}</strong><span>${note}</span></span></li>`)}</ul></div></section>
     <section class="section pt-0 hidden" id="recently-viewed"><div class="wrap"><div class="row between"><h2 class="mb-0">Recently viewed</h2><button type="button" class="btn btn-link small" data-clear-recent>Clear history</button></div><div class="event-grid mt" id="recently-viewed-grid"></div></div></section>
     <section class="section" id="events"><div class="wrap">
       <div class="row between events-head"><h2 class="mb-0">Upcoming events</h2>
@@ -227,14 +230,7 @@ async function home() {
         <a class="btn btn-primary" href="#events">Find events</a>
       </div>
       <div class="ticket-demo-art">
-        <div class="tk-wrap"><article class="ticket ticket-sample" aria-label="Sample TicketRoom ticket">
-          <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>Your next night out</h3><p class="tk-when">Concerts, comedy, sport, festivals</p><p class="tk-where">Across South Africa</p></header>
-          <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>General admission</dd></div><div><dt>Holder</dt><dd>You</dd></div><div><dt>Order</dt><dd class="mono">TR-SAMPLE</dd></div></dl>
-            <div class="t-qr"><img src="/assets/sample-ticket-qr.svg" alt="Sample QR code" width="220" height="220" loading="lazy"></div>
-            <p class="tk-scan">Scan at the entrance</p></div>
-          <div class="tk-perf" aria-hidden="true"></div>
-          <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">TICKETROOM</span><p class="tk-note">Sample ticket. Yours shows your event, your name and your own code.</p></div>
-        </article></div>
+        ${sampleTicket()}
       </div>
     </div></div></section>
     <section class="section pt-0" id="cashless" aria-labelledby="cashless-h"><div class="wrap"><div class="cashless-home" data-cashless-state="how">
