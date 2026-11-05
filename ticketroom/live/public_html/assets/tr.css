@@ -1519,3 +1519,24 @@ body.venue .welcome .lead, body.venue .welcome p { color: #C8D4EA; }
 body:has(.chat-fab) .site-footer { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
 body:has(.chat-fab) .site-footer .legal-line { padding-right: 150px; }
 @media (max-width: 520px) { body:has(.chat-fab) .site-footer .legal-line { padding-right: 76px; } }
+
+/* Home: the sample ticket ("This is what you get"). The real ticket markup,
+   tilted on an amber card like the printed campaign. */
+.ticket-demo { display: grid; gap: 28px; align-items: center; grid-template-columns: 1fr; background: var(--navy-900); color: #fff; border-radius: 24px; padding: 28px 20px 36px; overflow: hidden; }
+.ticket-demo-copy h2 { color: #fff; margin: 4px 0 8px; }
+.ticket-demo-copy .lead { color: #C8D4EA; margin: 0 0 16px; }
+.ticket-demo .cat-label { color: var(--amber-500); }
+.ticket-demo-points { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 12px; }
+.ticket-demo-points li { display: grid; grid-template-columns: 32px 1fr; gap: 10px; align-items: start; color: #C8D4EA; font-size: .95rem; line-height: 1.45; }
+.ticket-demo-points li > :first-child { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: rgba(242,169,59,.14); color: var(--amber-500); }
+.ticket-demo-points strong { color: #fff; }
+.ticket-demo-art { position: relative; display: grid; place-items: center; padding: 12px 8px 4px; }
+.ticket-demo-art .tk-wrap { position: relative; width: min(330px, 86%); transform: rotate(-4deg); }
+@media (max-width: 520px) { .ticket-demo-art .tk-wrap { width: min(270px, 78%); } }
+.ticket-demo-art .tk-wrap::before { content: ""; position: absolute; inset: 0; border-radius: 22px; background: var(--amber-500); transform: rotate(-8deg) translate(-16px, 10px); z-index: 0; }
+.ticket-demo-art .ticket { position: relative; z-index: 1; box-shadow: 0 24px 48px rgba(3,9,20,.35); --tk-bg: var(--navy-900); }
+.ticket-sample .t-qr img { image-rendering: pixelated; }
+@media (min-width: 860px) {
+  .ticket-demo { grid-template-columns: 1.05fr .95fr; padding: 44px 48px; gap: 40px; }
+}
+@media (prefers-reduced-motion: no-preference) { .ticket-demo-art .tk-wrap { transition: transform .3s ease; } .ticket-demo-art:hover .tk-wrap { transform: rotate(-2deg) translateY(-4px); } }

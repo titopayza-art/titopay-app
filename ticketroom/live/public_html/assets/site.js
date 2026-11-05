@@ -214,6 +214,29 @@ async function home() {
     </div></section>
     <section class="section pt-0 hidden" id="cities" aria-labelledby="cities-h"><div class="wrap"><h2 id="cities-h">Browse by city</h2><div class="city-grid mt" id="city-grid"></div></div></section>
     <section class="section pt-0 hidden" id="ads-events"><div class="wrap"><div class="row between"><div><span class="cat-label">Sponsored</span><h2 class="mb-0">Featured for event-goers</h2></div><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-events-rail"></div></div></section>
+    <section class="section pt-0" id="your-ticket" aria-labelledby="your-ticket-h"><div class="wrap"><div class="ticket-demo">
+      <div class="ticket-demo-copy">
+        <span class="cat-label">Your ticket</span>
+        <h2 id="your-ticket-h">This is what you get</h2>
+        <p class="lead">Every ticket has its own QR code, signed so it can't be copied. It lives in your account and your email${wallets.length ? `, and in ${wallets.join(" or ")}` : ""}.</p>
+        <ul class="ticket-demo-points">
+          <li>${icon("phone", 18)}<span><strong>No printing.</strong> Show it on your phone at the gate.</span></li>
+          <li>${icon("swap", 18)}<span><strong>Can't go?</strong> Send it to a friend, or resell it for no more than you paid.</span></li>
+          <li>${icon("shield", 18)}<span><strong>One entry per ticket.</strong> A copied code is refused at the gate.</span></li>
+        </ul>
+        <a class="btn btn-primary" href="#events">Find events</a>
+      </div>
+      <div class="ticket-demo-art">
+        <div class="tk-wrap"><article class="ticket ticket-sample" aria-label="Sample TicketRoom ticket">
+          <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>Your next night out</h3><p class="tk-when">Concerts, comedy, sport, festivals</p><p class="tk-where">Across South Africa</p></header>
+          <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>General admission</dd></div><div><dt>Holder</dt><dd>You</dd></div><div><dt>Order</dt><dd class="mono">TR-SAMPLE</dd></div></dl>
+            <div class="t-qr"><img src="/assets/sample-ticket-qr.svg" alt="Sample QR code" width="220" height="220" loading="lazy"></div>
+            <p class="tk-scan">Scan at the entrance</p></div>
+          <div class="tk-perf" aria-hidden="true"></div>
+          <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">TICKETROOM</span><p class="tk-note">Sample ticket. Yours shows your event, your name and your own code.</p></div>
+        </article></div>
+      </div>
+    </div></div></section>
     <section class="section pt-0" id="cashless" aria-labelledby="cashless-h"><div class="wrap"><div class="cashless-home" data-cashless-state="how">
       <div class="cashless-intro"><span class="cat-label">Cashless events</span><h2 id="cashless-h">Pay with your wristband</h2>
         <p>At cashless events your wristband is your wallet. Top up on your phone, tap at the bar and food stalls, and get back what you don't spend.</p>
