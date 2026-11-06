@@ -300,5 +300,45 @@
    "id"
   ],
   "a": "Each organiser sets the age limit, and it's shown on the event page. You may be asked for ID at the gate. Anyone under 18 needs a parent or guardian to create the account and book for them."
+ },
+ {
+  "q": "How do reserved seats work?",
+  "a": "At seated events, tap Choose seats or a block on the venue map and pick your seats. They are held while you pay. If you skip it, we give you the best seats available, side by side where we can. Your seat is printed on your ticket.",
+  "k": [
+   "seat",
+   "seats",
+   "seating",
+   "reserved",
+   "block",
+   "row",
+   "map",
+   "choose"
+  ]
+ },
+ {
+  "q": "What are extras like parking or merchandise?",
+  "a": "Some events sell parking, merchandise or upgrades with tickets. Add them on the ticket page. At the event, show any ticket from your order and the team hands them over. Extras are refunded with the last tickets of an order.",
+  "k": [
+   "extra",
+   "extras",
+   "parking",
+   "merch",
+   "merchandise",
+   "upgrade",
+   "vip",
+   "addon"
+  ]
+ },
+ {
+  "q": "Can I get my tickets on WhatsApp?",
+  "a": "Yes, where the event offers it. Add your mobile number at checkout and tick Also send my tickets on WhatsApp. Your tickets are always emailed too.",
+  "k": [
+   "whatsapp",
+   "whats",
+   "app",
+   "message",
+   "phone",
+   "sms"
+  ]
  }
 ]

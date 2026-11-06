@@ -44,7 +44,10 @@ What is ready, what only you can do, and the first marketing steps.
    Use Practice mode first, then send yourself a test message.
 8. **Apple and Google Wallet certificates**, if you want the wallet buttons
    on day one. The site works without them.
-9. **Policies.** Read the Terms, Privacy Policy and refund rules once more.
+9. **Policies.** The Terms and Privacy Policy are now version 1.1 (6 November
+   2026): they cover reserved seats, extras, WhatsApp delivery through Meta and
+   linked devices. Have them read by a lawyer before launch, and read the
+   refund rules once more.
    Admin portal → Site settings → Legal: fill in your POPIA Information
    Officer (the Privacy Policy and PAIA manual show it).
 10. **Remove sample content.** Make sure no test or sample events are
@@ -59,6 +62,15 @@ What is ready, what only you can do, and the first marketing steps.
   (hex or decimal, reverse byte order) so all devices read bands the same way.
 - Keep the handhelds charged, on the venue Wi-Fi or mobile data; the gate
   keeps working offline with the ticket list it downloaded.
+
+## Updating a site that is already installed
+
+Upload the new files over public_html as before; never touch ticketroom-data.
+The database upgrades itself on the first visit (tested from the previous
+release with orders, tickets, messages and gate scans: nothing lost). Take a
+backup first (Admin portal, Backups). Help answers for the assistant only load
+on a new install: on an existing one, add the questions about reserved seats,
+extras and WhatsApp under Admin portal, Assistant, if you want them there.
 
 ## Launch week: marketing
 

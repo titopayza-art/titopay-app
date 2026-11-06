@@ -2,8 +2,8 @@
 // settings → Legal details, so they can be completed without a code change.
 // Markup: blank line = new paragraph, "- " = bullet, **bold**.
 
-export const VERSION = "1.0";
-export const EFFECTIVE = "9 October 2026";
+export const VERSION = "1.1";
+export const EFFECTIVE = "6 November 2026";
 
 const who = (L) => {
   const parts = [`**${L.entityName || "TicketRoom"}**`];
@@ -108,7 +108,9 @@ Nothing in these terms limits liability that cannot be limited by law, including
 - Tickets may be transferred only through the Platform's transfer feature while the Organiser allows it. A transfer issues a new QR code and cancels the previous one.
 - Reselling or offering tickets above face value, or through unauthorised channels, is prohibited unless the Organiser allows it; such tickets may be cancelled without refund.
 - Tickets obtained from anyone other than TicketRoom or an authorised transfer may be invalid.
-- We may reissue or cancel a ticket where needed to prevent fraud, and will replace it where you are not at fault.`],
+- We may reissue or cancel a ticket where needed to prevent fraud, and will replace it where you are not at fault.
+- **Reserved seats:** where an Event has a seat map, your ticket is for the seat shown on it. Seats you choose are held only while you pay; if you do not choose, the best seats available are given. The Organiser or venue may move you to a seat of the same or better standard where needed for safety, access or production reasons.
+- **Extras:** items sold with tickets, such as parking, merchandise or upgrades, are supplied by the Organiser and collected at the Event by showing any ticket from the same order. They are refunded with the last tickets of the order, or where the Organiser cannot supply them.`],
         ["6. Attending an Event", `- The Organiser and venue may refuse entry or remove you, without refund, if you breach venue rules, the law, age limits, or behave unsafely or abusively.
 - You may be searched, asked for identification, and required to comply with health, safety and security instructions.
 - Age restrictions are set by the Organiser. Proof of age may be required.
@@ -138,7 +140,7 @@ Nothing in these terms limits liability that cannot be limited by law, including
 - staff you add as scanners act on your behalf and you are responsible for them;
 - you indemnify TicketRoom against all claims arising from your Event, your content, your staff, or your breach of these Terms.`],
         ["10. Vendors (cashless point of sale)", `Vendors trading at cashless Events act under the Organiser's arrangements. Sales are recorded by the Platform; refunds of sales require approval by someone other than the requester. Settlements are made after the Event, less agreed commission and reversals.`],
-        ["11. Communications", `We send service messages (receipts, tickets, event reminders, changes, cancellations and refunds) by email and, where provided, SMS. If you start a booking but don't finish it, we may send one reminder about that event, which you can opt out of. Marketing is sent only if you opted in, and every message lets you unsubscribe. See our Privacy Policy.`],
+        ["11. Communications", `We send service messages (receipts, tickets, event reminders, changes, cancellations and refunds) by email and, where provided, SMS, or WhatsApp if you ask for your tickets there. If you start a booking but don't finish it, we may send one reminder about that event, which you can opt out of. Marketing is sent only if you opted in, and every message lets you unsubscribe. See our Privacy Policy.`],
         ["12. Liability and indemnity", `**To the fullest extent permitted by law:** TicketRoom is not liable for the Event itself or for the acts or omissions of Organisers, venues, performers, vendors or other Attendees; and TicketRoom's total liability in connection with any order is limited to the amount you paid for that order. Nothing limits liability that cannot lawfully be limited. The limitation of liability and indemnity in our Terms of Use also apply.`],
         ["13. Complaints and disputes", `Contact us first through the form at ticketroom.co.za/contact; we aim to respond within 24 to 48 hours during business hours (Monday to Friday, 9am to 5pm, excluding public holidays). We email a case reference so you can follow up. If we cannot resolve your complaint, you may approach the Consumer Goods and Services Ombud or the National Consumer Commission. South African law applies.`],
       ],
@@ -162,6 +164,9 @@ For Attendee information they receive, Organisers are separate responsible parti
 - **Orders and tickets:** events booked, ticket types, order references, amounts, ticket holder names, transfers, admission (scan) times.
 - **Payments:** payment status, amounts, references and the payment method type, received from our payment providers. **We do not receive or store full card numbers or CVV codes.**
 - **Cashless:** linked wristbands/cards/tags (stored only as protected identifiers), top-ups, purchases, refunds.
+- **Seats and extras:** reserved seat numbers on your tickets, extras on your order (such as parking or merchandise) and when they were handed over.
+- **WhatsApp:** if you ask for your tickets on WhatsApp, your mobile number and the message we send you.
+- **Linked devices:** for scanners and phones that Organisers link to an Event, the device's name, browser type, when it was last used, and the scans and top-ups made on it.
 - **Organisers and vendors:** business and contact details, team members, bank details for payouts (encrypted; only the last four digits are displayed).
 - **Support:** callback requests, messages to us, questions asked to our online assistant.
 - **Recently viewed:** up to 20 events you viewed while signed in, used to show your personal Recently viewed list. It is not shared with organisers or used for advertising.
@@ -177,7 +182,7 @@ For Attendee information they receive, Organisers are separate responsible parti
 - To answer support requests and improve our help content: **legitimate interests**.
 - To show events you recently viewed when you are signed in: **our legitimate interests**, with a clear-history control available to you.`],
         ["5. Who we share it with", `- **Organisers** of Events you book or attend: your name, email, ticket and admission details, and your phone number if you provided it, so they can run the Event and contact you about it. Organisers may send you marketing only if you opted in for them.
-- **Service providers (operators)** who process information for us under written agreements: hosting, payment processing, email and SMS delivery, and, where our online assistant uses artificial intelligence, an AI service provider that processes the text of your question (do not include personal details in assistant questions).
+- **Service providers (operators)** who process information for us under written agreements: hosting, payment processing, email and SMS delivery, WhatsApp delivery through Meta's WhatsApp Business service (only your mobile number, first name, Event details and ticket link, and only if you ask for your tickets on WhatsApp), and, where our online assistant uses artificial intelligence, an AI service provider that processes the text of your question (do not include personal details in assistant questions).
 - **Authorities, regulators and professional advisers** where required by law or to protect rights, safety and property.
 - **A buyer or successor** of our business, subject to the same protections.
 

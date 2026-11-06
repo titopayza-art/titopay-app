@@ -1092,7 +1092,7 @@ async function aboutPage() {
         <p class="mb-0">Organisers can list events, manage ticket sales, track orders and scan tickets at the gate.</p></article>
         <article class="card pad-lg"><span class="cat-label">For guests and organisers</span><h2>From booking to entry</h2>
           <p><strong>For guests:</strong> find an event, book online and access your ticket when you arrive.</p>
-          <p class="mb-0"><strong>For organisers:</strong> set up ticket types, monitor sales and manage entry. We are developing cashless options for organisers, vendors and attendees.</p></article></div>
+          <p class="mb-0"><strong>For organisers:</strong> set up ticket types, monitor sales and manage entry. Sell reserved seats on a map of the venue, extras like parking and merchandise, and run cashless wristbands for the bars and food stalls.</p></article></div>
       <section class="card pad-lg"><span class="cat-label">Who owns TicketRoom</span><h2>100% Black-owned and youth-owned</h2>
         <p class="mb-0">TicketRoom is wholly owned by young Black South Africans. We built it for the events, artists and audiences we know, and every rand we earn helps grow a local, youth-led business.</p></section>
       <section class="card pad-lg"><span class="cat-label">South African owned and operated</span><h2>Built for local events</h2>
@@ -1201,6 +1201,9 @@ const FAQ = [
   ["What does it cost?", "Free events cost nothing. For paid tickets, the current service fee and organiser commission are shown before checkout and in the organiser portal. Organisers choose whether to cover the service fee or have customers pay it."],
   ["How do refunds work?", "If an event is cancelled you are refunded automatically. Other refunds follow the event's refund policy and our Terms and Conditions."],
   ["How do cashless wristbands work?", "Link your wristband in your account with the code and activation code on its card, then top up. Vendors scan it to charge. Lost it? Block it instantly from your account."],
+  ["How do reserved seats work?", "At seated events, tap Choose seats or a block on the venue map and pick your seats. They are held while you pay. If you skip it, we give you the best seats available, side by side where we can. Your seat is printed on your ticket."],
+  ["What are extras?", "Some events sell parking, merchandise or upgrades with tickets. Add them on the ticket page. At the event, show any ticket from your order and the team hands them over."],
+  ["Can I get my tickets on WhatsApp?", "Yes, where the event offers it. Add your mobile number at checkout and tick Also send my tickets on WhatsApp. Your tickets are always emailed too."],
   ["How do I stop marketing messages?", "Use the unsubscribe link in any message, switch off marketing in your account, or use the Unsubscribe page to get a one-click link by email."],
 ];
 
