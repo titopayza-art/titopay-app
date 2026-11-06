@@ -1,0 +1,1266 @@
+// TicketRoom shared client. Every dynamic value that reaches innerHTML goes
+// through esc() / html``. No inline handlers or styles (CSP forbids them).
+
+export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const RAW = Symbol("raw");
+export const raw = (s) => ({ [RAW]: String(s) });
+export function html(strings, ...values) {
+  let out = strings[0];
+  values.forEach((v, i) => {
+    const part = Array.isArray(v) ? v.map((x) => (x && x[RAW] !== undefined ? x[RAW] : esc(x))).join("") : v && v[RAW] !== undefined ? v[RAW] : esc(v);
+    out += part + strings[i + 1];
+  });
+  return raw(out);
+}
+export const render = (el, tpl) => { el.innerHTML = tpl && tpl[RAW] !== undefined ? tpl[RAW] : esc(tpl); return el; };
+export const $ = (sel, root = document) => root.querySelector(sel);
+export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+// ---------- formatting (South Africa) ----------
+const TZ = "Africa/Johannesburg";
+export function money(cents) {
+  const n = Number(cents || 0);
+  const abs = Math.abs(n);
+  const r = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${n < 0 ? "−" : ""}R${r}${abs % 100 ? "." + String(abs % 100).padStart(2, "0") : ""}`;
+}
+export const moneyExact = (c) => { const n = Number(c || 0), a = Math.abs(n); return `${n < 0 ? "−" : ""}R${Math.floor(a / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")}.${String(a % 100).padStart(2, "0")}`; };
+export const fmtDate = (d, o = { weekday: "short", day: "numeric", month: "short", year: "numeric" }) => d ? new Intl.DateTimeFormat("en-ZA", { timeZone: TZ, ...o }).format(new Date(d)) : "";
+export const fmtTime = (d) => d ? new Intl.DateTimeFormat("en-ZA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(d)) : "";
+export const fmtDateTime = (d) => d ? `${fmtDate(d)} · ${fmtTime(d)}` : "";
+export const dayNum = (d) => new Intl.DateTimeFormat("en-ZA", { timeZone: TZ, day: "numeric" }).format(new Date(d));
+export const monShort = (d) => new Intl.DateTimeFormat("en-ZA", { timeZone: TZ, month: "short" }).format(new Date(d));
+export const toLocalInput = (d) => { if (!d) return ""; const x = new Date(d); const p = (n) => String(n).padStart(2, "0"); return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}T${p(x.getHours())}:${p(x.getMinutes())}`; };
+export const parseRand = (s) => { const t = String(s || "").replace(/^R\s*/i, "").replace(/\s/g, "").replace(",", "."); if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null; const [w, f = ""] = t.split("."); return Number(w) * 100 + Number((f + "00").slice(0, 2)); };
+export const idem = () => (crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`);
+export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+
+// ---------- edition features ----------
+// The PHP edition (shared hosting) has no payments, cashless, POS or SMS yet;
+// /api/config says so and feature-specific UI marked data-feature="…" hides.
+// Promote (the paid event promotion package), the cash desk and organisers'
+// wristband registration are in the PHP edition only.
+const ALL_FEATURES = { payments: true, cashless: true, pos: true, finance: true, sms: true, tags: true, promote: false, cashDesk: false, tagRegistry: false };
+let featurePromise;
+let configPromise;
+export const appConfig = () => (configPromise ||= fetch("/api/config", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
+export function features() {
+  featurePromise ||= appConfig().then((c) => ({ ...ALL_FEATURES, ...(c.features || {}) }));
+  return featurePromise;
+}
+features().then((f) => { for (const [k, on] of Object.entries(f)) document.documentElement.classList.toggle(`no-${k}`, !on); });
+
+// Wraps a portal route so it shows a friendly "coming soon" page when the
+// feature is off in this edition (e.g. someone opens an old link).
+const SOON = {
+  cashless: ["Cashless isn't switched on yet", "Wristbands, top-ups and tap-to-pay switch on as soon as TicketRoom's card payments are set up. Ask us at hello@ticketroom.co.za to plan a cashless event."],
+  payments: ["Saved payment methods aren't available", "Pay by card at checkout; nothing needs to be saved here."],
+  finance: ["Payouts aren't switched on yet", "Payouts, settlements and refunds start as soon as TicketRoom's card payments are set up. Free events don't involve any money."],
+  tags: ["Wristbands aren't switched on yet", "Linking wristbands to tickets switches on together with cashless payments."],
+  pos: ["The vendor till isn't switched on yet", "The vendor till switches on together with cashless payments."],
+};
+export function gate(feature, fn) {
+  return async (params) => {
+    if ((await features())[feature]) return fn(params);
+    const [title, text] = SOON[feature] || ["Coming soon", "This part of TicketRoom isn't switched on yet."];
+    render($("#main"), html`<div class="card pad-lg stack"><h1>${title}</h1><p class="muted mb-0">${text}</p></div>`);
+  };
+}
+
+// ---------- calm first paint ----------
+// Pages start with class="booting": the header shows straight away, and the
+// rest appears in one go when the page has its content, instead of jumping
+// about while each piece loads on a slow connection.
+const root = document.documentElement;
+export function pageReady() {
+  if (!root.classList.contains("booting")) return;
+  const show = () => root.classList.remove("booting");
+  // After the next paint, so it all appears together; the timer covers tabs
+  // opened in the background, where browsers pause painting.
+  requestAnimationFrame(() => requestAnimationFrame(show));
+  setTimeout(show, 120);
+}
+setTimeout(pageReady, 6000); // never hide a page for long, whatever happens
+{
+  // Portal pages: ready when the main area first shows real content. The
+  // public website calls pageReady() itself (root.dataset.manualReady).
+  const m = document.getElementById("main");
+  if (m) {
+    const done = () => m.childElementCount && !(m.childElementCount === 1 && m.firstElementChild.classList.contains("spinner"));
+    const obs = new MutationObserver(() => { if (!root.dataset.manualReady && done()) { obs.disconnect(); pageReady(); } });
+    obs.observe(m, { childList: true });
+  }
+}
+
+// ---------- API ----------
+let leaving = false;
+addEventListener("pagehide", () => { leaving = true; });
+addEventListener("beforeunload", () => { leaving = true; });
+addEventListener("pageshow", () => { leaving = false; });
+let csrfToken = null;
+let meCache;
+export class ApiError extends Error { constructor(status, body) { super(body?.error?.message || `Request failed (${status})`); this.status = status; this.code = body?.error?.code; this.details = body?.error?.details; } }
+
+export async function api(method, path, body, { headers = {}, timeoutMs = 20000, raw: rawBody } = {}) {
+  const opts = { method, headers: { ...headers }, credentials: "same-origin" };
+  if (body !== undefined && !rawBody) { opts.headers["content-type"] = "application/json"; opts.body = JSON.stringify(body); }
+  if (rawBody) { opts.body = rawBody; }
+  if (method !== "GET") {
+    if (!csrfToken) await me();
+    if (csrfToken) opts.headers["x-csrf-token"] = csrfToken;
+  }
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  opts.signal = ctl.signal;
+  let res;
+  try { res = await fetch(path, opts); } catch (err) {
+    // Leaving the page cancels its requests; that is not an error to show.
+    if (leaving) await new Promise(() => {});
+    const e = new ApiError(0, { error: { code: err.name === "AbortError" ? "timeout" : "network", message: err.name === "AbortError" ? "The server did not answer in time." : "You appear to be offline." } });
+    throw e;
+  } finally { clearTimeout(timer); }
+  const type = res.headers.get("content-type") || "";
+  let data;
+  try { data = type.includes("json") ? await res.json() : await res.text(); } catch {
+    // The answer was cut off (page reloading, or the connection dropped).
+    if (leaving) await new Promise(() => {});
+    throw new ApiError(0, { error: { code: "network", message: "The connection dropped. Please try again." } });
+  }
+  if (!res.ok) {
+    if (res.status === 403 && data?.error?.code === "csrf_failed") { meCache = undefined; csrfToken = null; }
+    throw new ApiError(res.status, data);
+  }
+  return data;
+}
+export const get = (p, o) => api("GET", p, undefined, o);
+export const post = (p, b = {}, o) => api("POST", p, b, o);
+export const patch = (p, b = {}, o) => api("PATCH", p, b, o);
+export const put = (p, b = {}, o) => api("PUT", p, b, o);
+export const del = (p, o) => api("DELETE", p, undefined, o);
+
+export async function me(force = false) {
+  if (meCache !== undefined && !force) return meCache;
+  try {
+    const r = await fetch("/api/auth/me", { credentials: "same-origin" }).then((x) => x.json());
+    meCache = r.user || null;
+    csrfToken = r.csrfToken || null;
+  } catch { return null; } // no signal: ask again next time
+  return meCache;
+}
+export const roles = (u) => new Set(u?.platform_roles || []);
+
+// ---------- UI primitives ----------
+export function toast(msg, kind = "") {
+  let box = $(".toasts");
+  if (!box) { box = document.createElement("div"); box.className = "toasts"; box.setAttribute("role", "status"); box.setAttribute("aria-live", "polite"); document.body.append(box); }
+  const t = document.createElement("div");
+  t.className = `toast ${kind}`;
+  t.textContent = msg;
+  box.append(t);
+  setTimeout(() => t.remove(), kind === "bad" ? 6000 : 3500);
+}
+
+export function dialog(title, bodyTpl, { wide = false, onClose } = {}) {
+  const d = document.createElement("dialog");
+  if (wide) d.classList.add("wide");
+  d.setAttribute("aria-labelledby", "dlg-title");
+  render(d, html`<div class="dialog-head"><h2 id="dlg-title">${title}</h2><button class="icon-btn" data-close aria-label="Close">×</button></div><div class="dialog-body">${bodyTpl}</div>`);
+  document.body.append(d);
+  d.addEventListener("click", (e) => { if (e.target.closest("[data-close]") || e.target === d) d.close(); });
+  // Closed because the person moved to another page: its follow-up (often a
+  // reload of the old page) no longer applies.
+  d.addEventListener("close", () => { d.remove(); if (!d.dataset.left) onClose?.(); });
+  d.showModal();
+  return d;
+}
+
+export function confirmDialog(title, message, { confirm = "Confirm", danger = false, input } = {}) {
+  return new Promise((resolve) => {
+    let result = false;
+    const d = dialog(title, html`<form class="stack" data-f><p>${message}</p>
+      ${input ? html`<div class="field"><label for="cd-in">${input.label}</label><input id="cd-in" name="v" type="${input.type || "text"}" ${raw(input.required ? "required" : "")} maxlength="400" placeholder="${input.placeholder || ""}" value="${input.value || ""}" autocomplete="${input.autocomplete || "off"}">${input.hint ? html`<span class="hint">${input.hint}</span>` : ""}</div>` : ""}
+      <div class="row end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn ${danger ? "btn-danger" : "btn-dark"}">${confirm}</button></div></form>`,
+    { onClose: () => resolve(result) });
+    $("form", d).addEventListener("submit", (e) => { e.preventDefault(); result = input ? ($("#cd-in", d).value.trim() || false) : true; d.close(); });
+  });
+}
+
+export function formValues(form) {
+  const out = {};
+  for (const el of form.elements) {
+    if (!el.name || el.disabled) continue;
+    if (el.type === "checkbox") out[el.name] = el.checked;
+    else if (el.type === "radio") { if (el.checked) out[el.name] = el.value; }
+    else if (el.value !== "") out[el.name] = el.value;
+  }
+  return out;
+}
+
+// Shows server validation errors next to fields; returns true if handled.
+// New-password forms have a second box; check both match before sending.
+// Throws a field error that showErrors() puts under the confirm box.
+export function matchPasswords(v, field, confirm) {
+  const pw = v[field] || "";
+  const again = v[confirm] || "";
+  delete v[confirm];
+  if (pw.length < 10) throw new ApiError(422, { error: { message: "Use at least 10 characters.", details: { [field]: "Use at least 10 characters." } } });
+  if (pw !== again) throw new ApiError(422, { error: { message: "The two passwords don't match.", details: { [confirm]: "The two passwords don't match." } } });
+  return v;
+}
+
+export function showErrors(form, err) {
+  $$("[aria-invalid]", form).forEach((el) => el.removeAttribute("aria-invalid"));
+  $$(".err", form).forEach((el) => el.remove());
+  $(".form-error", form)?.remove();
+  const details = err?.details && typeof err.details === "object" ? err.details : null;
+  let firstBad;
+  if (details) for (const [k, msg] of Object.entries(details)) {
+    const el = form.elements[k];
+    if (!el || !el.closest) continue;
+    el.setAttribute("aria-invalid", "true");
+    const e = document.createElement("div"); e.className = "err"; e.id = `${el.id || k}-err`; e.textContent = msg;
+    el.setAttribute("aria-describedby", e.id);
+    el.closest(".field")?.append(e);
+    firstBad ||= el;
+  }
+  const box = document.createElement("div");
+  box.className = "form-error"; box.setAttribute("role", "alert"); box.textContent = err?.message || "Something went wrong.";
+  form.prepend(box);
+  (firstBad || box).focus?.();
+}
+
+// Wraps a form submit: busy state, error display, double-submit protection.
+export function onSubmit(form, fn) {
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector("button[type=submit], button:not([type])");
+    if (btn?.getAttribute("aria-busy") === "true") return;
+    btn?.setAttribute("aria-busy", "true");
+    try { $(".form-error", form)?.remove(); await fn(formValues(form), form); }
+    catch (err) { showErrors(form, err); }
+    finally { btn?.removeAttribute("aria-busy"); }
+  });
+}
+
+export const badge = (status) => {
+  const map = { valid: "good", used: "info", paid: "good", confirmed: "good", completed: "good", approved: "good", published: "good", active: "good", sent: "good", matched: "good", admitted: "good",
+    subscribed: "good", unsubscribed: "plain", pending: "warn", pending_payment: "warn", requested: "warn", pending_approval: "warn", processing: "warn", scheduled: "warn", draft: "plain", assigned: "info", unassigned: "plain", in_progress: "warn", open: "warn", queued: "warn",
+    refunded: "info", partially_refunded: "info", reversed: "info", transferred: "info",
+    failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain",
+    // organiser verification
+    missing: "plain", submitted: "warn", in_review: "warn", action_needed: "bad", complete: "good", not_verified: "plain", recommended: "plain", verified: "good", refer: "warn",
+    // Promote
+    posted: "good", ended: "plain",
+    // Waitlists and TicketRoom Exchange
+    resold: "info", sold: "good", "paid to you": "good", "up for resale": "warn", "offered to waitlist": "warn", "being paid": "warn", waiting: "warn", offered: "warn", left: "plain", closed: "plain", "ticket offered": "info", manual_pending: "warn" };
+  return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
+};
+
+export function empty(text, action = "") {
+  return html`<div class="empty"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a3 3 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a3 3 0 0 0 0-6Z"/><path d="M14 5v14" stroke-dasharray="2 2"/></svg><p>${text}</p>${action}</div>`;
+}
+export const spinner = () => html`<div class="spinner" role="status" aria-label="Loading"></div>`;
+
+export function poster(ev, cls = "") {
+  if (ev.image_upload_id) return html`<div class="poster ${cls}"><img src="/media/${ev.image_upload_id}" alt="" loading="lazy"></div>`;
+  return html`<div class="poster fallback cat-${ev.category || "other"} ${cls}"><span>${ev.title}</span></div>`;
+}
+
+// ---------- brand chrome ----------
+export function brand() {
+  return html`<a class="brand" href="/" aria-label="TicketRoom home"><img src="/assets/logo-mark.svg" alt="" width="40" height="30"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="brand-sub">Your event. Your ticket.</span></span></a>`;
+}
+
+// The three portals, and the two event-day tools, always go by these names.
+export const PORTALS = {
+  customer: { href: "/account", name: "Customer portal", note: "Your tickets, orders and transfers" },
+  organiser: { href: "/organisers", name: "Organiser portal", note: "Your events, sales and gate staff" },
+  admin: { href: "/admin", name: "Admin portal", note: "TicketRoom staff only" },
+  scanner: { href: "/scan", name: "Gate scanner", note: "Checking tickets at the entrance" },
+  pos: { href: "/pos", name: "Vendor POS", note: "Selling at the event" },
+};
+export const isStaff = (u) => ["admin", "finance", "support"].some((x) => roles(u).has(x));
+// The portals this person can open, in a fixed order.
+// One account, one portal: customers, organisers and TicketRoom staff each
+// have their own. Gate scanning is open to whoever an organiser added.
+export const accountType = (u) => u?.account_type || "customer";
+export function portalsFor(u) {
+  if (!u) return [];
+  const type = accountType(u);
+  if (type === "staff") return ["admin"];
+  const list = [type === "organiser" ? "organiser" : "customer"];
+  if (u.staff_events?.length || (type === "organiser" && u.organisers?.length)) list.push("scanner");
+  if (u.vendors?.length) list.push("pos");
+  return list;
+}
+// Where someone lands after signing in: their own portal.
+export const homePortal = (u) => ({ staff: "/admin", organiser: "/organisers" })[accountType(u)] || "/account";
+const PORTAL_OF_TYPE = { customer: "customer", organiser: "organiser", staff: "admin" };
+// Signed in, but with an account that belongs to another portal.
+export function wrongAccountPage(u, portal) {
+  const theirs = PORTALS[PORTAL_OF_TYPE[accountType(u)]];
+  const kind = { customer: "a customer account", organiser: "an organiser account", staff: "a TicketRoom staff account" }[accountType(u)];
+  render($("#sidenav"), "");
+  render($("#main"), html`<section class="welcome card"><span class="tk-label">${PORTALS[portal].name}</span>
+    <h1>This portal isn't for this account</h1>
+    <p class="lead">You're signed in as ${u.email}, ${kind}. ${portal === "organiser" ? "The organiser portal is for organiser accounts: to sell tickets, sign out and create an organiser account with a different email." : portal === "customer" ? "The customer portal is for customer accounts." : ""}</p>
+    <div class="row"><a class="btn btn-primary" href="${theirs.href}">Open the ${theirs.name.toLowerCase()}</a><button class="btn btn-ghost" data-out>Sign out</button></div></section>`);
+  $("[data-out]").addEventListener("click", async () => { await post("/api/auth/logout"); location.reload(); });
+  pageReady();
+}
+
+export async function header(el, { portal, active, box: signInBox } = {}) {
+  // The app is open in this tab: a later visit to /account is on purpose (see account.js).
+  try { sessionStorage.setItem("tr-launched", "1"); } catch { /* storage blocked */ }
+  const [u, site] = await Promise.all([me(), siteInfo()]);
+  // Back from Google with a problem: say what happened, once.
+  const gq = new URLSearchParams(location.search);
+  if (gq.get("google")) {
+    toast(GOOGLE_ERRORS[gq.get("google")] || GOOGLE_ERRORS.unavailable, "bad");
+    gq.delete("google");
+    history.replaceState(history.state, "", location.pathname + (gq.toString() ? `?${gq}` : "") + location.hash);
+  }
+  const here = PORTALS[portal];
+  const mine = portalsFor(u);
+  // On the public website: Events, Sell tickets, Help, then the person's main
+  // portal. Inside a portal: the website, then every other portal by its full name.
+  // Each portal links only to the tools that role actually uses. The admin
+  // portal is never linked from anywhere (staff open /admin, and signing in
+  // takes them there), and it links to nothing but the website.
+  const ALLOWED = { admin: [], organiser: ["scanner", "pos"], customer: ["organiser", "scanner", "pos"], scanner: ["organiser"], pos: ["organiser"] };
+  const main = mine.includes("organiser") ? "organiser" : "customer";
+  const shown = here ? mine.filter((k) => ALLOWED[portal].includes(k))
+    : u ? [main, ...(main === "customer" && mine.includes("scanner") ? ["scanner"] : [])] : [];
+  const links = [...(here ? [["/", "TicketRoom website"]] : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"]]), ...shown.map((k) => [PORTALS[k].href, PORTALS[k].name])];
+  render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand()}
+    ${here ? "" : html`<button class="country-btn head-country" data-country aria-label="Country: ${SADC[0][1]}. Change country">${countryLabel(true)}</button>`}
+    <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
+    <nav class="nav" id="nav" aria-label="Main">
+      ${here ? html`<span class="nav-here">You're in the ${here.name}</span>` : ""}
+      ${links.map(([href, label]) => html`<a href="${href}" ${raw(active === href ? 'aria-current="page"' : "")}>${label}</a>`)}
+      ${u ? html`<button class="link" data-signout><span class="user-chip"><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span>Sign out</span></button>`
+      : html`<button class="link" data-signin>Sign in</button>${["admin", "scanner"].includes(signInBox || portal) ? "" : html`<button class="btn btn-primary btn-sm" data-signup>${portal === "organiser" ? "Start selling" : "Create account"}</button>`}`}
+    </nav></div>`);
+  // Portal pages: the menu sits in a navy side panel with who is signed in at the top.
+  const sn = $(".shell > #sidenav");
+  if (here && sn) {
+    const side = document.createElement("aside");
+    side.className = "side";
+    side.setAttribute("aria-label", `${here.name} menu`);
+    sn.before(side);
+    side.append(sn);
+  }
+  // Inside the side panel, top to bottom: the logo and portal, who is signed in
+  // (with a menu), a quick search of the sections, the main action, then the
+  // sections, with help and sign-out at the foot. On a phone the header and a
+  // strip of sections are used instead.
+  const side = $(".side");
+  if (side) {
+    document.body.classList.toggle("has-side", !!(here && u));
+    for (const x of $$(".side > :not(#sidenav)", side)) x.remove();
+    if (here && u) {
+      const who = accountType(u) === "staff" ? (u.platform_roles || []).map((r) => r[0].toUpperCase() + r.slice(1)).join(", ") || "Staff"
+        : accountType(u) === "organiser" ? (u.organisers?.[0]?.name || "Organiser") : "Customer";
+      const ACTION = { organiser: ["#/events/new", "Create event"], customer: ["/", "Find events"], admin: ["#/lookup", "Find an order"] }[portal];
+      const top = document.createElement("div");
+      top.className = "side-top";
+      render(top, html`<a class="side-brand" href="${here.href}" aria-label="${here.name} home"><img src="/assets/logo-mark.svg" alt="" width="34" height="26"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="side-portal pb-${portal}">${here.name}</span></span></a>
+        <div class="side-me"><button type="button" class="side-profile" aria-haspopup="true" aria-expanded="false" data-me><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span><span class="who"><strong>${u.full_name}</strong><span>${who}</span></span><span class="caret" aria-hidden="true">▾</span></button>
+          <div class="side-menu" role="menu" hidden><a role="menuitem" href="/">TicketRoom website</a>${shown.map((k) => html`<a role="menuitem" href="${PORTALS[k].href}">${PORTALS[k].name}</a>`)}<button type="button" role="menuitem" data-signout-side>Sign out</button></div></div>
+        <label class="side-search"><span class="sr-only">Search the menu</span><input type="search" placeholder="Search" autocomplete="off" data-side-search></label>
+        ${ACTION ? html`<a class="btn side-action ${portal === "organiser" ? "plus" : ""}" href="${ACTION[0]}">${ACTION[1]}</a>` : ""}`);
+      const foot = document.createElement("div");
+      foot.className = "side-foot";
+      render(foot, html`<a href="/help" target="_blank" rel="noopener">Help centre</a><button type="button" data-signout-side>Sign out</button>`);
+      side.prepend(top);
+      side.append(foot);
+      const meBtn = $("[data-me]", side), menu = $(".side-menu", side);
+      meBtn.addEventListener("click", () => { const open = menu.hidden; menu.hidden = !open; meBtn.setAttribute("aria-expanded", String(open)); });
+      document.addEventListener("click", (e) => { if (!e.target.closest(".side-me")) { menu.hidden = true; meBtn.setAttribute("aria-expanded", "false"); } });
+      $$("[data-signout-side]", side).forEach((b) => b.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; }));
+      // Typing narrows the menu; Enter opens the first match.
+      const q = $("[data-side-search]", side);
+      q.addEventListener("input", () => {
+        const t = q.value.trim().toLowerCase();
+        $$("#sidenav a, #sidenav .sect", side).forEach((x) => { x.hidden = !!t && (x.classList.contains("sect") || !x.textContent.toLowerCase().includes(t)); });
+      });
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const first = $$("#sidenav a", side).find((x) => !x.hidden); if (first) { first.click(); q.value = ""; q.dispatchEvent(new Event("input")); } } });
+    }
+  }
+  // A coloured bar under the header names the portal, so admin, organiser and
+  // customer screens can never be mistaken for each other, on a phone too.
+  // Portal pages ship with their bar already in place, so nothing is pushed
+  // down when the page fills in; it is only added here if a page lacks one.
+  const bar = $(".portal-bar");
+  if (here) {
+    if (!bar || !bar.classList.contains(`pb-${portal}`)) {
+      bar?.remove();
+      const b = document.createElement("div");
+      b.className = `portal-bar pb-${portal}`;
+      render(b, html`<div class="wrap"><strong>${here.name}</strong><span>${here.note}</span></div>`);
+      el.after(b);
+    }
+  } else bar?.remove();
+  $("[data-country]", el)?.addEventListener("click", () => countryDialog());
+  const toggle = $(".menu-toggle", el);
+  toggle.addEventListener("click", () => { const open = $("#nav", el).classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); });
+  const box = signInBox || (here ? portal : "site");
+  $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin", { portal: box }));
+  $("[data-signup]", el)?.addEventListener("click", () => authDialog("signup", { portal: box }));
+  $("[data-signout]", el)?.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; });
+  if (u?.mustChangePassword && !$(".pw-nag")) {
+    const nag = document.createElement("div");
+    nag.className = "pw-nag";
+    nag.setAttribute("role", "status");
+    render(nag, html`<div class="wrap">You're signed in with the temporary password. <a href="${isStaff(u) ? "/admin#/password" : "/account#/settings"}">Change it now</a>.</div>`);
+    ($(".portal-bar") || el).after(nag);
+  }
+  if (!u?.mustChangePassword) $(".pw-nag")?.remove();
+  maintenanceScreen(u).catch(() => {});
+  // Gate, till and back-office screens stay uncluttered: no banner or assistant there.
+  if (!here && !/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) showBanner(site);
+  if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras().catch(() => {});
+  return u;
+}
+
+// While maintenance mode is on, visitors see only the message. TicketRoom
+// staff see the site as normal, and the sign-in page stays open for them.
+async function maintenanceScreen(u) {
+  if ($(".maint-screen") || $(".maint-staff")) return;
+  const s = await siteInfo();
+  if (!s?.maintenance) return;
+  // Staff work as normal, with a reminder that visitors are seeing the notice.
+  if (roles(u).size) {
+    const bar = document.createElement("div");
+    bar.className = "maint-staff";
+    bar.setAttribute("role", "status");
+    render(bar, html`<div class="wrap"><strong>Maintenance mode is on.</strong> Visitors see the maintenance notice and can't sign in, book or sign up. <a href="/admin#/site">Turn it off</a></div>`);
+    ($(".portal-bar") || $("#header")).after(bar);
+    return;
+  }
+  if (/^\/admin(\/|$)/.test(location.pathname)) return;
+  const box = document.createElement("div");
+  box.className = "maint-screen";
+  render(box, html`<main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${s.maintenance.message}</p>
+    <p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main>`);
+  document.body.append(box);
+  document.documentElement.classList.add("maint-on");
+  document.title = "TicketRoom | Back soon";
+}
+
+// "Subscribe to updates" form, used in the footer and on /subscribe.
+export function subscribeForm(source = "footer") {
+  const box = document.createElement("div");
+  render(box, html`<form class="sub-form" novalidate><label class="sr-only" for="sub-${source}">Email address</label>
+    <input id="sub-${source}" name="email" type="email" autocomplete="email" inputmode="email" placeholder="Your email address" required>
+    <button class="btn btn-primary">Subscribe</button></form>
+    <p class="sub-note">New events and ticket news, about twice a month. Unsubscribe any time. See our <a href="/legal/privacy">Privacy Policy</a>.</p>`);
+  const f = box.querySelector("form");
+  me().then((u) => { if (u && !f.email.value) f.email.value = u.email; });
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector("button");
+    const email = f.email.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { f.email.setAttribute("aria-invalid", "true"); f.email.focus(); toast("Enter a valid email address.", "bad"); return; }
+    btn.setAttribute("aria-busy", "true");
+    try {
+      const r = await post("/api/site/subscribe", { email, source });
+      render(box, html`<p class="sub-done" role="status">${r.message}</p>`);
+    } catch (err) { toast(err.message, "bad"); }
+    finally { btn.removeAttribute("aria-busy"); }
+  });
+  return box;
+}
+
+export function footer(el) {
+  render(el, html`<div class="wrap"><section class="sub-band" aria-labelledby="sub-h"><div><h2 id="sub-h">Subscribe to receive updates</h2>
+      <p class="mb-0">Be first to hear about new events, ticket releases and free shows near you.</p></div><div data-sub></div></section>
+    <div class="footer-grid">
+    <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
+      <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p>
+      <a class="footer-social" href="${INSTAGRAM}" target="_blank" rel="noopener">${svgIcon("instagram", 20)} @ticketroom_za on Instagram</a></div>
+    <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Contact us</a></li></ul></div>
+    <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
+    <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li><li><button type="button" class="btn-link footer-link" data-cookie-settings>Cookie settings</button></li></ul></div>
+  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za <button type="button" class="country-btn footer-link" data-country>${countryLabel()}</button></div></div>`);
+  $("[data-sub]", el).append(subscribeForm("footer"));
+  $("[data-cookie-settings]", el).addEventListener("click", () => cookiePreferences());
+  $("[data-country]", el).addEventListener("click", () => countryDialog());
+  cookieBanner();
+  siteExtras().catch(() => {});
+}
+
+// ---------- country ----------
+// TicketRoom runs in South Africa today; the rest of SADC is coming. Choosing
+// another country explains that and offers updates for it.
+export const SADC = [
+  ["ZA", "South Africa", "🇿🇦"], ["AO", "Angola", "🇦🇴"], ["BW", "Botswana", "🇧🇼"], ["KM", "Comoros", "🇰🇲"], ["CD", "DR Congo", "🇨🇩"],
+  ["SZ", "Eswatini", "🇸🇿"], ["LS", "Lesotho", "🇱🇸"], ["MG", "Madagascar", "🇲🇬"], ["MW", "Malawi", "🇲🇼"], ["MU", "Mauritius", "🇲🇺"],
+  ["MZ", "Mozambique", "🇲🇿"], ["NA", "Namibia", "🇳🇦"], ["SC", "Seychelles", "🇸🇨"], ["TZ", "Tanzania", "🇹🇿"], ["ZM", "Zambia", "🇿🇲"], ["ZW", "Zimbabwe", "🇿🇼"],
+];
+const LIVE_COUNTRIES = ["ZA"];
+function countryLabel(short = false) { const [code, name, flag] = SADC[0]; return short ? html`<span aria-hidden="true">${flag}</span><span class="cc"> ${code}</span>` : `${flag} ${name}`; }
+export function countryDialog() {
+  const d = dialog("Choose your country", html`<div class="stack">
+    <p class="small muted mb-0">TicketRoom is live in South Africa. We're bringing it to the rest of the SADC region next.</p>
+    <ul class="country-list">${SADC.map(([code, name, flag]) => html`<li><button type="button" class="country-row" data-pick="${code}">
+      <span class="flag" aria-hidden="true">${flag}</span><span class="grow">${name}</span>
+      ${LIVE_COUNTRIES.includes(code) ? html`<span class="badge good">Available</span>` : html`<span class="badge plain">Coming soon</span>`}</button></li>`)}</ul></div>`);
+  $$("[data-pick]", d).forEach((b) => b.addEventListener("click", () => {
+    const [code, name, flag] = SADC.find((c) => c[0] === b.dataset.pick);
+    if (LIVE_COUNTRIES.includes(code)) { d.close(); return; }
+    render($(".dialog-body", d), html`<div class="stack center">
+      <div class="flag-lg" aria-hidden="true">${flag}</div>
+      <h3 class="mb-0">TicketRoom is coming to ${name}</h3>
+      <p class="mb-0">We're not selling tickets in ${name} yet. Leave your email and we'll tell you the day we launch there. Until then you can browse and buy tickets for events in South Africa.</p>
+      <div data-sub></div>
+      <div class="row center"><button type="button" class="btn btn-ghost" data-back>Choose another country</button><button type="button" class="btn btn-primary" data-close>Browse South African events</button></div></div>`);
+    $("[data-sub]", d).append(subscribeForm(`country:${code}`));
+    $("[data-back]", d).addEventListener("click", () => { d.close(); countryDialog(); });
+  }));
+}
+
+// ---------- cookie consent ----------
+// Necessary cookies (sign-in, security, your basket) are always on. Optional
+// ones are used only after you say yes: functional (remembering choices such
+// as the organiser link that brought you here) and analytics (counting visits
+// to improve the site; TicketRoom uses no third-party trackers or ads).
+const CONSENT_KEY = "tr_consent";
+const CONSENT_GROUPS = [
+  ["necessary", "Necessary", "Keep you signed in, protect forms against misuse and hold your tickets while you check out. The site can't work without these.", true],
+  ["functional", "Functional", "Remember choices you make, such as the organisation you last worked in, or the organiser link that brought you to an event so they're credited for the sale."],
+  ["analytics", "Analytics", "Count visits and page views so we can see what works and fix what doesn't. Counted on TicketRoom's own servers, never shared with ad networks."],
+];
+const readConsent = () => { try { return JSON.parse(localStorage.getItem(CONSENT_KEY) || "null"); } catch { return null; } };
+export const consent = (group) => group === "necessary" || !!readConsent()?.[group];
+function saveConsent(choice) {
+  const c = { v: 1, at: new Date().toISOString(), functional: !!choice.functional, analytics: !!choice.analytics };
+  try { localStorage.setItem(CONSENT_KEY, JSON.stringify(c)); } catch { /* private mode: asked again next visit */ }
+  // Saying no later removes what was kept under that group.
+  if (!c.functional) { try { localStorage.removeItem("tr_org"); for (const k of Object.keys(sessionStorage)) if (k.startsWith("tr_ref_")) sessionStorage.removeItem(k); } catch { /* ignore */ } }
+  document.cookie = `${CONSENT_KEY}=${c.functional ? "f" : ""}${c.analytics ? "a" : ""}-;path=/;max-age=${180 * 86400};samesite=lax${location.protocol === "https:" ? ";secure" : ""}`;
+  document.querySelector(".cookie-banner")?.remove();
+}
+export function cookieBanner() {
+  if (readConsent() || document.querySelector(".cookie-banner")) return;
+  const b = document.createElement("section");
+  b.className = "cookie-banner";
+  b.setAttribute("aria-label", "Cookie consent");
+  render(b, html`<div><strong>We value your privacy</strong><p class="small mb-0">We use necessary cookies to run TicketRoom. With your permission we also use functional and analytics cookies. You can change your mind any time under Cookie settings. <a href="/legal/cookies">Cookie Policy</a></p></div>
+    <div class="row"><button type="button" class="btn btn-ghost btn-sm" data-c="custom">Customise</button><button type="button" class="btn btn-ghost btn-sm" data-c="reject">Reject all</button><button type="button" class="btn btn-primary btn-sm" data-c="accept">Accept all</button></div>`);
+  document.body.append(b);
+  b.addEventListener("click", (e) => {
+    const k = e.target.closest("[data-c]")?.dataset.c;
+    if (k === "accept") saveConsent({ functional: true, analytics: true });
+    else if (k === "reject") saveConsent({});
+    else if (k === "custom") cookiePreferences();
+  });
+}
+export function cookiePreferences() {
+  const cur = readConsent() || {};
+  const d = dialog("Customise consent preferences", html`<form class="stack">
+    <p class="small mb-0">Choose which cookies TicketRoom may use. Necessary cookies are always active because the site doesn't work without them.</p>
+    ${CONSENT_GROUPS.map(([k, l, about, always]) => html`<div class="consent-row"><div><strong>${l}</strong><p class="small muted mb-0">${about}</p></div>
+      ${always ? html`<span class="badge good">Always active</span>` : html`<label class="switch"><input type="checkbox" name="${k}" ${raw(cur[k] ? "checked" : "")}><span class="sr-only">${l}</span><span class="track" aria-hidden="true"></span></label>`}</div>`)}
+    <div class="row end"><button type="button" class="btn btn-ghost" data-c="reject">Reject all</button><button type="button" class="btn btn-ghost" data-c="save">Save my preferences</button><button type="button" class="btn btn-primary" data-c="accept">Accept all</button></div></form>`);
+  d.addEventListener("click", (e) => {
+    const k = e.target.closest("[data-c]")?.dataset.c;
+    if (!k) return;
+    const f = $("form", d);
+    saveConsent(k === "accept" ? { functional: true, analytics: true } : k === "reject" ? {} : { functional: f.elements.functional.checked, analytics: f.elements.analytics.checked });
+    d.close();
+    toast("Your cookie preferences are saved.", "good");
+  });
+}
+
+// ---------- site information: banner, hours, assistant, callback ----------
+let sitePromise;
+export const siteInfo = (force = false) => {
+  if (!sitePromise || force) sitePromise = fetch("/api/site", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return sitePromise;
+};
+const store = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } } };
+const hashText = (t) => { let h = 0; for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) | 0; return String(h); };
+const DAY_NAMES = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
+const hm = (t) => { const [h, m] = String(t).split(":").map(Number); const ap = h >= 12 ? "pm" : "am"; const hh = h % 12 || 12; return m ? `${hh}:${String(m).padStart(2, "0")}${ap}` : `${hh}${ap}`; };
+
+export function hoursText(hours) {
+  if (!hours) return "";
+  if (hours.openNow) return "We're open now";
+  const n = hours.nextOpen;
+  const when = n ? (n.date === hours.today ? `today at ${hm(n.time)}` : `${DAY_NAMES[n.day]} at ${hm(n.time)}`) : "soon";
+  return `${hours.holiday ? `Closed for ${hours.holiday}` : "We're closed right now"} · back ${when}`;
+}
+export function weekTable(hours) {
+  return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} – ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
+}
+
+export async function siteExtras() {
+  const s = await siteInfo();
+  if (!s) return;
+  $$("[data-support-email]").forEach((a) => { a.href = `mailto:${s.support.email}`; a.textContent = s.support.email; });
+  $$("[data-hours-line]").forEach((x) => { x.textContent = s.hours.note || "Monday to Friday, 9am to 5pm"; });
+  if (s.chatbot?.enabled && !$(".chat-fab")) chatWidget(s);
+}
+// The announcement banner belongs to the public website only, never inside a
+// portal. It goes in with the header, so it never pushes a loaded page down.
+function showBanner(s) {
+  if (s?.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
+    const b = document.createElement("div");
+    b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
+    render(b, html`<div class="wrap"><p><span class="pill" aria-hidden="true">New</span> ${s.banner.text} ${s.banner.linkText && s.banner.linkUrl ? html`<a href="${s.banner.linkUrl}">${s.banner.linkText} →</a>` : ""}</p><button class="icon-btn" data-hide aria-label="Hide announcement">×</button></div>`);
+    $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
+    document.body.prepend(b);
+  }
+}
+
+export async function callbackDialog({ topic = "callback", message = "", source = "web" } = {}) {
+  const [s, u] = await Promise.all([siteInfo(), me()]);
+  const resp = s?.support?.responseTime || "24–48 hours";
+  const d = dialog("Request a callback", html`<form class="stack" novalidate>
+    <p class="muted mb-0">Leave your details and our team will get back to you within <strong>${resp}</strong>${s ? html` (${s.hours.note || "Monday to Friday, 9am to 5pm"})` : ""}.</p>
+    ${s && !s.hours.openNow ? html`<p class="callout warn mb-0">${hoursText(s.hours)}. Your request is saved and handled first thing.</p>` : ""}
+    ${callbackFields(u, topic, message)}
+    <button class="btn btn-primary btn-block">Request callback</button>
+    <p class="tiny muted mb-0">We use these details only to respond to you. See our <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</p></form>`);
+  onSubmit($("form", d), async (v) => {
+    const r = await post("/api/site/callback", { ...v, source });
+    render($(".dialog-body", d), html`<div class="stack center"><h3>Thanks, we've got it</h3><p>Your reference is <strong>${r.reference}</strong>. We'll contact you within ${r.responseTime}. A confirmation is on its way to your email.</p><button class="btn btn-dark" data-close>Done</button></div>`);
+  });
+  return d;
+}
+
+export function callbackFields(u, topic = "callback", message = "") {
+  const topics = [["callback", "General question"], ["tickets", "My tickets or an order"], ["payment", "A payment"], ["refund", "A refund"], ["tag", "Wristband or tag"], ["account", "My account"], ["organiser", "Selling tickets / organisers"], ["advertising", "Advertising with TicketRoom"], ["other", "Something else"]];
+  return html`<div class="grid-2"><div class="field"><label for="cb-name">Full name</label><input id="cb-name" name="fullName" autocomplete="name" required maxlength="120" value="${u?.full_name || ""}"></div>
+    <div class="field"><label for="cb-phone">Phone number</label><input id="cb-phone" name="phone" type="tel" autocomplete="tel" required placeholder="082 123 4567" value="${u?.phone || ""}"></div></div>
+    <div class="grid-2"><div class="field"><label for="cb-email">Email</label><input id="cb-email" name="email" type="email" autocomplete="email" required value="${u?.email || ""}"></div>
+    <div class="field"><label for="cb-topic">Topic</label><select id="cb-topic" name="topic">${topics.map(([v, l]) => html`<option value="${v}" ${raw(v === topic ? "selected" : "")}>${l}</option>`)}</select></div></div>
+    <div class="field"><label for="cb-time">Best time to call <span class="muted">(optional)</span></label><input id="cb-time" name="preferredTime" maxlength="60" placeholder="e.g. weekday mornings"></div>
+    <div class="field"><label for="cb-msg">How can we help?</label><textarea id="cb-msg" name="message" required maxlength="2000" placeholder="Include your order reference if you have one.">${message}</textarea></div>`;
+}
+
+function chatWidget(s) {
+  const KEY = "tr_chat_v1";
+  let state; try { state = JSON.parse(store.get(KEY) || "null"); } catch { state = null; }
+  if (!state?.conversation) state = { conversation: idem().replace(/[^A-Za-z0-9]/g, "").slice(0, 24), log: [] };
+  const save = () => store.set(KEY, JSON.stringify({ conversation: state.conversation, log: state.log.slice(-30) }));
+  const fab = document.createElement("button");
+  fab.className = "chat-fab"; fab.setAttribute("aria-label", "Chat with the TicketRoom assistant"); fab.setAttribute("aria-expanded", "false"); fab.setAttribute("aria-controls", "chat-panel");
+  render(fab, html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span>Help</span>`);
+  const panel = document.createElement("section");
+  panel.className = "chat-panel"; panel.id = "chat-panel"; panel.hidden = true; panel.setAttribute("aria-label", "TicketRoom assistant");
+  const starters = ["Where are my tickets?", "How do I list a free event?", "What are your fees?", "How do refunds work?"];
+  render(panel, html`<header><div><strong>TicketRoom assistant</strong><span class="tiny" data-status>${hoursText(s.hours)}</span></div><button class="icon-btn" data-x aria-label="Close chat">×</button></header>
+    <div class="chat-log" aria-live="polite"></div>
+    <div class="chat-starters">${starters.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>
+    <form class="chat-form"><label class="sr-only" for="chat-in">Your question</label><input id="chat-in" maxlength="500" autocomplete="off" placeholder="Ask a question…"><button class="btn btn-primary btn-sm">Send</button></form>
+    <footer class="tiny"><button class="btn-link" data-cb>Request a callback</button> · <a href="mailto:${s.support.email}">${s.support.email}</a></footer>`);
+  document.body.append(fab, panel);
+  const log = $(".chat-log", panel);
+  const bubble = (m) => {
+    const el = document.createElement("div");
+    el.className = `msg ${m.role}`;
+    render(el, html`<p>${m.text}</p>${m.link ? html`<a class="small" href="${m.link}">Open this page →</a>` : ""}
+      ${m.callback ? html`<button class="btn btn-dark btn-sm" data-cbq>Request a callback</button>` : ""}
+      ${m.suggestions?.length ? html`<div class="chips">${m.suggestions.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>` : ""}
+      ${m.id && m.helpful === undefined ? html`<div class="fb tiny">Helpful? <button class="btn-link" data-fb="1">Yes</button> <button class="btn-link" data-fb="0">No</button></div>` : ""}`);
+    $("[data-cbq]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
+    $$("[data-fb]", el).forEach((b) => b.addEventListener("click", () => {
+      m.helpful = b.dataset.fb === "1"; save();
+      post(`/api/site/chat/${m.id}/feedback`, { helpful: m.helpful, conversation: state.conversation }).catch(() => {});
+      render($(".fb", el), m.helpful ? "Thanks for the feedback." : html`Sorry about that. <button class="btn-link" data-cbq2>Ask us to call you</button> and someone from our team will help.`);
+      $("[data-cbq2]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
+    }));
+    $$("[data-q]", el).forEach((b) => b.addEventListener("click", () => ask(b.dataset.q)));
+    log.append(el); log.scrollTop = log.scrollHeight;
+  };
+  const lastQuestion = () => [...state.log].reverse().find((m) => m.role === "user")?.text || "";
+  const draw = () => {
+    log.textContent = "";
+    bubble({ role: "assistant", text: s.chatbot.greeting || "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds or selling tickets." });
+    state.log.forEach(bubble);
+    $(".chat-starters", panel).hidden = state.log.length > 0;
+  };
+  let busy = false;
+  const ask = async (q) => {
+    q = String(q || "").trim();
+    if (!q || busy) return;
+    busy = true;
+    $(".chat-starters", panel).hidden = true;
+    const history = state.log.slice(-8).map((m) => ({ role: m.role, text: m.text.slice(0, 2000) }));
+    const mine = { role: "user", text: q }; state.log.push(mine); bubble(mine);
+    const typing = document.createElement("div"); typing.className = "msg assistant typing"; typing.textContent = "…"; log.append(typing);
+    try {
+      const r = await post("/api/site/chat", { message: q, conversation: state.conversation, history });
+      const m = { role: "assistant", id: r.id, text: r.text, link: r.link, callback: r.callback, suggestions: r.suggestions };
+      state.log.push(m); typing.remove(); bubble(m);
+      if (r.hours) $("[data-status]", panel).textContent = hoursText(r.hours);
+    } catch (err) {
+      typing.remove();
+      bubble({ role: "assistant", text: err.status === 429 ? "You're sending messages quickly. Please wait a moment and try again." : `${err.message} You can ask us to call you instead, and we'll get back to you within ${s.support.responseTime}.`, callback: true });
+    } finally { busy = false; save(); }
+  };
+  // On a phone the chat fills the screen and the page behind it stays put:
+  // scrolling the conversation never scrolls the page.
+  const phone = () => matchMedia("(max-width: 640px)").matches;
+  let lockedAt = null;
+  const lockPage = (on) => {
+    const b = document.body;
+    if (on && lockedAt === null) {
+      lockedAt = scrollY;
+      Object.assign(b.style, { position: "fixed", top: `-${lockedAt}px`, left: "0", right: "0", width: "100%" });
+      document.documentElement.classList.add("chat-open");
+    } else if (!on && lockedAt !== null) {
+      Object.assign(b.style, { position: "", top: "", left: "", right: "", width: "" });
+      document.documentElement.classList.remove("chat-open");
+      scrollTo(0, lockedAt);
+      lockedAt = null;
+    }
+  };
+  const toggle = (open) => {
+    panel.hidden = !open; fab.setAttribute("aria-expanded", String(open)); fab.classList.toggle("open", open);
+    lockPage(open && phone());
+    if (open) {
+      if (!log.childElementCount) draw();
+      log.scrollTop = log.scrollHeight;
+      // On a phone, wait for a tap before raising the keyboard over the conversation.
+      if (!phone()) $("#chat-in").focus();
+    }
+  };
+  addEventListener("resize", () => { if (!panel.hidden) lockPage(phone()); });
+  fab.addEventListener("click", () => toggle(panel.hidden));
+  $("[data-x]", panel).addEventListener("click", () => { toggle(false); fab.focus(); });
+  panel.addEventListener("keydown", (e) => { if (e.key === "Escape") { toggle(false); fab.focus(); } });
+  $("[data-cb]", panel).addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
+  $$("[data-q]", $(".chat-starters", panel)).forEach((b) => b.addEventListener("click", () => ask(b.dataset.q)));
+  $(".chat-form", panel).addEventListener("submit", (e) => { e.preventDefault(); const i = $("#chat-in"); ask(i.value); i.value = ""; });
+  window.addEventListener("tr:chat", (e) => { toggle(true); if (e.detail) ask(e.detail); });
+}
+
+// portal: which sign-in box this is. "site" (the public website) and
+// "customer" offer customer sign-up; "organiser" offers organiser sign-up;
+// "admin" offers neither, and no "Forgot password": staff passwords are reset
+// by the platform owner from the admin portal; "scanner" has no sign-up.
+export function authDialog(mode = "signin", { onDone, reason, portal = "site" } = {}) {
+  const staffBox = portal === "admin";
+  if (mode === "signup" && portal === "organiser") return organiserSignupDialog();
+  const signup = mode === "signup" && !staffBox && portal !== "scanner";
+  const canSignUp = !staffBox && portal !== "scanner";
+  const d = dialog(signup ? "Create your TicketRoom account" : "Sign in", html`
+    ${reason ? html`<p class="callout">${reason}</p>` : ""}
+    ${staffBox || portal === "scanner" ? "" : html`<div class="stack mb" data-google hidden></div>`}
+    <form class="stack" novalidate>
+      ${signup ? html`<div class="field"><label for="a-name">Full name</label><input id="a-name" name="fullName" autocomplete="name" required></div>` : ""}
+      <div class="field"><label for="a-email">Email</label><input id="a-email" name="email" type="email" autocomplete="email" required></div>
+      ${signup ? html`<div class="field"><label for="a-phone">Mobile number <span class="muted">(optional)</span></label><input id="a-phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567"><span class="hint">For ticket SMSes if you choose.</span></div>` : ""}
+      <div class="field"><label for="a-pass">Password</label><input id="a-pass" name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" required minlength="${signup ? 10 : 1}">${signup ? html`<span class="hint">At least 10 characters.</span>` : ""}</div>
+      ${signup ? html`<div class="field"><label for="a-pass2">Confirm password</label><input id="a-pass2" name="passwordConfirm" type="password" autocomplete="new-password" required minlength="10"></div>` : ""}
+      ${signup ? html`<label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
+        <label class="check"><input type="checkbox" name="marketingOptIn"><span>Send me TicketRoom event news by email. You can unsubscribe at any time.</span></label>` : ""}
+      <button class="btn btn-primary btn-block" type="submit">${signup ? "Create account" : "Sign in"}</button>
+      ${staffBox ? html`<p class="small muted mb-0">TicketRoom staff only. Forgotten your password? Ask the platform owner to send you a new link.</p>`
+        : html`<div class="row between small">${signup ? html`<span>Already have an account? <button type="button" class="btn-link" data-switch>Sign in</button></span>`
+        : html`<button type="button" class="btn-link" data-forgot>Forgot password?</button>${canSignUp ? html`<span>New here? <button type="button" class="btn-link" data-switch>${portal === "organiser" ? "Start selling" : "Create account"}</button></span>` : ""}`}</div>`}
+    </form>`);
+  wireGoogle(d, portal);
+  const form = $("form", d);
+  onSubmit(form, async (v) => {
+    if (signup) {
+      matchPasswords(v, "password", "passwordConfirm");
+      const r = await post("/api/auth/register", v);
+      // Accounts start once the email is confirmed: show where to look next.
+      render($(".dialog-body", d), html`<div class="stack check-inbox">
+        <span class="tk-label">One more step</span>
+        <h3 class="mb-0">Check your inbox</h3>
+        <p class="mb-0">We've sent a confirmation link to <strong>${r.email}</strong>. Open it on any device and your account is ready. Tickets you bought with this email as a guest will be waiting in it.</p>
+        <p class="small muted mb-0">Nothing there after a few minutes? Look in spam or promotions, or send it again.</p>
+        <div class="row"><button class="btn btn-ghost btn-sm" data-resend>Send it again</button><button class="btn btn-primary btn-sm" data-close>Done</button></div></div>`);
+      $("[data-resend]", d).addEventListener("click", async (e) => {
+        try { const x = await post("/api/auth/verify-email/resend", { email: r.email }); toast(x.message, "good"); e.target.disabled = true; } catch (err) { toast(err.message, "bad"); }
+      });
+      return;
+    }
+    let u;
+    try { u = (await post("/api/auth/login", { ...v, portal })).user; }
+    catch (err) {
+      // The right password, on the wrong portal: say where this account signs in.
+      if (err.code !== "wrong_portal") throw err;
+      render($(".dialog-body", d), html`<div class="stack"><p class="callout warn mb-0">${err.message}</p>
+        <div class="row"><a class="btn btn-primary" href="${err.details?.portal || "/"}">Take me there</a><button class="btn btn-ghost" data-close>Close</button></div></div>`);
+      return;
+    }
+    await me(true);
+    d.close();
+    toast("Signed in.", "good");
+    // From the public website, everyone goes to their own portal.
+    if (onDone) onDone(); else if (portal === "site") location.href = homePortal(u); else location.reload();
+  });
+  $("[data-switch]", d)?.addEventListener("click", () => { d.close(); authDialog(signup ? "signin" : "signup", { onDone, reason, portal }); });
+  $("[data-forgot]", d)?.addEventListener("click", () => { d.close(); forgotDialog(); });
+  // Put the cursor in the first box, unless the person is already typing somewhere.
+  setTimeout(() => { if (!form.contains(document.activeElement)) $("input", form)?.focus(); }, 50);
+  return d;
+}
+
+// Becoming an organiser in one go: your account and your organisation.
+// ---------- confirm a mobile number ----------
+// Two steps in one box: the number, then the 6-digit code we SMS to it.
+export function phoneVerifyDialog(current, onDone) {
+  const d = dialog("Confirm your mobile number", html`<form class="stack" data-step="send" novalidate>
+    <p class="small muted mb-0">We'll SMS you a 6-digit code. It expires in 10 minutes.</p>
+    <div class="field"><label for="pv-phone">Mobile number</label><input id="pv-phone" name="phone" type="tel" autocomplete="tel" required value="${current || ""}" placeholder="082 123 4567"></div>
+    <button class="btn btn-primary btn-block">Send the code</button></form>`);
+  onSubmit($("form", d), async (v) => {
+    const r = await post("/api/auth/phone/send", { phone: v.phone });
+    render($(".dialog-body", d), html`<form class="stack" novalidate>
+      <p class="mb-0">We sent a code to <strong>${r.sentTo}</strong>.</p>
+      <div class="field"><label for="pv-code">Code</label><input id="pv-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required pattern="[0-9]{6}"></div>
+      <div class="row between"><button type="button" class="btn-link" data-again>Use another number</button><button class="btn btn-primary">Confirm</button></div></form>`);
+    $("#pv-code", d).focus();
+    $("[data-again]", d).addEventListener("click", () => { d.close(); phoneVerifyDialog(v.phone, onDone); });
+    onSubmit($("form", d), async (x) => { const out = await post("/api/auth/phone/verify", { code: x.code }); d.close(); toast("Your mobile number is confirmed.", "good"); await onDone?.(out.user); });
+  });
+  return d;
+}
+
+// ---------- sign in with Google ----------
+// Shown only when an admin has switched it on under Integrations, and only on
+// the customer and organiser sign-in boxes: staff never sign in this way.
+const GOOGLE_G = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+export const GOOGLE_ERRORS = {
+  off: "Sign in with Google isn't switched on. Use your email and password instead.",
+  expired: "That Google sign-in took too long or was opened in another browser. Please try again.",
+  cancelled: "Google sign-in was cancelled.",
+  unavailable: "We couldn't reach Google just now. Please try again, or use your email and password.",
+  unverified: "Google hasn't confirmed that email address, so we can't use it to sign you in.",
+  suspended: "This account is suspended. Contact hello@ticketroom.co.za.",
+  not_allowed: "This account can't sign in with Google. Use your email and password.",
+  organiser_account: "This email belongs to an organiser account. Continue with Google on the organiser portal.",
+  customer_account: "This email belongs to a customer account. Continue with Google on the customer portal, or start selling with another email.",
+  maintenance: "TicketRoom is down for maintenance. Please try again shortly.",
+};
+function wireGoogle(root, portal) {
+  const box = $("[data-google]", root);
+  if (!box || !["site", "customer", "organiser"].includes(portal)) return;
+  appConfig().then((c) => {
+    if (!c.googleSignIn) return;
+    const next = location.pathname + location.search + location.hash;
+    render(box, html`<a class="btn btn-google btn-block" href="/api/auth/google/start?portal=${portal}&next=${encodeURIComponent(next)}">${raw(GOOGLE_G)}<span>Continue with Google</span></a>
+      <p class="tiny muted mb-0 center">New to TicketRoom? Continuing with Google creates your ${portal === "organiser" ? "organiser" : ""} account and means you accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a>, <a href="/legal/terms" target="_blank">Terms and Conditions</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</p>
+      <div class="or-line"><span>or</span></div>`);
+    box.hidden = false;
+  });
+}
+
+export function organiserSignupDialog() {
+  const d = dialog("Start selling on TicketRoom", html`<form class="stack" novalidate>
+    <p class="muted mb-0">One form, two minutes. TicketRoom checks every organiser before their first event goes live, usually within one working day. You can build your events while you wait.</p>
+    <div class="stack" data-google hidden></div>
+    <div class="field"><label for="os-org">Organisation or trading name</label><input id="os-org" name="organisation" required maxlength="120" autocomplete="organization"></div>
+    <div class="grid-2"><div class="field"><label for="os-name">Your full name</label><input id="os-name" name="fullName" required autocomplete="name"></div>
+      <div class="field"><label for="os-phone">Mobile number <span class="muted">(optional)</span></label><input id="os-phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567"></div></div>
+    <div class="field"><label for="os-email">Email</label><input id="os-email" name="email" type="email" required autocomplete="email"><span class="hint">Where TicketRoom and your ticket buyers reach you.</span></div>
+    <div class="grid-2"><div class="field"><label for="os-pass">Password</label><input id="os-pass" name="password" type="password" required minlength="10" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+      <div class="field"><label for="os-pass2">Confirm password</label><input id="os-pass2" name="passwordConfirm" type="password" required minlength="10" autocomplete="new-password"></div></div>
+    <label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
+    <button class="btn btn-primary btn-block">Create my organiser account</button>
+    <p class="small mb-0">Already have a TicketRoom account? <a href="/organisers">Sign in</a> and set up your organisation there.</p></form>`, { wide: true });
+  wireGoogle(d, "organiser");
+  onSubmit($("form", d), async (v) => {
+    matchPasswords(v, "password", "passwordConfirm");
+    const r = await post("/api/organiser/signup", v);
+    render($(".dialog-body", d), html`<div class="stack check-inbox"><span class="tk-label">One more step</span><h3 class="mb-0">Check your inbox</h3>
+      <p class="mb-0">We've sent a confirmation link to <strong>${r.email}</strong>. Open it and your organiser portal is ready: create your first event straight away.</p>
+      <div class="row"><button class="btn btn-ghost btn-sm" data-resend>Send it again</button><button class="btn btn-primary btn-sm" data-close>Done</button></div></div>`);
+    $("[data-resend]", d).addEventListener("click", async (e) => { try { const x = await post("/api/auth/verify-email/resend", { email: r.email }); toast(x.message, "good"); e.target.disabled = true; } catch (err) { toast(err.message, "bad"); } });
+  });
+  // Start in the first box, unless the person has already started typing elsewhere.
+  setTimeout(() => { const f = document.activeElement; if (!f || f === d || f === document.body || !d.contains(f)) $("#os-org", d)?.focus(); }, 50);
+  return d;
+}
+
+function forgotDialog() {
+  const d = dialog("Reset your password", html`<form class="stack"><p class="muted">We will email you a link to choose a new password.</p>
+    <div class="field"><label for="f-email">Email</label><input id="f-email" name="email" type="email" required autocomplete="email"></div>
+    <button class="btn btn-dark btn-block">Send reset link</button></form>`);
+  onSubmit($("form", d), async (v) => { const r = await post("/api/auth/password/forgot", v); d.close(); toast(r.message, "good"); });
+}
+
+export async function requireUser(reason, portal = "site") {
+  const u = await me();
+  if (u) return u;
+  pageReady();
+  await new Promise((resolve) => authDialog("signin", { reason, portal, onDone: resolve }));
+  return me(true);
+}
+
+// An emailed link opened in a tab already showing the portal changes only the
+// part after "#": load the page again so the link is handled from the start.
+addEventListener("hashchange", () => { if (/^#\/(reset|verify)\//.test(location.hash)) location.reload(); });
+
+// Links from emails (confirm your email, choose a password) open in the
+// portal of the account they belong to, signed out. Returns true if the page
+// was one of them.
+export function emailLinkPage(portal) {
+  const reset = location.hash.match(/^#\/reset\/([^/?#]+)$/);
+  const verify = location.hash.match(/^#\/verify\/([^/?#]+)$/);
+  if (!reset && !verify) return false;
+  const main = $("#main");
+  render($("#sidenav"), "");
+  // Going to another page loads it; staying on this page (only the "#" part
+  // changes) needs a reload so it starts again signed in.
+  const openFresh = (to) => {
+    const u = new URL(to, location.href);
+    // Only a change after "#" stays on the same document and needs the reload.
+    const hashOnly = u.pathname === location.pathname && u.search === location.search && u.hash !== "";
+    location.replace(u.href);
+    if (hashOnly) location.reload();
+  };
+  const go = (u) => openFresh(homePortal(u) === "/account" ? "/account#/tickets" : homePortal(u));
+  if (reset) {
+    const token = reset[1];
+    render(main, html`<div class="page-head"><div><h1>Choose your password</h1><p class="muted">Use at least 10 characters. You'll be signed in straight away.</p></div></div>
+      <div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+      <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
+    onSubmit($("#rs"), async (v) => {
+      matchPasswords(v, "password", "passwordConfirm");
+      const r = await post("/api/auth/password/reset", { token, password: v.password });
+      toast(r.signedIn ? "Password saved. You're signed in." : "Password saved.", "good");
+      meCache = undefined;
+      go({ account_type: r.accountType });
+    });
+  } else {
+    (async () => {
+      render(main, spinner());
+      try {
+        const r = await post("/api/auth/verify-email", { token: verify[1] });
+        meCache = undefined;
+        const home = homePortal({ account_type: r.accountType });
+        render(main, html`<section class="welcome card"><span class="tk-label">Email confirmed</span><h1>Welcome to TicketRoom${r.firstName ? `, ${r.firstName}` : ""}</h1>
+          <p class="lead">Your account is ready.${r.tickets ? ` ${r.tickets} ticket${r.tickets === 1 ? " you bought as a guest is" : "s you bought as a guest are"} now in your account.` : ""}</p>
+          <div class="row"><a class="btn btn-primary" href="${home === "/account" ? "/account#/tickets" : home}" data-go>${r.accountType === "organiser" ? "Open my organiser portal" : "Go to my tickets"}</a><a class="btn btn-ghost" href="/">Browse events</a></div></section>`);
+        $("[data-go]").addEventListener("click", (e) => { e.preventDefault(); openFresh(e.currentTarget.getAttribute("href")); });
+      } catch (err) {
+        render(main, html`<section class="welcome card"><span class="tk-label">Confirm your email</span><h1>This link has expired</h1>
+          <p class="lead">${err.message} Sign in with your email and password and we'll send you a fresh link straight away.</p>
+          <div class="row"><button class="btn btn-primary" data-in>Sign in</button></div></section>`);
+        $("[data-in]").addEventListener("click", () => authDialog("signin", { portal }));
+      }
+    })();
+  }
+  pageReady();
+  return true;
+}
+
+// ---------- tiny hash router for portals ----------
+export function router(routes, fallback) {
+  let shown = null; // the section on screen now
+  let turn = 0; // only the latest tap gets to draw
+  const go = async () => {
+    // A window left open belongs to the page being left.
+    document.querySelectorAll("dialog[open]").forEach((d) => { d.dataset.left = "1"; d.close(); });
+    const path = location.hash.replace(/^#/, "") || "/";
+    const mine = ++turn;
+    const main = $("#main");
+    const moving = shown !== null && shown !== path;
+    // Tabs inside one item (an event's Tickets, Orders, Check-ins) keep their place.
+    const section = (x) => x.split("/").slice(0, 3).join("/");
+    const toTop = moving && section(shown) !== section(path);
+    // While the next section loads, the page keeps its height and fades a
+    // little, instead of collapsing to a spinner and growing again.
+    if (moving && main) { main.style.minHeight = `${main.offsetHeight}px`; main.setAttribute("aria-busy", "true"); }
+    const settle = () => {
+      if (mine !== turn || !main) return;
+      main.style.minHeight = "";
+      main.removeAttribute("aria-busy");
+      // A new section always starts at its top, in one step.
+      if (toTop) window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      shown = path;
+    };
+    for (const [pattern, fn] of routes) {
+      const keys = [];
+      const re = new RegExp("^" + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
+      const m = path.match(re);
+      if (m) {
+        const params = Object.fromEntries(keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
+        try { await fn(params); } catch (err) { console.error(err); toast(err.message || "Something went wrong.", "bad"); }
+        if (mine !== turn) return; // a later tap took over
+        settle();
+        document.querySelectorAll(".sidenav a").forEach((a) => {
+          const target = a.getAttribute("href").replace(/^#/, "");
+          a.toggleAttribute("aria-current", target === "/" ? path === "/" : path === target || path.startsWith(target + "/"));
+          if (a.hasAttribute("aria-current")) a.setAttribute("aria-current", "page");
+        });
+        // A portal's home page that has no link of its own ("/" in the customer portal) is its first section.
+        if (path === "/" && !document.querySelector('.sidenav a[aria-current="page"]')) document.querySelector('.sidenav a[href^="#/"]')?.setAttribute("aria-current", "page");
+        // On a phone the menu is a sideways strip: keep the current page in view.
+        const cur = document.querySelector('.sidenav a[aria-current="page"]');
+        if (cur && cur.parentElement.scrollWidth > cur.parentElement.clientWidth) {
+          const nav = cur.parentElement;
+          nav.scrollTo({ left: Math.max(0, cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2), behavior: "smooth" });
+        }
+        $("#main")?.focus({ preventScroll: true });
+        return;
+      }
+    }
+    settle();
+    fallback?.();
+  };
+  window.addEventListener("hashchange", go);
+  go();
+  return go;
+}
+
+// ---------- single-series bar chart (SVG, native hover tooltips) ----------
+export function barChart(data, { height = 180, label = (d) => d.label, value = (d) => d.value, fmt = (v) => String(v), title = "Chart", tickEvery = 1 } = {}) {
+  const W = 720, H = height, padL = 44, padB = 26, padT = 10;
+  const max = Math.max(1, ...data.map(value));
+  const nice = Math.pow(10, Math.floor(Math.log10(max)));
+  const top = Math.ceil(max / nice) * nice;
+  const bw = (W - padL) / Math.max(1, data.length);
+  const gap = Math.min(6, bw * 0.25);
+  const y = (v) => padT + (H - padT - padB) * (1 - v / top);
+  const grid = [0, 0.5, 1].map((f) => { const v = top * f; return `<line class="grid" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${padL - 6}" y="${y(v) + 4}" text-anchor="end">${esc(fmt(v))}</text>`; }).join("");
+  const bars = data.map((d, i) => {
+    const v = value(d), x = padL + i * bw + gap / 2, h = Math.max(0, H - padB - y(v)), w = Math.max(1, bw - gap);
+    const r = Math.min(4, w / 2, h);
+    const yTop = H - padB - h;
+    const path = h > 0 ? `M${x},${H - padB} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + w - r} Q${x + w},${yTop} ${x + w},${yTop + r} V${H - padB} Z` : "";
+    const tick = i % tickEvery === 0 ? `<text class="axis" x="${x + w / 2}" y="${H - 8}" text-anchor="middle">${esc(label(d))}</text>` : "";
+    return `<g><rect x="${padL + i * bw}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"><title>${esc(label(d))}: ${esc(fmt(v))}</title></rect>${path ? `<path class="bar" d="${path}"><title>${esc(label(d))}: ${esc(fmt(v))}</title></path>` : ""}${tick}</g>`;
+  }).join("");
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${grid}${bars}</svg>`);
+}
+
+// Width of meters is set via CSSOM (allowed under CSP), not style attributes.
+export function paintMeters(root = document) {
+  $$(".meter > i[data-pct]", root).forEach((i) => { i.style.width = `${Math.max(0, Math.min(100, Number(i.dataset.pct)))}%`; });
+}
+
+// ---------- QR code downloads (organiser event QR, admin QR maker) ----------
+// `svg` comes from our own API (squares only). PNG is drawn on a canvas at
+// print size, with an optional caption under the code.
+const fileSafe = (s) => String(s || "qr-code").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "qr-code";
+function saveBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+export async function qrPng(svg, { size = 1024, caption = "", background = "#FFFFFF", ink = "#0B1A33" } = {}) {
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  await new Promise((ok, fail) => { img.onload = ok; img.onerror = () => fail(new Error("Could not draw the QR code.")); img.src = url; });
+  const pad = caption ? Math.round(size * 0.16) : 0;
+  const c = document.createElement("canvas");
+  c.width = size; c.height = size + pad;
+  const g = c.getContext("2d");
+  g.fillStyle = background; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(img, 0, 0, size, size);
+  URL.revokeObjectURL(url);
+  if (caption) {
+    g.fillStyle = ink; g.textAlign = "center"; g.textBaseline = "middle";
+    let fs = Math.round(size * 0.06);
+    do { g.font = `700 ${fs}px Inter, "Segoe UI", Arial, sans-serif`; fs -= 2; } while (g.measureText(caption).width > size * 0.9 && fs > 12);
+    g.fillText(caption, size / 2, size + pad / 2 - size * 0.02);
+  }
+  return new Promise((ok) => c.toBlob(ok, "image/png"));
+}
+// A ticket as a picture for the phone's gallery, in TicketRoom's ticket
+// design: logo, navy header with the event, the details, the QR code in a
+// frame, a tear line, the ticket code, and the tagline underneath.
+export async function ticketPng(svg, t) {
+  const load = (src) => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => fail(new Error("Could not draw the ticket.")); i.src = src; });
+  const qrUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  const [qr, mark] = await Promise.all([load(qrUrl), load("/assets/logo-mark-dark.svg")]);
+  URL.revokeObjectURL(qrUrl);
+  const C = { bg: "#EEF2F9", navy: "#0B1D3F", amber: "#F2A93B", ink: "#0E1A30", muted: "#5E6C84", line: "#E2E7F0", soft: "#C9D5EA", dash: "#C3CDE0" };
+  const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  const W = 1200, X = 100, CW = 1000, MID = W / 2;
+  const font = (g, w, px) => { g.font = `${w} ${px}px ${SANS}`; };
+  const spaced = (g, text, y, sp) => {
+    const chars = [...text]; const total = chars.reduce((n, ch) => n + g.measureText(ch).width, 0) + sp * (chars.length - 1);
+    let x = MID - total / 2; g.textAlign = "left";
+    for (const ch of chars) { g.fillText(ch, x, y); x += g.measureText(ch).width + sp; }
+    g.textAlign = "center";
+  };
+  const wrap = (g, text, max, lines) => {
+    const out = []; let cur = "";
+    for (const w of String(text).split(/\s+/)) { const next = cur ? `${cur} ${w}` : w; if (g.measureText(next).width <= max || !cur) cur = next; else { out.push(cur); cur = w; } }
+    if (cur) out.push(cur);
+    if (out.length > lines) { out.length = lines; let last = out[lines - 1]; while (g.measureText(`${last}…`).width > max && last.length > 1) last = last.slice(0, -1); out[lines - 1] = `${last.trimEnd()}…`; }
+    return out;
+  };
+  const fit = (g, text, weight, px, max) => { do { font(g, weight, px); px -= 2; } while (g.measureText(text).width > max && px > 18); };
+  const rrect = (g, x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+
+  // Lay out once to learn the height, then draw.
+  const paint = (g, draw) => {
+    g.textAlign = "center"; g.textBaseline = "alphabetic";
+    if (draw) { g.fillStyle = C.bg; g.fillRect(0, 0, W, g.canvas.height); }
+    // Logo
+    font(g, 800, 76);
+    const wT = g.measureText("TICKET").width, wR = g.measureText("ROOM").width, mW = 112, mH = 84, gap = 18;
+    const lx = MID - (mW + gap + wT + wR) / 2;
+    if (draw) {
+      g.drawImage(mark, lx, 78, mW, mH); g.textAlign = "left";
+      g.fillStyle = C.navy; g.fillText("TICKET", lx + mW + gap, 148); g.fillStyle = C.amber; g.fillText("ROOM", lx + mW + gap + wT, 148); g.textAlign = "center";
+    }
+    // Header: card and navy band first, then the words on top.
+    const top = 230;
+    font(g, 800, 68); let lines = wrap(g, t.title, CW - 120, 2); if (lines.length > 1) { font(g, 800, 58); lines = wrap(g, t.title, CW - 120, 2); }
+    const lh = lines.length > 1 ? 68 : 0;
+    const headH = 92 + 92 + lh + 60 + 50 + 66;
+    if (draw) {
+      g.save(); g.shadowColor = "rgba(11,29,63,.14)"; g.shadowBlur = 50; g.shadowOffsetY = 16; g.fillStyle = "#fff"; rrect(g, X, top, CW, g.canvas.height - top - 200, 44); g.fill(); g.restore();
+      g.save(); rrect(g, X, top, CW, g.canvas.height - top - 200, 44); g.clip(); g.fillStyle = C.navy; g.fillRect(X, top, CW, headH); g.restore();
+    }
+    let y = top + 92;
+    font(g, 800, 30); if (draw) { g.fillStyle = C.amber; spaced(g, t.label || "TICKETROOM TICKET", y, 12); }
+    y += 92; font(g, 800, lines.length > 1 ? 58 : 68);
+    if (draw) { g.fillStyle = "#fff"; lines.forEach((l, i) => g.fillText(l, MID, y + i * 68)); }
+    y += lh + 60;
+    fit(g, t.when, 700, 36, CW - 120); if (draw) { g.fillStyle = C.soft; g.fillText(t.when, MID, y); }
+    y += 50; fit(g, t.place, 700, 36, CW - 120); if (draw) g.fillText(t.place, MID, y);
+    y = top + headH;
+    // Details
+    y += 84;
+    for (const [k, v] of t.rows || [["Ticket", t.type], ["Holder", t.holder], ["Order", t.order]]) {
+      if (draw) {
+        font(g, 700, 36); g.textAlign = "left"; g.fillStyle = C.muted; g.fillText(k, X + 80, y);
+        fit(g, v, 800, 38, CW - 360); g.textAlign = "right"; g.fillStyle = C.ink; g.fillText(v, X + CW - 80, y); g.textAlign = "center";
+      }
+      y += 62;
+    }
+    // QR
+    y += 18; const box = 460;
+    if (draw) {
+      g.fillStyle = "#fff"; rrect(g, MID - box / 2, y, box, box, 34); g.fill(); g.lineWidth = 4; g.strokeStyle = C.line; g.stroke();
+      g.imageSmoothingEnabled = false; g.drawImage(qr, MID - 190, y + 40, 380, 380); g.imageSmoothingEnabled = true;
+    }
+    y += box + 50; font(g, 700, 30); if (draw) { g.fillStyle = C.muted; g.fillText("Scan at the entrance", MID, y); }
+    // Tear line with notches
+    y += 46;
+    if (draw) {
+      g.setLineDash([22, 16]); g.lineWidth = 4; g.strokeStyle = C.dash; g.beginPath(); g.moveTo(X + 64, y); g.lineTo(X + CW - 64, y); g.stroke(); g.setLineDash([]);
+      for (const cx of [X, X + CW]) { g.beginPath(); g.arc(cx, y, 36, 0, Math.PI * 2); g.fillStyle = C.bg; g.fill(); g.lineWidth = 3; g.strokeStyle = C.line; g.stroke(); }
+    }
+    // Code
+    y += 100; font(g, 800, 30); if (draw) { g.fillStyle = C.muted; spaced(g, t.codeLabel || "TICKET CODE", y, 12); }
+    y += 108; font(g, 900, 96); let sp = 22; while (sp > 4 && [...t.code].reduce((n, ch) => n + g.measureText(ch).width, 0) + sp * (t.code.length - 1) > CW - 100) sp -= 2;
+    if (draw) { g.fillStyle = C.navy; spaced(g, t.code, y, sp); }
+    y += 76; const note = t.note || "Present this ticket at the entrance. Do not share the code publicly.";
+    fit(g, note, 700, 30, CW - 100); if (draw) { g.fillStyle = C.muted; g.fillText(note, MID, y); }
+    y += 84;
+    // Tagline
+    y += 110; font(g, 800, 34); if (draw) { g.fillStyle = C.navy; g.fillText("Your event. Your ticket.", MID, y); }
+    return y + 90;
+  };
+  const c = document.createElement("canvas"); c.width = W; c.height = 10;
+  c.height = paint(c.getContext("2d"), false);
+  paint(c.getContext("2d"), true);
+  return new Promise((ok) => c.toBlob(ok, "image/png"));
+}
+export function qrPanel(svg, { name = "qr-code", caption = "", background, ink } = {}) {
+  const box = document.createElement("div");
+  box.className = "qr-panel";
+  const sized = svg.replace("<svg ", '<svg role="img" aria-label="QR code" width="240" height="240" ');
+  render(box, html`<div class="qr-preview">${raw(sized)}</div>
+    <div class="row"><button class="btn btn-primary btn-sm" data-png>Download PNG</button><button class="btn btn-ghost btn-sm" data-svg>Download SVG</button></div>
+    <p class="tiny muted mb-0">PNG for WhatsApp, socials and printing (1024 px${caption ? ", with the caption" : ""}). SVG stays sharp at any size, for designers and large banners.</p>`);
+  $("[data-png]", box).addEventListener("click", async () => {
+    try { saveBlob(await qrPng(svg, { caption, background, ink }), `${fileSafe(name)}.png`); } catch (err) { toast(err.message, "bad"); }
+  });
+  $("[data-svg]", box).addEventListener("click", () => saveBlob(new Blob([svg], { type: "image/svg+xml" }), `${fileSafe(name)}.svg`));
+  return box;
+}
+
+// ---------- sharing and likes ----------
+export const INSTAGRAM = "https://www.instagram.com/ticketroom_za/";
+const ICONS = {
+  heart: '<path d="M12 20.5s-7-4.4-9.4-8.6C.9 8.9 2.3 5.3 5.6 4.6c2-.4 3.8.5 4.9 2h3c1.1-1.5 2.9-2.4 4.9-2 3.3.7 4.7 4.3 3 7.3-2.4 4.2-9.4 8.6-9.4 8.6z"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  instagram: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>',
+};
+export const svgIcon = (name, size = 18) => raw(`<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
+
+// Share an event (or any page): the phone's own share sheet where there is
+// one (WhatsApp, Instagram, Telegram, SMS…), plus direct buttons.
+export function shareBar(url, title, { text = "" } = {}) {
+  const box = document.createElement("div");
+  box.className = "share-bar";
+  const msg = text || `${title} on TicketRoom`;
+  const enc = encodeURIComponent;
+  const links = [
+    ["WhatsApp", `https://wa.me/?text=${enc(`${msg}: ${url}`)}`],
+    ["Facebook", `https://www.facebook.com/sharer/sharer.php?u=${enc(url)}`],
+    ["X", `https://twitter.com/intent/tweet?text=${enc(msg)}&url=${enc(url)}`],
+    ["Email", `mailto:?subject=${enc(title)}&body=${enc(`${msg}\n\n${url}`)}`],
+  ];
+  render(box, html`<span class="share-label">Share</span>
+    ${navigator.share ? html`<button type="button" class="btn btn-ghost btn-sm" data-native>${svgIcon("share", 16)} Share…</button>` : ""}
+    ${links.map(([name, href]) => html`<a class="btn btn-ghost btn-sm" href="${href}" target="_blank" rel="noopener" data-share="${name}">${name}</a>`)}
+    <button type="button" class="btn btn-ghost btn-sm" data-copy>${svgIcon("link", 16)} Copy link</button>`);
+  $("[data-native]", box)?.addEventListener("click", () => navigator.share({ title, text: msg, url }).catch(() => {}));
+  $("[data-copy]", box).addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(url); toast("Link copied.", "good"); } catch { toast(url); }
+  });
+  return box;
+}
+
+// Heart button. Signed-out people are asked to sign in first; the like is
+// saved to their account ("Saved events" in the customer portal).
+export function likeButton(slug, { liked = false, likes = 0 } = {}) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "like-btn";
+  const draw = () => {
+    b.classList.toggle("on", liked);
+    b.setAttribute("aria-pressed", String(liked));
+    b.setAttribute("aria-label", liked ? "Remove from saved events" : "Like this event");
+    render(b, html`${svgIcon("heart", 20)}<span>${likes ? likes.toLocaleString("en-ZA") : ""}</span><span class="like-word">${liked ? "Saved" : "Like"}</span>`);
+  };
+  draw();
+  b.addEventListener("click", async () => {
+    if (!(await me()) && !(await requireUser("Sign in to like events. They're saved to your account so you can find them again."))) return;
+    const want = !liked;
+    liked = want; likes += want ? 1 : -1; draw();
+    try { const r = await post(`/api/public/events/${encodeURIComponent(slug)}/like`, { liked: want }); liked = r.liked; likes = r.likes; draw(); }
+    catch (err) { liked = !want; likes += want ? -1 : 1; draw(); toast(err.message, "bad"); }
+  });
+  return b;
+}
+
+// "Add to calendar": a standard .ics file that iPhone, Android (Google),
+// Outlook and Mac calendars all open.
+export function calendarFile({ title, starts, ends, place = "", url = "" }) {
+  const t = (iso) => new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const esc = (s) => String(s).replace(/[\;,]/g, (c) => `\\${c}`).replace(/\n/g, "\\n");
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//TicketRoom//Events//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT",
+    `UID:${t(starts)}-${encodeURIComponent(url || title).slice(0, 60)}@ticketroom.co.za`, `DTSTAMP:${t(new Date().toISOString())}`,
+    `DTSTART:${t(starts)}`, `DTEND:${t(ends)}`, `SUMMARY:${esc(title)}`, place ? `LOCATION:${esc(place)}` : "", url ? `URL:${url}` : "",
+    url ? `DESCRIPTION:${esc(`Tickets and details: ${url}`)}` : "",
+    "BEGIN:VALARM", "TRIGGER:-PT3H", "ACTION:DISPLAY", `DESCRIPTION:${esc(title)} starts in 3 hours`, "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR"].filter(Boolean).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  a.download = `${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50) || "event"}.ics`;
+  document.body.append(a); a.click(); a.remove();
+}
+
+// ---------- ticket kinds and age groups (same lists as php/api/lib/domain.php) ----------
+export const TICKET_KINDS = {
+  general: { label: "General admission" }, early_bird: { label: "Early bird" }, vip: { label: "VIP" }, vvip: { label: "VVIP" },
+  golden_circle: { label: "Golden circle" }, seated: { label: "Reserved seating" }, standing: { label: "Standing" },
+  student: { label: "Student", note: "Bring your student card" }, child: { label: "Child", note: "Proof of age may be checked" },
+  pensioner: { label: "Pensioner", note: "Bring your ID" }, couple: { label: "Couple", admits: 2 }, group: { label: "Group", admits: 4 },
+  table: { label: "Table / booth", admits: 8 }, day_pass: { label: "Day pass" }, multi_day: { label: "Weekend / multi-day pass" },
+  season: { label: "Season pass" }, backstage: { label: "Backstage / meet & greet" }, hospitality: { label: "Hospitality" },
+  accessible: { label: "Accessible", note: "A companion may enter with this ticket" }, late_entry: { label: "Late entry" },
+};
+export const AGE_GROUPS = { all: "All ages", kids: "Kids (under 13)", teens: "Teens (13 to 17)", "18_24": "18 to 24", "25_34": "25 to 34", "35_49": "35 to 49", "50_plus": "50 and over", families: "Families" };
+export const ageGroupList = (v) => String(v || "").split(",").filter((k) => AGE_GROUPS[k]);
+export const ageGroupText = (v) => ageGroupList(v).map((k) => AGE_GROUPS[k]).join(", ");

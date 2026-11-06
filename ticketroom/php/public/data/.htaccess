@@ -1,0 +1,7 @@
+# Private: the database, the ticket signing keys, uploaded posters and your
+# settings. Nothing in here is ever served over the web.
+Require all denied
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>

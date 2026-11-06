@@ -1,0 +1,31 @@
+# TicketRoom database server. Copy to /etc/mysql/mariadb.conf.d/90-ticketroom.cnf
+# (MySQL 8: /etc/mysql/mysql.conf.d/). Sized for a 4 CPU / 8 GB server that
+# also runs the website; on a separate 8 GB database server use 5G for the
+# buffer pool.
+[mysqld]
+# Only this machine can connect. Never open port 3306 to the internet.
+bind-address = 127.0.0.1
+skip-name-resolve
+local-infile = 0
+symbolic-links = 0
+
+character-set-server = utf8mb4
+collation-server = utf8mb4_bin
+default-time-zone = '+00:00'
+transaction-isolation = READ-COMMITTED
+
+innodb_buffer_pool_size = 3G
+innodb_log_file_size = 512M
+innodb_flush_log_at_trx_commit = 1
+innodb_flush_method = O_DIRECT
+innodb_file_per_table = 1
+max_connections = 300
+max_prepared_stmt_count = 100000
+table_open_cache = 4000
+thread_cache_size = 64
+wait_timeout = 300
+max_allowed_packet = 64M
+
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 1

@@ -1,0 +1,180 @@
+// Message templates. Bodies are plain text; the email adapter also renders a
+// branded HTML version (see html.js): a line "Label: https://…" becomes a
+// button, "- " lines become bullets, and everything after the "-- " line is
+// the footer.
+const config = require("../../config");
+const { formatZar } = require("../../lib/money");
+
+const FOOTER = `\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. 2026811077`;
+const when = (d) => new Date(d).toLocaleString("en-ZA", { dateStyle: "full", timeStyle: "short", timeZone: "Africa/Johannesburg" });
+const time = (d) => new Date(d).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Johannesburg" });
+// "Sat 21 Nov 2026, 15:00", Johannesburg time.
+const shortWhen = (d) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Africa/Johannesburg" })
+    .formatToParts(new Date(d)).map((x) => [x.type, x.value]));
+  return `${p.weekday} ${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute}`;
+};
+const first = (name) => String(name || "there").trim().split(/\s+/)[0];
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const base = () => config.publicBaseUrl;
+const place = (e) => [e.venue_name, e.address, e.city].filter(Boolean).join(", ");
+
+module.exports = {
+  // ---------------------------------------------------------------- attendees
+  // guestLink: the private order link for someone who bought without an account.
+  orderConfirmed: ({ order, event, ticketCount, guestLink }) => {
+    const free = Number(order.total_cents) === 0;
+    const isAre = ticketCount === 1 ? "is" : "are";
+    const open = guestLink
+      ? `View your tickets: ${guestLink}\n\nKeep this email: the link opens your tickets on any phone. Want them all in one place? Create a free account with this email address at ${base()}/account and confirm it. Your tickets will be waiting.`
+      : `Open my tickets: ${base()}/account#/tickets`;
+    // Paid while payments were in test mode (the sandbox): marked TEST.
+    const test = order.test === true || Number(order.test) === 1;
+    return {
+      subject: (test ? "[TEST] " : "") + (free ? `Your free ${ticketCount === 1 ? "ticket" : "tickets"} for ${event.title}` : `Your tickets for ${event.title} (${order.reference})`),
+      body: `Hi ${first(order.buyer_name)},\n\n${test ? "This is a TEST order, paid while TicketRoom payments were in test mode. No real money moved and these tickets will not get you in.\n\n" : ""}${free ? `You're booked for ${event.title}. Your ${plural(ticketCount, "free ticket")} ${isAre} waiting in your TicketRoom account.` : `Thanks for your order. Your ${plural(ticketCount, "ticket")} for ${event.title} ${isAre} ready.`}\n\n${place(event)}\n${when(event.starts_at)}\nOrder ${order.reference}${free ? "" : ` · ${formatZar(order.total_cents)}`}\n\n${open}\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in.${free && !guestLink ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : ""}${FOOTER}`,
+    };
+  },
+  eventReminder: ({ name, event, ticketCount, soon }) => {
+    const tips = [
+      "- Open your tickets before you leave home. They'll still work if the signal at the venue is bad.",
+      "- Turn your screen brightness up so the QR code scans first time.",
+      "- Each ticket lets one person in, once.",
+    ];
+    if (event.age_restriction) tips.push(`- This event is ${event.age_restriction}, so bring ID.`);
+    if (event.transfers_enabled) tips.push("- Can't go? Send your ticket to a friend before the event starts.");
+    if (event.cashless_enabled) tips.push("- It's a cashless event, so top up your wristband in your account before you arrive.");
+    return {
+      subject: soon ? `${event.title} starts at ${time(event.starts_at)}` : `${event.title} is tomorrow`,
+      body: `Hi ${first(name)},\n\n${soon ? `${event.title} starts at ${time(event.starts_at)} today.` : `${event.title} is tomorrow.`} You have ${plural(ticketCount, "ticket")}.\n\n${when(event.starts_at)}\n${place(event)}\n\nOpen my tickets: ${base()}/account#/tickets\n\nA few things that help at the gate:\n${tips.join("\n")}\n\nEnjoy it!${FOOTER}`,
+    };
+  },
+  checkoutAbandoned: ({ name, event, eventUrl, unsubscribeUrl }) => ({
+    subject: `Still want to go to ${event.title}?`,
+    body: `Hi ${first(name)},\n\nYou started booking tickets for ${event.title} but didn't finish, so we couldn't hold them for you. There are still tickets available.\n\n${when(event.starts_at)}\n${place(event)}\n\nFinish my booking: ${eventUrl}\n\nIf something went wrong at checkout, ask us to call you back at ${base()}/contact and we'll sort it out.\n\nThis is the only reminder we'll send about it. To stop emails like this, unsubscribe here: ${unsubscribeUrl}${FOOTER}`,
+  }),
+  eventCancelled: ({ name, event, reason, paid }) => ({
+    subject: `${event.title} has been cancelled`,
+    body: `Hi ${first(name)},\n\nWe're sorry to tell you that the organiser has cancelled ${event.title}, which was set for ${when(event.starts_at)}.${reason ? `\n\nThe reason they gave: ${reason}` : ""}\n\n${paid ? "You don't need to do anything. We've started a full refund, booking fee included, to the card or account you paid with. It usually shows within 3 to 7 working days." : "Your free tickets have been cancelled, so there's nothing you need to do."}\n\nSee what else is on: ${base()}/${FOOTER}`,
+  }),
+  orderNeedsRefund: ({ order, event }) => ({
+    subject: `About your order ${order.reference}`,
+    body: `Hi ${first(order.buyer_name)},\n\nYour payment for ${event.title} reached us after your booking time ran out, and by then the tickets had sold out. We've started a full refund of ${formatZar(order.total_cents)}. You don't need to do anything.${FOOTER}`,
+  }),
+  transferOffer: ({ fromName, event, claimUrl }) => ({
+    subject: `${fromName} sent you a ticket for ${event.title}`,
+    body: `${fromName} has sent you a ticket for ${event.title} on ${when(event.starts_at)}.\n\nAccept the ticket: ${claimUrl}\n\nThe link works for 7 days. You'll need a TicketRoom account to accept it, and signing up is free.${FOOTER}`,
+  }),
+  transferDone: ({ event, toEmail }) => ({
+    subject: `Your ticket for ${event.title} has been accepted`,
+    body: `${toEmail} has accepted the ticket you sent for ${event.title}. The QR code on your copy no longer works.${FOOTER}`,
+  }),
+  verifyEmail: ({ name, url }) => ({
+    subject: "Please confirm your email address",
+    body: `Hi ${first(name)},\n\nThanks for signing up to TicketRoom. Please confirm your email address so your tickets and updates reach you.\n\nConfirm my email: ${url}\n\nIf you didn't create a TicketRoom account, you can ignore this email.${FOOTER}`,
+  }),
+  passwordReset: ({ name, url }) => ({
+    subject: "Reset your TicketRoom password",
+    body: `Hi ${first(name)},\n\nSomeone, hopefully you, asked to reset the password on your TicketRoom account. This link works for one hour.\n\nChoose a new password: ${url}\n\nIf it wasn't you, ignore this email and your password will stay the same.${FOOTER}`,
+  }),
+  topupConfirmed: ({ event, amount }) => ({
+    subject: `Top-up confirmed for ${event.title}`,
+    body: `We've added ${formatZar(amount)} to your cashless balance for ${event.title}.\n\nSee my balance: ${base()}/account#/wallet${FOOTER}`,
+  }),
+  refundDone: ({ name, order, event, amountCents }) => ({
+    subject: `Your refund for ${event.title} (${order.reference})`,
+    body: `Hi ${first(name || order.buyer_name)},\n\nWe have refunded ${formatZar(Number(amountCents))} for your order ${order.reference} (${event.title}).\n\nIt goes back to the card or account you paid with. Banks usually show it within 3 to 7 working days. Any refunded tickets no longer work at the gate.\n\nQuestions? Reply to this email or ask us to call you back at ${base()}/contact.${FOOTER}`,
+  }),
+  refundCompleted: ({ reference, amount }) => ({
+    subject: `Refund ${reference} processed`,
+    body: `Your refund of ${formatZar(amount)} (${reference}) has been processed. Depending on your bank, it can take 3 to 7 working days to show.${FOOTER}`,
+  }),
+  callbackReceived: ({ name, reference, responseTime, email, hoursNote }) => ({
+    subject: `We've got your callback request (${reference})`,
+    body: `Hi ${first(name)},\n\nThanks for getting in touch. Your reference is ${reference}, and someone from our team will get back to you within ${responseTime}.\n\nOur office hours: ${hoursNote}\n\nIf there's anything to add, reply to this email or write to ${email} and mention ${reference}.${FOOTER}`,
+  }),
+  unsubscribeLink: ({ name, url }) => ({
+    subject: "Unsubscribe from TicketRoom marketing",
+    body: `Hi ${first(name)},\n\nYou asked to stop getting marketing emails from TicketRoom and the organisers you follow. Please confirm below. The link works for 7 days.\n\nConfirm unsubscribe: ${url}\n\nWe'll still email you about tickets you already have. If you didn't ask for this, you can ignore this email.${FOOTER}`,
+  }),
+  newsletterConfirm: ({ url }) => ({
+    subject: "Confirm your TicketRoom updates",
+    body: `Hi there,\n\nThanks for signing up for TicketRoom updates: new events, ticket releases and the odd bit of news. Please confirm it's you. The link works for 7 days.\n\nConfirm my subscription: ${url}\n\nIf you didn't sign up, ignore this email and you won't hear from us.${FOOTER}`,
+  }),
+  newsletterUpdate: ({ subject, message, unsubscribeUrl }) => ({
+    subject,
+    body: `${String(message).trimEnd()}\n\n-- \nYou're getting this because you subscribed to TicketRoom updates on ticketroom.co.za. To stop them, unsubscribe here: ${unsubscribeUrl}\nTicketRoom (Pty) Ltd · Reg. no. 2026811077`,
+  }),
+
+  // ---------------------------------------------------------------- organisers and staff
+  organiserApproved: ({ name, organiser }) => ({
+    subject: `${organiser} is approved on TicketRoom`,
+    body: `Hi ${first(name)},\n\n${organiser} has been approved. You can now send your events to us for review, and email people who asked to hear from you.\n\nGo to the organiser portal: ${base()}/organisers\n\nFor now, free events are listed at no cost. Paid ticket sales are coming soon.\n\nIf you'd like a hand setting up your first event, ask us to call you at ${base()}/contact.${FOOTER}`,
+  }),
+  organiserRejected: ({ name, organiser, reason }) => ({
+    subject: "About your TicketRoom organiser application",
+    body: `Hi ${first(name)},\n\nThanks for applying to list events on TicketRoom as ${organiser}. We can't approve the application at this stage.${reason ? `\n\nReason: ${reason}` : ""}\n\nIf you can send us more information, reply to this email or ask us to call you at ${base()}/contact.${FOOTER}`,
+  }),
+  eventPublished: ({ name, event, eventUrl }) => ({
+    subject: `Your event is live: ${event.title}`,
+    body: `Hi ${first(name)},\n\n${event.title} has been approved and is now live on TicketRoom.\n\nSee the event page: ${eventUrl}\n\nA few next steps:\n- Share the link on your socials and in your WhatsApp groups.\n- Make a tracking link for each place you share it, so you can see what works.\n- Add your door staff under Staff so they can scan tickets on their phones.${FOOTER}`,
+  }),
+  eventChangesRequested: ({ name, event, reason }) => ({
+    subject: `Changes needed before ${event.title} can go live`,
+    body: `Hi ${first(name)},\n\nWe've looked at ${event.title} and need a few changes before we can publish it.\n\n${reason ? `What to change: ${reason}\n\n` : ""}Edit my event: ${base()}/organisers#/events/${event.id}\n\nOnce you've made the changes, send it to us again and we'll take another look.${FOOTER}`,
+  }),
+  teamInvite: ({ name, by, roles, url }) => ({
+    subject: "You've been added to the TicketRoom team",
+    body: `Hi ${first(name)},\n\n${by} has added you to the TicketRoom team as ${roles}. ${url ? `Set a password to get started. The link works for 7 days.\n\nSet my password: ${url}\n\n` : "Sign in with your usual TicketRoom password.\n\n"}After signing in you land in the admin portal. Keep your password to yourself: this account can see customer details.${FOOTER}`,
+  }),
+  // An admin sends a staff member a link to choose a new password (staff
+  // can't reset their own from the sign-in box).
+  staffPasswordReset: ({ name, by, url }) => ({
+    subject: "Choose a new TicketRoom password",
+    body: `Hi ${first(name)},\n\n${by} has sent you a link to choose a new password for the TicketRoom admin portal. It works for 24 hours.\n\nChoose my password: ${url}\n\nIf you didn't ask for this, tell ${by} straight away.${FOOTER}`,
+  }),
+  // Someone new added to an organiser's team: a new organiser account.
+  orgMemberInvite: ({ name, by, organiser, role, url }) => ({
+    subject: `${organiser} added you to their team on TicketRoom`,
+    body: `Hi ${first(name)},\n\n${by} has added you to the ${organiser} team on TicketRoom, with the ${String(role).charAt(0).toUpperCase()}${String(role).slice(1)} role. Set a password to open the organiser portal. The link works for 7 days.\n\nSet my password: ${url}\n\nAfter that, sign in at ticketroom.co.za/organisers.${FOOTER}`,
+  }),
+  payoutRequested: ({ name, reference, amountCents, organiser, bank }) => ({
+    subject: `Payout ${reference} requested`,
+    body: `Hi ${first(name)},\n\nWe've received your payout request of ${formatZar(Number(amountCents))} for ${organiser}. TicketRoom finance checks every request, then pays it by EFT to ${bank}. You'll get an email when it's paid.\n\nSee your balance: ${base()}/organisers#/finance${FOOTER}`,
+  }),
+  payoutRejected: ({ name, reference, amountCents, note }) => ({
+    subject: `Payout ${reference} was not approved`,
+    body: `Hi ${first(name)},\n\nYour payout request of ${formatZar(Number(amountCents))} was not approved.\n\nThe reason: ${note}\n\nThe amount is back in your available balance. Reply to this email if you have questions.${FOOTER}`,
+  }),
+  payoutPaid: ({ name, reference, amountCents, organiser, bank, bankReference }) => ({
+    subject: `Payout ${reference} is on its way`,
+    body: `Hi ${first(name)},\n\nWe have paid ${formatZar(Number(amountCents))} to ${bank} for ${organiser}. Bank reference: ${bankReference}.\n\nEFTs usually clear within 1 to 2 working days.\n\nSee your balance: ${base()}/organisers#/finance${FOOTER}`,
+  }),
+  staffInvite: ({ name, organiser, event, url }) => ({
+    subject: `${organiser} added you as a ticket scanner on TicketRoom`,
+    body: `Hi ${first(name)},\n\n${organiser} has added you as a ticket scanner for ${event}. Set a password to get started. The link works for 7 days.\n\nSet my password: ${url}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket.${FOOTER}`,
+  }),
+  gatePass: ({ name, organiser, role, event, url, reentry }) => ({
+    subject: `Your gate pass for ${event.title}`,
+    body: `Hi ${first(name)},\n\n${organiser} has given you a ${role} pass for ${event.title} (${shortWhen(event.starts_at)}, ${[event.venue_name, event.city].filter(Boolean).join(", ")}).\n\nOpen your pass: ${url}\n\nShow the QR code at the gate. ${reentry ? "It lets you in and out as often as you need." : "It works for one entry."} Keep the link to yourself: anyone with it can use your pass.${FOOTER}`,
+  }),
+  // ---------------------------------------------------------------- accounts
+  finishAccount: ({ name, url }) => ({
+    subject: "Finish creating your TicketRoom account",
+    body: `Hi ${first(name)},\n\nSomeone, hopefully you, asked to create a TicketRoom account with this email. You've booked with us before, so your tickets are already waiting: choose a password to open them. This link works for 24 hours.\n\nChoose my password: ${url}\n\nIf it wasn't you, ignore this email. Nothing changes until a password is chosen from this link.${FOOTER}`,
+  }),
+  // ---------------------------------------------------------------- customer care
+  supportReply: ({ name, subject, reference, message, from }) => ({
+    subject: `Re: ${subject} (${reference})`,
+    body: `Hi ${first(name)},\n\n${message}\n\n${from || "The TicketRoom team"}\n\nTo add anything, reply to this email or write to hello@ticketroom.co.za and mention ${reference}.${FOOTER}`,
+  }),
+  queryPassedOn: ({ name, organiser, reference }) => ({
+    subject: `Your question is with ${organiser} (${reference})`,
+    body: `Hi ${first(name)},\n\nThanks for your patience. Your question is about an event run by ${organiser}, so we've passed it to them with everything you told us. They'll reply to you by email.\n\nIf you don't hear from them within two working days, reply to this email and we'll follow up.${FOOTER}`,
+  }),
+  queryForOrganiser: ({ organiser, reference, customer, event, subject, body, note }) => ({
+    subject: `Customer question for ${organiser} (${reference})`,
+    body: `Hi ${organiser},\n\nTicketRoom customer care has passed you a question from ${customer}${event ? ` about ${event}` : ""}.\n\n"${subject}"\n${body}\n${note ? `\nNote from customer care: ${note}\n` : ""}\nPlease reply within two working days: ${base()}/organisers#/queries\n\nYour reply is emailed to the customer from TicketRoom. If it isn't yours to answer, send it back to TicketRoom from the same page.${FOOTER}`,
+  }),
+  footer: FOOTER,
+};
