@@ -49,7 +49,7 @@ This release builds on the 3 November package. Upload it the same way (steps bel
 ## Upload to the existing host
 
 1. Back up the live website and its database using your usual hosting backup tool.
-2. Extract titopay-launch-website.zip into the same document root that currently serves titopay.co.za. Upload hidden .htaccess files too. This is the original PHP/Apache structure, not a Node project.
+2. Extract website.zip into the same document root that currently serves titopay.co.za. Upload hidden .htaccess files too. This is the original PHP/Apache structure, not a Node project.
 3. Preserve the live api/config.local.php and everything already stored under api/private/, including the database and uploads. The package deliberately contains no local configuration credentials or live database files. Do not delete the existing document root before uploading.
 4. Keep the existing PHP, PDO and database configuration. The campaign adds a launch_recipients table automatically using the existing database connection; the database user needs CREATE TABLE permission for the first run.
 5. Clear any host/CDN HTML cache. Confirm /, /personal, /business, /install, /contact, /admin/ and /admin/launch.php on the real host. Confirm /waitlist redirects to the app.
