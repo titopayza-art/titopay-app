@@ -1656,3 +1656,6 @@ body:has(.chat-fab) .site-footer .legal-line { padding-right: 150px; }
   .hero-ticket .tk-wrap { width: 300px; zoom: .72; }
   .hero-grid:has(> .hero-pick-slot:not([hidden])) > .hero-ticket { display: none; }
 }
+/* About: ownership badges in the opening section. */
+.own-badges { gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.own-badge { display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--amber-500); color: var(--amber-500); font-weight: 800; font-size: .9rem; letter-spacing: .02em; }

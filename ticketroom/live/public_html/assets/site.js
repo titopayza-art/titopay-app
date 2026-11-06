@@ -1084,7 +1084,8 @@ async function aboutPage() {
   document.title = "About TicketRoom | Your Event. Your Ticket.";
   render(main, html`
     <section class="hero"><div class="wrap"><span class="cat-label">About TicketRoom</span><h1>Your Event. <b>Your Ticket.</b></h1>
-      <p class="lead">TicketRoom is a South African, Black-owned ticketing company. We help people find and book events, and give organisers tools to manage ticket sales and entry.</p></div></section>
+      <p class="lead">TicketRoom is a South African ticketing company that is 100% Black-owned and youth-owned. We help people find and book events, and give organisers tools to manage ticket sales and entry.</p>
+      <div class="row own-badges"><span class="own-badge">100% Black-owned</span><span class="own-badge">100% youth-owned</span></div></div></section>
     <section class="section"><div class="wrap stack-lg">
       <div class="grid-2"><article class="card pad-lg"><span class="cat-label">What we do</span><h2>Tickets and event tools</h2>
         <p>We provide ticketing for concerts, festivals, conferences, sport and private events. Guests can book online and keep their tickets on their phones.</p>
@@ -1092,6 +1093,8 @@ async function aboutPage() {
         <article class="card pad-lg"><span class="cat-label">For guests and organisers</span><h2>From booking to entry</h2>
           <p><strong>For guests:</strong> find an event, book online and access your ticket when you arrive.</p>
           <p class="mb-0"><strong>For organisers:</strong> set up ticket types, monitor sales and manage entry. We are developing cashless options for organisers, vendors and attendees.</p></article></div>
+      <section class="card pad-lg"><span class="cat-label">Who owns TicketRoom</span><h2>100% Black-owned and youth-owned</h2>
+        <p class="mb-0">TicketRoom is wholly owned by young Black South Africans. We built it for the events, artists and audiences we know, and every rand we earn helps grow a local, youth-led business.</p></section>
       <section class="card pad-lg"><span class="cat-label">South African owned and operated</span><h2>Built for local events</h2>
         <p>We work with event organisers across South Africa. Our focus is dependable ticketing, clear pricing and support when you need it.</p>
         <p class="mb-0">We want smaller events to have access to practical ticketing tools without the cost and complexity of a large event operation.</p></section>
