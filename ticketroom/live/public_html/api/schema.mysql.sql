@@ -1979,6 +1979,30 @@ CREATE INDEX seats_type_idx ON seats (ticket_type_id, status)
 ;;
 CREATE INDEX seats_order_idx ON seats (order_id)
 ;;
+CREATE TABLE seat_sections (
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  name VARCHAR(191) NOT NULL,
+  x DOUBLE,
+  y DOUBLE,
+  rotation DOUBLE NOT NULL DEFAULT 0,
+  curve DOUBLE NOT NULL DEFAULT 0,
+  updated_at MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_seat_sections_9 (event_id, name),
+  FOREIGN KEY (event_id) REFERENCES events (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
+CREATE TABLE seat_layouts (
+  event_id VARCHAR(191) NOT NULL,
+  image_upload_id MEDIUMTEXT,
+  image_width BIGINT NOT NULL DEFAULT 1000,
+  image_height BIGINT NOT NULL DEFAULT 0,
+  updated_at MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (event_id),
+  FOREIGN KEY (event_id) REFERENCES events (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
 CREATE TABLE organiser_verification (
   organiser_id VARCHAR(191) NOT NULL,
   entity_type MEDIUMTEXT NOT NULL DEFAULT ('individual'),

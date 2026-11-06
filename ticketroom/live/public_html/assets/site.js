@@ -1,4 +1,4 @@
-import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, seatMapHtml, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
+import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, seatMapHtml, venueSvg, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js?build=2026-10-22-phases";
 
 const main = $("#main");
@@ -587,31 +587,80 @@ async function eventPage(slug, opts = {}) {
   const selection = () => ticketTypes.filter((t) => qty[t.id] > 0).map((t) => ({ ticketTypeId: t.id, quantity: qty[t.id] }));
   const addonSel = () => extras.filter((x) => xqty[x.id] > 0).map((x) => ({ addonId: x.id, quantity: xqty[x.id] }));
   const seatSel = () => Object.entries(seatPick).filter(([id]) => qty[id] > 0).flatMap(([, list]) => list.map((st) => st.id));
-  // The seat map for one ticket type: tap seats to choose them, or take the best available.
-  const chooseSeats = async (t) => {
-    let map;
-    try { map = (await get(`/api/public/events/${encodeURIComponent(slug)}/seats`)).sections; } catch (err) { toast(err.message, "bad"); return; }
-    const max = Math.max(1, Math.min(t.per_order_limit, t.remaining + (seatPick[t.id]?.length || 0)));
-    const picked = new Map((seatPick[t.id] || []).map((st) => [st.id, st]));
-    const d = dialog(`Choose your seats`, html`<div class="seatmap-wrap"><p class="small muted mb-0">${t.name}. Tap a seat to choose it, tap again to let it go.</p>
-      <div class="seatmap" data-map></div>
-      <div class="seat-legend tiny"><span><i class="seat"></i>Open</span><span><i class="seat sel"></i>Yours</span><span><i class="seat taken"></i>Taken</span><span><i class="seat step"></i>Step-free</span></div>
-      <div class="seat-foot"><span data-picked class="small"></span><div class="row"><button type="button" class="btn btn-ghost btn-sm" data-best>Best available</button><button type="button" class="btn btn-primary" data-done>Done</button></div></div></div>`, { wide: true });
+  // The venue map: every block placed around the stage. Tap a block (on the
+  // map or in the list under it) to zoom in and choose seats there; seats can
+  // be picked in several blocks. Ticket counts follow the seats picked.
+  let venue = null;
+  const loadVenue = async () => { venue = await get(`/api/public/events/${encodeURIComponent(slug)}/seats`); return venue; };
+  const MAX_SEATS = 10;
+  const seatsLeft = (sec) => sec.rows.reduce((n, r) => n + r.seats.filter((st) => st.s === "open").length, 0);
+  const blockOnSale = (sec) => { const tt = ticketTypes.find((x) => x.id === sec.ticketTypeId); return !!tt && buyable(tt) && !closed; };
+  const blockNote = (sec) => { const n = seatsLeft(sec); return `${sec.priceCents ? moneyExact(sec.priceCents) : "Free"}, ${n && blockOnSale(sec) ? `${n} left` : "sold out"}`; };
+  const pickedNow = () => new Map(Object.entries(seatPick).filter(([id]) => qty[id] > 0).flatMap(([id, list]) => list.map((st) => [st.id, { ...st, typeId: id }])));
+  const venueLook = (picked) => (sec, st) => (picked.has(st.id) ? "sel" : !blockOnSale(sec) ? "off" : st.s === "open" ? "open" : st.s === "blocked" ? "blocked" : "taken");
+  const bindBlocks = (root, go) => $$("[data-block]", root).forEach((g) => {
+    g.addEventListener("click", () => go(g.dataset.block));
+    g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(g.dataset.block); } });
+  });
+  const chooseSeats = async (t = null, startBlock = null) => {
+    try { await loadVenue(); } catch (err) { toast(err.message, "bad"); return; }
+    const picked = pickedNow();
+    const typeMax = (id) => { const tt = ticketTypes.find((x) => x.id === id); return Math.min(tt.per_order_limit, tt.remaining + (seatPick[id]?.length || 0)); };
+    const first = t && venue.sections.find((x) => x.ticketTypeId === t.id && seatsLeft(x) > 0);
+    let block = startBlock || (first ? first.name : null);
+    let size = 28, fitted = null;
+    const d = dialog("Choose your seats", html`<div class="venue-pick" data-vp></div>`, { wide: true });
     const draw = () => {
-      render($("[data-map]", d), seatMapHtml(map, { picked: new Set(picked.keys()), dim: (sec) => sec.ticketTypeId !== t.id, canPick: (sec, st, sel) => sec.ticketTypeId === t.id && (st.s === "open" || sel) }));
-      $("[data-picked]", d).textContent = picked.size ? `${picked.size} ${picked.size === 1 ? "seat" : "seats"}: ${[...picked.values()].map((st) => st.short).join(", ")}` : `Choose up to ${max} ${max === 1 ? "seat" : "seats"}.`;
+      const sec = block && venue.sections.find((x) => x.name === block);
+      const list = [...picked.values()];
+      render($("[data-vp]", d), html`${sec ? html`<div class="vp-head"><button type="button" class="btn btn-ghost btn-sm" data-allblocks>All blocks</button>
+            <span class="vp-title"><strong>${sec.name}</strong><span class="tiny muted">${sec.ticketType !== sec.name ? `${sec.ticketType}, ` : ""}${blockNote(sec)}</span></span>
+            <span class="vp-zoom" role="group" aria-label="Seat size"><button type="button" data-z="-4" aria-label="Smaller seats">−</button><button type="button" data-z="4" aria-label="Bigger seats">+</button></span></div>
+          <div class="seatmap vp-seats" style="--seat:${size}px" data-map>${seatMapHtml([sec], { stage: false, heading: false, picked: new Set(picked.keys()), canPick: (x, st, sel) => blockOnSale(x) && (st.s === "open" || sel) })}</div>
+          <div class="seat-legend tiny"><span><i class="seat"></i>Open</span><span><i class="seat sel"></i>Yours</span><span><i class="seat taken"></i>Taken</span><span><i class="seat step"></i>Step-free</span></div>`
+        : html`<p class="small muted mb-0">Tap a block to see its seats. The stage is at the top.</p>
+          <div class="venue-wrap">${venueSvg(venue.sections, venue.layout, { state: venueLook(picked), summary: blockNote })}</div>
+          <div class="vp-blocks" role="list">${venue.sections.map((x) => { const ok = blockOnSale(x) && seatsLeft(x) > 0; return html`<button type="button" role="listitem" class="vp-block${ok ? "" : " vp-out"}" data-go="${x.name}">
+            <span class="vp-b-name">${x.name}${x.ticketType !== x.name ? html`<span class="tiny muted">${x.ticketType}</span>` : ""}</span>
+            <span class="vp-b-price">${x.priceCents ? moneyExact(x.priceCents) : "Free"}${ok ? html`<span class="tiny muted">${seatsLeft(x)} left</span>` : html`<span class="tt-out">Sold out</span>`}</span></button>`; })}</div>`}
+        <div class="seat-foot"><span class="small" aria-live="polite">${list.length ? `${list.length} ${list.length === 1 ? "seat" : "seats"}: ${list.map((x) => x.short).join(", ")}` : `Choose up to ${MAX_SEATS} seats.`}</span>
+          <div class="row">${t ? html`<button type="button" class="btn btn-ghost btn-sm" data-best>Best available</button>` : ""}<button type="button" class="btn btn-primary" data-done>Done</button></div></div>`);
+      // A block opens with its seats sized to fit the screen (then + and − to zoom).
+      const box = sec && $("[data-map]", d);
+      if (box && fitted !== block) {
+        let lo = Infinity, hi = -Infinity;
+        for (const r of sec.rows) for (const st of r.seats) { lo = Math.min(lo, st.p); hi = Math.max(hi, st.p); }
+        size = Math.max(10, Math.min(34, Math.floor((box.clientWidth - 48) / ((hi - lo + 1) * 1.16))));
+        box.style.setProperty("--seat", `${size}px`);
+        fitted = block;
+      }
+      if (box) box.scrollLeft = (box.scrollWidth - box.clientWidth) / 2;
+      $("[data-allblocks]", d)?.addEventListener("click", () => { block = null; draw(); });
+      $$("[data-z]", d).forEach((b) => b.addEventListener("click", () => { size = Math.max(10, Math.min(44, size + Number(b.dataset.z))); $("[data-map]", d).style.setProperty("--seat", `${size}px`); }));
+      $$("[data-go]", d).forEach((b) => b.addEventListener("click", () => { block = b.dataset.go; draw(); $("[data-allblocks]", d)?.focus(); }));
+      bindBlocks(d, (name) => { block = name; draw(); $("[data-allblocks]", d)?.focus(); });
       $$("[data-seat]", d).forEach((b) => b.addEventListener("click", () => {
         const id = b.dataset.seat;
         if (picked.has(id)) picked.delete(id);
-        else if (picked.size < max) picked.set(id, { id, short: b.dataset.short, label: b.dataset.full });
-        else { toast(`You can choose up to ${max} ${max === 1 ? "seat" : "seats"} here.`, "bad"); return; }
+        else {
+          const typeId = sec.ticketTypeId, mine = [...picked.values()].filter((x) => x.typeId === typeId).length;
+          if (picked.size >= MAX_SEATS) { toast(`You can choose up to ${MAX_SEATS} seats in one order.`, "bad"); return; }
+          if (mine >= typeMax(typeId)) { toast(`You can choose up to ${typeMax(typeId)} ${sec.ticketType} seats.`, "bad"); return; }
+          picked.set(id, { id, short: `${sec.name} ${b.dataset.short}`, label: b.dataset.full, typeId });
+        }
         draw();
         $(`[data-seat="${id}"]`, d)?.focus();
       }));
+      $("[data-done]", d).addEventListener("click", () => {
+        const by = {};
+        for (const x of picked.values()) (by[x.typeId] ||= []).push(x);
+        for (const id of Object.keys(seatPick)) if (!by[id]) { delete seatPick[id]; qty[id] = 0; }
+        for (const [id, l] of Object.entries(by)) { seatPick[id] = l; qty[id] = l.length; }
+        d.close(); drawSelect();
+      });
+      $("[data-best]", d)?.addEventListener("click", () => { delete seatPick[t.id]; if (!qty[t.id]) qty[t.id] = 1; d.close(); drawSelect(); });
     };
     draw();
-    $("[data-done]", d).addEventListener("click", () => { if (picked.size) { seatPick[t.id] = [...picked.values()]; qty[t.id] = picked.size; } d.close(); drawSelect(); });
-    $("[data-best]", d).addEventListener("click", () => { delete seatPick[t.id]; if (!qty[t.id]) qty[t.id] = 1; d.close(); drawSelect(); });
   };
   let openGroups = null;
   const drawSelect = () => {
@@ -652,6 +701,9 @@ async function eventPage(slug, opts = {}) {
     render(box, html`<div class="tix-grid"><div class="tix-list">
       <h2 id="tix-h" class="sr-only">Choose tickets</h2>
       ${closed ? html`<p class="callout warn">${e.preview ? "Preview only. Tickets go on sale once the event is published." : e.status === "cancelled" ? "Sales are closed." : "Ticket sales are not open right now."}</p>` : ""}
+      ${venue && venue.sections.length && !closed ? html`<section class="card venue-card" aria-labelledby="vm-h"><div class="row between"><h3 id="vm-h" class="mb-0">Pick your seats</h3><button type="button" class="btn btn-ghost btn-sm" data-venue>See all blocks</button></div>
+        <div class="venue-wrap">${venueSvg(venue.sections, venue.layout, { state: venueLook(pickedNow()), summary: blockNote })}</div>
+        <p class="tiny muted mb-0">Tap a block to choose your seats, or add tickets below and we'll give you the best seats available.</p></section>` : ""}
       ${!ticketTypes.length ? html`<section class="card"><p class="muted mb-0">No tickets available.</p></section>`
         : grouped ? groups.map((g) => html`<details class="tix-group card" data-group="${g.key}" ${raw(openGroups.has(g.key) ? "open" : "")}>
           <summary>${g.meta.imageUploadId ? html`<span class="tix-group-img"><img src="/media/${g.meta.imageUploadId}" alt="" loading="lazy"></span>` : ""}
@@ -689,6 +741,8 @@ async function eventPage(slug, opts = {}) {
     // Changing the count of a seated ticket by hand goes back to the best available seats.
     $$("[data-inc],[data-dec]", box).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.inc || b.dataset.dec; if (seatPick[id]) { delete seatPick[id]; drawSelect(); } }));
     $$("[data-seats]", box).forEach((b) => b.addEventListener("click", () => chooseSeats(ticketTypes.find((t) => t.id === b.dataset.seats))));
+    $("[data-venue]", box)?.addEventListener("click", () => chooseSeats());
+    bindBlocks($(".venue-card", box) || document.createElement("div"), (name) => chooseSeats(null, name));
     $$("[data-xinc]", box).forEach((b) => b.addEventListener("click", () => { xqty[b.dataset.xinc]++; drawSelect(); $(`[data-xinc="${b.dataset.xinc}"]`, box)?.focus(); }));
     $$("[data-xdec]", box).forEach((b) => b.addEventListener("click", () => { xqty[b.dataset.xdec]--; drawSelect(); $(`[data-xdec="${b.dataset.xdec}"]`, box)?.focus(); }));
     // No account needed: signed-in people check out as themselves, anyone else as a guest.
@@ -852,6 +906,7 @@ async function eventPage(slug, opts = {}) {
     try { queueState = (await get(`/api/public/presale-queue/${encodeURIComponent(queueToken)}`)).queue; }
     catch { sessionStorage.removeItem(queueStorageKey); queueToken = ""; }
   }
+  if (e.seated && e.salesOpen) await loadVenue().catch(() => { venue = null; });
   if (queueInWindow && (!queueState || queueState.status !== "admitted")) drawQueue(); else drawSelect();
 }
 

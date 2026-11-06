@@ -15,6 +15,12 @@
 //       side by side; a cancelled order frees its seats
 //   X9  blocked seats are not sold and the quantity follows; the gate shows the seat
 //   X10 upgrade: an older message queue is rebuilt to accept WhatsApp, rows kept
+//   X11 venue blocks: rows of different lengths (a wedge), shorter rows centred
+//   X12 venue map: blocks placed, turned and curved over the venue's plan, as
+//       buyers see it; only the organiser's own picture; wrong values refused
+//   X13 the seat map copied to another show at the venue: blocks, seats off
+//       sale, positions and plan; missing ticket types made at the same price
+//   X14 copying only from the organiser's own events; never onto a map
 //
 //   node tests/extras.js <dir from serve.sh> [port]
 const fs = require("fs");
@@ -263,6 +269,80 @@ const one = (q, p = []) => sql(DATA, q, p)[0];
     }));`);
     assert(r.refusedBefore === "check_failed", `the old table accepted WhatsApp: ${js(r)}`);
     assert(r.after === r.before + 1 && r.idx.includes("message_outbox_due_idx") && r.idx.includes("message_outbox_campaign_user_uq"), js(r));
+  });
+
+  let wedge;
+  await test("X11 a wedge block: each row its own number of seats, shorter rows centred", async () => {
+    await php(`q("UPDATE events SET status = 'draft' WHERE id = ?", [${js(eventId)}]); tm_out(true);`);
+    const tt = (await org.call("POST", `${O}/ticket-types`, { name: "Block E", kind: "general", priceCents: 28500, quantityTotal: 1, perOrderLimit: 6, status: "on_sale" })).ticketType;
+    let bad = ""; try { await org.call("POST", `${O}/seats/sections`, { ticketTypeId: tt.id, section: "Block E", rowSeats: "A:4, B" }); } catch (e) { bad = e.message; }
+    assert(/422/.test(bad) && /rowSeats/.test(bad), bad || "a broken row list was accepted");
+    const r = await org.call("POST", `${O}/seats/sections`, { ticketTypeId: tt.id, section: "Block E", rowSeats: "A:4, B:6, C-D:8" });
+    const sec = r.sections.find((x) => x.name === "Block E");
+    const rows = sec.rows.map((x) => [x.label, x.seats.length, x.seats[0].p, x.seats[0].n]);
+    assert(js(rows) === js([["A", 4, 2, 1], ["B", 6, 1, 1], ["C", 8, 0, 1], ["D", 8, 0, 1]]), js(rows));
+    assert(Number(one("SELECT quantity_total AS n FROM ticket_types WHERE id = ?", [tt.id]).n) === 26, "quantity is not the seat count");
+    assert(sec.x === null && sec.y === null, "a new block should wait to be placed");
+    wedge = { tt, sec };
+  });
+
+  await test("X12 the venue map: blocks placed, turned and curved over the plan, as buyers see it", async () => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+    const up = await org.call("POST", `/api/organiser/${SEED.organiser.orgId}/uploads`, png, undefined, { "content-type": "image/png" });
+    const r = await org.call("PUT", `${O}/seats/layout`, { sections: [{ name: "Stalls", x: 500, y: 120, rotation: 0, curve: 0 }, { name: "Block E", x: 500, y: 300, rotation: -12.5, curve: 40 }], imageUploadId: up.uploadId, imageWidth: 1200, imageHeight: 900 });
+    assert(r.layout.imageUrl === `/media/${up.uploadId}` && r.layout.imageWidth === 1200 && r.layout.imageHeight === 900, js(r.layout));
+    await php(`q("UPDATE events SET status = 'published' WHERE id = ?", [${js(eventId)}]); tm_out(true);`);
+    const pub = await cust.call("GET", `/api/public/events/${slug}/seats`);
+    const e = pub.sections.find((x) => x.name === "Block E");
+    assert(e.x === 500 && e.y === 300 && e.rotation === -12.5 && e.curve === 40 && pub.layout.imageUrl === r.layout.imageUrl, js({ e: { ...e, rows: undefined }, layout: pub.layout }));
+    let bad = ""; try { await org.call("PUT", `${O}/seats/layout`, { sections: [{ name: "Nowhere", x: 1, y: 1, rotation: 0, curve: 0 }] }); } catch (err) { bad = err.message; }
+    assert(/422/.test(bad), bad || "a block that does not exist was saved");
+    bad = ""; try { await org.call("PUT", `${O}/seats/layout`, { sections: [{ name: "Block E", x: 1, y: 1, rotation: 0, curve: 400 }] }); } catch (err) { bad = err.message; }
+    assert(/422/.test(bad), bad || "a curve of 400 degrees was saved");
+    // A picture someone else uploaded cannot be put behind this map.
+    const other = php(`$u = row("SELECT id FROM users WHERE account_type = 'customer' LIMIT 1"); $id = uuid(); q("INSERT INTO uploads (id, owner_id, organiser_id, mime_type, size_bytes, created_at) VALUES (?,?,NULL,'image/png',10,?)", [$id, $u['id'], now_iso()]); tm_out($id);`);
+    bad = ""; try { await org.call("PUT", `${O}/seats/layout`, { sections: [], imageUploadId: other }); } catch (err) { bad = err.message; }
+    assert(/422/.test(bad) && /imageUploadId/.test(bad), bad || "another person's upload was accepted");
+    // Buying in the curved, turned block works like any other.
+    const c = new Client(BASE, DATA);
+    const seat = pub.sections.find((x) => x.name === "Block E").rows[0].seats[1];
+    const o = await c.call("POST", "/api/public/orders", { eventSlug: slug, items: [{ ticketTypeId: wedge.tt.id, quantity: 1 }], seats: [seat.id], guest: guest(8), idempotencyKey: idem() });
+    await pay(c, o);
+    assert(one("SELECT seat_label FROM tickets WHERE order_id = (SELECT id FROM orders WHERE reference = ?)", [o.order.reference]).seat_label === "Block E, row A, seat 2", "wrong seat on the ticket");
+  });
+
+  let copyTo;
+  await test("X13 the seat map copied to another show: blocks, seats off sale, positions, plan, ticket types made", async () => {
+    copyTo = php(`$src = ${js(eventId)};
+      $e = row('SELECT * FROM events WHERE id = ?', [$src]); $id = uuid();
+      $e['id'] = $id; $e['slug'] = 'extras-copy-' . strtolower(random_code(6)); $e['ref'] = new_ref('events'); $e['title'] = 'Extras Test Night 2'; $e['status'] = 'draft';
+      insert('events', $e);
+      tm_out(['id' => $id]);`);
+    const O2 = `/api/organiser/${SEED.organiser.orgId}/events/${copyTo.id}`;
+    const src = await org.call("GET", `${O2}/seats/sources`);
+    assert(src.events.some((x) => x.id === eventId), "the event with a map is not offered");
+    const r = await org.call("POST", `${O2}/seats/copy`, { fromEventId: eventId });
+    assert(r.seats === 38 && js(r.ticketTypesMade.sort()) === js(["Block E", "Stalls"]), js({ seats: r.seats, made: r.ticketTypesMade }));
+    const types = sql(DATA, "SELECT name, price_cents, quantity_total FROM ticket_types WHERE event_id = ? ORDER BY name", [copyTo.id]);
+    assert(js(types.map((t) => [t.name, Number(t.price_cents), Number(t.quantity_total)])) === js([["Block E", 28500, 26], ["Stalls", 20000, 8]]), js(types));
+    const counts = one("SELECT SUM(status = 'open') AS open, SUM(status = 'blocked') AS blocked, SUM(status NOT IN ('open','blocked')) AS other FROM seats WHERE event_id = ?", [copyTo.id]);
+    assert(Number(counts.open) === 34 && Number(counts.blocked) === 4 && Number(counts.other) === 0, `sold seats must come over as open: ${js(counts)}`);
+    const e = r.sections.find((x) => x.name === "Block E");
+    assert(e.x === 500 && e.rotation === -12.5 && e.curve === 40 && r.layout.imageWidth === 1200, js({ ...e, rows: undefined }));
+    let again = ""; try { await org.call("POST", `${O2}/seats/copy`, { fromEventId: eventId }); } catch (err) { again = err.message; }
+    assert(/409/.test(again) && /seats_exist/.test(again), again || "copied on top of an existing map");
+  });
+
+  await test("X14 seat maps are only copied from the organiser's own events", async () => {
+    const foreign = php(`$o = uuid(); $now = now_iso();
+      $org = row('SELECT * FROM organisers WHERE id = ?', [${js(SEED.organiser.orgId)}]); $org['id'] = $o; $org['name'] = 'Other Org'; $org['slug'] = 'other-org-' . strtolower(random_code(5)); if (array_key_exists('ref', $org)) $org['ref'] = new_ref('organisers'); insert('organisers', $org);
+      $e = row('SELECT * FROM events WHERE id = ?', [${js(eventId)}]); $id = uuid();
+      $e['id'] = $id; $e['organiser_id'] = $o; $e['slug'] = 'foreign-' . strtolower(random_code(6)); $e['ref'] = new_ref('events'); insert('events', $e);
+      tm_out($id);`);
+    const fresh = php(`$e = row('SELECT * FROM events WHERE id = ?', [${js(eventId)}]); $id = uuid(); $e['id'] = $id; $e['slug'] = 'extras-copy-' . strtolower(random_code(6)); $e['ref'] = new_ref('events'); $e['status'] = 'draft'; insert('events', $e); tm_out($id);`);
+    let r = ""; try { await org.call("POST", `/api/organiser/${SEED.organiser.orgId}/events/${fresh}/seats/copy`, { fromEventId: foreign }); } catch (err) { r = err.message; }
+    assert(/404/.test(r), r || "copied from another organiser's event");
+    php(`foreach ([${js(fresh)}, ${js(foreign)}, ${js(copyTo.id)}] as $id) q("UPDATE events SET status = 'draft' WHERE id = ?", [$id]); tm_out(true);`);
   });
 
   // Back to how the other suites expect it.

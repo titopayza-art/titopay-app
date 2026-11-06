@@ -7,7 +7,8 @@ What is ready, what only you can do, and the first marketing steps.
 - Buying, free and paid tickets, guest checkout, transfers, face-value
   resale, waitlist, cashless wristbands, vendors, box office, event teams,
   gate scanner with offline mode, test events, VerifyNow checks, wallet passes,
-  reserved seating with seat maps, extras sold with tickets (parking,
+  reserved seating on a map of the venue (blocks placed around the stage,
+  copied to every show at the same venue), extras sold with tickets (parking,
   merchandise, VIP upgrades) and tickets on WhatsApp.
 - Every automated test suite passes, on SQLite (Afrihost) and on MySQL
   (your own server). No overselling under load.

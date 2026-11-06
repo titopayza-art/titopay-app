@@ -81,14 +81,62 @@ function ext_seat_summary(string $eventId): array
 }
 route('GET', '/api/organiser/:orgId/events/:eventId/seats', function ($a) {
     [, $event] = ext_event($a['orgId'], $a['eventId'], false);
-    return ['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id'])];
+    return ['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id']), 'layout' => seat_layout($event['id'])];
 });
-// A block of seats: a section with rows and the same number of seats in each.
+// The venue map: where each block sits (centre x, y on the map), how far it
+// is turned and curved, and the picture of the venue's plan behind it.
+route('PUT', '/api/organiser/:orgId/events/:eventId/seats/layout', function ($a) {
+    [$u, $event] = ext_event($a['orgId'], $a['eventId']);
+    $b = check(body(), ['sections' => R::arr(R::obj(['name' => R::str(['min' => 1, 'max' => 40]), 'x' => R::num(['min' => -20000, 'max' => 20000]), 'y' => R::num(['min' => -20000, 'max' => 20000]),
+        'rotation' => R::num(['min' => -360, 'max' => 360]), 'curve' => R::num(['min' => 0, 'max' => 180])]), ['max' => 300]),
+        'imageUploadId' => R::str(['max' => 64, 'optional' => true]), 'imageWidth' => R::int(['min' => 200, 'max' => 20000, 'optional' => true]), 'imageHeight' => R::int(['min' => 0, 'max' => 40000, 'optional' => true])]);
+    $raw = body();
+    return tx(function () use ($u, $event, $b, $raw) {
+        $now = now_iso();
+        $names = array_flip(array_column(rows('SELECT DISTINCT section FROM seats WHERE event_id = ?', [$event['id']]), 'section'));
+        foreach ($b['sections'] as $sec) {
+            if (!isset($names[$sec['name']])) throw invalid(['sections' => "There is no section called {$sec['name']}."]);
+            if (affected('UPDATE seat_sections SET x = ?, y = ?, rotation = ?, curve = ?, updated_at = ? WHERE event_id = ? AND name = ?', [$sec['x'], $sec['y'], $sec['rotation'], $sec['curve'], $now, $event['id'], $sec['name']]) === 0) {
+                q('INSERT INTO seat_sections (id, event_id, name, x, y, rotation, curve, updated_at) VALUES (?,?,?,?,?,?,?,?)', [uuid(), $event['id'], $sec['name'], $sec['x'], $sec['y'], $sec['rotation'], $sec['curve'], $now]);
+            }
+        }
+        if (array_key_exists('imageUploadId', $raw) || isset($b['imageWidth'])) {
+            $cur = seat_layout($event['id']);
+            $img = array_key_exists('imageUploadId', $raw) ? (($raw['imageUploadId'] ?? '') !== '' ? (string) $b['imageUploadId'] : null) : $cur['imageUploadId'];
+            // Only a picture this organiser uploaded.
+            if ($img !== null && !val('SELECT 1 FROM uploads WHERE id = ? AND organiser_id = ?', [$img, $event['organiser_id']])) throw invalid(['imageUploadId' => 'Upload the plan again.']);
+            q('DELETE FROM seat_layouts WHERE event_id = ?', [$event['id']]);
+            q('INSERT INTO seat_layouts (event_id, image_upload_id, image_width, image_height, updated_at) VALUES (?,?,?,?,?)', [$event['id'], $img, $b['imageWidth'] ?? $cur['imageWidth'], $b['imageHeight'] ?? $cur['imageHeight'], $now]);
+        }
+        audit('seats.layout_saved', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['sections' => count($b['sections'])]]);
+        return ['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id']), 'layout' => seat_layout($event['id'])];
+    });
+});
+// Events of this organiser with a seat map, to copy from (every show at the same venue).
+route('GET', '/api/organiser/:orgId/events/:eventId/seats/sources', function ($a) {
+    [, $event] = ext_event($a['orgId'], $a['eventId'], false);
+    return ['events' => rows("SELECT e.id, e.title, e.starts_at, e.venue_name, count(s.id) AS seats FROM events e JOIN seats s ON s.event_id = e.id
+                                WHERE e.organiser_id = ? AND e.id <> ? GROUP BY e.id, e.title, e.starts_at, e.venue_name ORDER BY e.starts_at DESC LIMIT 50", [$event['organiser_id'], $event['id']])];
+});
+route('POST', '/api/organiser/:orgId/events/:eventId/seats/copy', function ($a) {
+    [$u, $event] = ext_event($a['orgId'], $a['eventId']);
+    $b = check(body(), ['fromEventId' => R::uuid()]);
+    return tx(function () use ($u, $event, $b) {
+        // Only from this organiser's own events.
+        $from = row('SELECT * FROM events WHERE id = ? AND organiser_id = ?', [$b['fromEventId'], $event['organiser_id']]);
+        if (!$from) throw not_found('Event not found.');
+        $r = seats_copy($from, row('SELECT * FROM events WHERE id = ?', [$event['id']]), $u);
+        return $r + ['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id']), 'layout' => seat_layout($event['id'])];
+    });
+});
+// A block of seats: rows with the same number of seats in each (rows +
+// seatsPerRow), or each row its own number (rowSeats "A:10, B:12, C-F:14").
+// Shorter rows are centred, so a block can be a wedge like the ones facing a stage.
 route('POST', '/api/organiser/:orgId/events/:eventId/seats/sections', function ($a) {
     [$u, $event] = ext_event($a['orgId'], $a['eventId']);
-    $b = check(body(), ['ticketTypeId' => R::uuid(), 'section' => R::str(['min' => 1, 'max' => 40]), 'rows' => R::str(['min' => 1, 'max' => 400]),
-        'seatsPerRow' => R::int(['min' => 1, 'max' => 120]), 'startNumber' => R::int(['min' => 1, 'max' => 9999, 'optional' => true]),
-        'accessibleRows' => R::str(['max' => 100, 'optional' => true])]);
+    $b = check(body(), ['ticketTypeId' => R::uuid(), 'section' => R::str(['min' => 1, 'max' => 40]), 'rows' => R::str(['min' => 1, 'max' => 400, 'optional' => true]),
+        'seatsPerRow' => R::int(['min' => 1, 'max' => 120, 'optional' => true]), 'rowSeats' => R::str(['max' => 1000, 'optional' => true]),
+        'startNumber' => R::int(['min' => 1, 'max' => 9999, 'optional' => true]), 'accessibleRows' => R::str(['max' => 100, 'optional' => true])]);
     return tx(function () use ($u, $event, $b) {
         $tt = row('SELECT * FROM ticket_types WHERE id = ? AND event_id = ?', [$b['ticketTypeId'], $event['id']]);
         if (!$tt) throw not_found('Ticket type not found.');
@@ -96,23 +144,34 @@ route('POST', '/api/organiser/:orgId/events/:eventId/seats/sections', function (
         if (!$seated && (int) $tt['quantity_sold'] + (int) $tt['quantity_held'] > 0) throw conflict("{$tt['name']} has already sold general admission tickets. Make a new ticket type for seats.", 'ticket_type_sold');
         $section = trim(preg_replace('/\s+/', ' ', $b['section']));
         if (val('SELECT 1 FROM seats WHERE event_id = ? AND section = ? LIMIT 1', [$event['id'], $section])) throw conflict("There is already a section called $section. Choose another name.", 'section_exists');
-        $rows = seat_rows($b['rows']);
-        if (!$rows) throw invalid(['rows' => 'Use a range like A-J or 1-20, or a list like A,B,C (up to 100 rows).']);
-        $total = count($rows) * $b['seatsPerRow'];
+        if (trim((string) ($b['rowSeats'] ?? '')) !== '') {
+            $counts = seat_row_counts((string) $b['rowSeats']);
+            if (!$counts) throw invalid(['rowSeats' => 'Write each row and its seats, like A:10, B:12, C-F:14 (up to 100 rows, 120 seats a row).']);
+        } else {
+            $rows = seat_rows((string) ($b['rows'] ?? ''));
+            if (!$rows) throw invalid(['rows' => 'Use a range like A-J or 1-20, or a list like A,B,C (up to 100 rows).']);
+            if (empty($b['seatsPerRow'])) throw invalid(['seatsPerRow' => 'How many seats in each row?']);
+            $counts = array_map(fn($r) => [$r, $b['seatsPerRow']], $rows);
+        }
+        $total = array_sum(array_column($counts, 1));
+        $widest = max(array_column($counts, 1));
         if ($total + (int) val('SELECT count(*) FROM seats WHERE event_id = ?', [$event['id']]) > 50000) throw conflict('A seat map can hold up to 50 000 seats.', 'limit_exceeded');
         $access = $b['accessibleRows'] ?? '' ? array_flip(seat_rows((string) $b['accessibleRows'])) : [];
         $order = (int) val('SELECT COALESCE(MAX(section_order),0) + 1 FROM seats WHERE event_id = ?', [$event['id']]);
         $start = $b['startNumber'] ?? 1;
         $now = now_iso();
-        foreach ($rows as $ri => $label) {
-            for ($i = 0; $i < $b['seatsPerRow']; $i++) {
+        foreach ($counts as $ri => [$label, $n]) {
+            $offset = intdiv($widest - $n, 2);
+            for ($i = 0; $i < $n; $i++) {
                 q('INSERT INTO seats (id, event_id, ticket_type_id, section, section_order, row_label, row_order, seat_number, pos, step_free, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                    [uuid(), $event['id'], $tt['id'], $section, $order, $label, $ri, $start + $i, $i, isset($access[$label]) ? 1 : 0, 'open', $now]);
+                    [uuid(), $event['id'], $tt['id'], $section, $order, $label, $ri, $start + $i, $offset + $i, isset($access[$label]) ? 1 : 0, 'open', $now]);
             }
         }
+        q('DELETE FROM seat_sections WHERE event_id = ? AND name = ?', [$event['id'], $section]);
+        q('INSERT INTO seat_sections (id, event_id, name, x, y, rotation, curve, updated_at) VALUES (?,?,?,NULL,NULL,0,0,?)', [uuid(), $event['id'], $section, $now]);
         seats_sync_type($tt['id']);
         audit('seats.section_added', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['section' => $section, 'seats' => $total, 'ticketType' => $tt['name']]]);
-        return json_out(['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id'])], 201);
+        return json_out(['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id']), 'layout' => seat_layout($event['id'])], 201);
     });
 });
 route('POST', '/api/organiser/:orgId/events/:eventId/seats/sections/remove', function ($a) {
@@ -123,12 +182,13 @@ route('POST', '/api/organiser/:orgId/events/:eventId/seats/sections/remove', fun
         if (!$types) throw not_found('Section not found.');
         if (val("SELECT 1 FROM seats WHERE event_id = ? AND section = ? AND status IN ('held','sold') LIMIT 1", [$event['id'], $b['section']])) throw conflict('Seats in this section are sold or being paid for. Block the seats you do not want to sell instead.', 'section_sold');
         q('DELETE FROM seats WHERE event_id = ? AND section = ?', [$event['id'], $b['section']]);
+        q('DELETE FROM seat_sections WHERE event_id = ? AND name = ?', [$event['id'], $b['section']]);
         foreach ($types as $t) {
             // A type with no seats left goes back to general admission at its old quantity.
             if (val('SELECT 1 FROM seats WHERE ticket_type_id = ? LIMIT 1', [$t])) seats_sync_type($t);
         }
         audit('seats.section_removed', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['section' => $b['section']]]);
-        return ['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id'])];
+        return ['sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id']), 'layout' => seat_layout($event['id'])];
     });
 });
 // Seats kept off sale (a sound desk, a pillar, house seats), or put back on.
@@ -142,7 +202,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/seats/block', function ($a)
             array_merge([$b['blocked'] ? 'blocked' : 'open', now_iso(), $event['id'], $from], $ids));
         foreach (array_column(rows('SELECT DISTINCT ticket_type_id FROM seats WHERE id IN (' . placeholders($ids) . ')', $ids), 'ticket_type_id') as $t) seats_sync_type($t);
         audit($b['blocked'] ? 'seats.blocked' : 'seats.unblocked', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['seats' => $n]]);
-        return ['changed' => $n, 'sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id'])];
+        return ['changed' => $n, 'sections' => seat_map($event['id']), 'summary' => ext_seat_summary($event['id']), 'layout' => seat_layout($event['id'])];
     });
 });
 

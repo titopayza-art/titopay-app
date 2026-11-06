@@ -1691,19 +1691,98 @@ export function calendarFile({ title, starts, ends, place = "", url = "" }) {
 }
 
 // ---------- ticket kinds and age groups (same lists as php/api/lib/domain.php) ----------
+// ---- the venue map ------------------------------------------------------
+// Blocks of seats placed around the stage on one map: each block has a
+// centre (x, y), a turn and a curve (rows bent into arcs facing the stage).
+// Map units: a seat is 10 across; the stage sits at the top, centred on x 500.
+export const SEAT_STEP = 10;
+const VENUE_STAGE = { x: 350, y: 0, w: 300, h: 34 };
+// Each seat of a block as a point around the block's centre, before turning.
+export function blockGeometry(sec) {
+  let cols = 1;
+  for (const r of sec.rows) for (const st of r.seats) cols = Math.max(cols, st.p + 1);
+  const W = cols * SEAT_STEP, H = sec.rows.length * SEAT_STEP;
+  const curve = ((sec.curve || 0) * Math.PI) / 180;
+  const pts = [];
+  sec.rows.forEach((r, ri) => r.seats.forEach((st) => {
+    const cx = (st.p + 0.5) * SEAT_STEP - W / 2, cy = (ri + 0.5) * SEAT_STEP - H / 2;
+    if (!curve) { pts.push({ st, row: r.label, x: cx, y: cy }); return; }
+    // Rows become arcs around a point in front of the block (towards the stage).
+    const R0 = W / curve, R = R0 + (ri + 0.5) * SEAT_STEP, th = (cx / W) * curve;
+    pts.push({ st, row: r.label, x: R * Math.sin(th), y: R * Math.cos(th) - R0 - H / 2 });
+  }));
+  return { W, H, pts };
+}
+// Blocks not placed yet go under the others, centred, one below the next.
+export function venuePlaced(sections) {
+  const geo = new Map(sections.map((s) => [s.name, blockGeometry(s)]));
+  let y = VENUE_STAGE.y + VENUE_STAGE.h + 30;
+  for (const s of sections) if (s.x != null && s.y != null) y = Math.max(y, s.y + geo.get(s.name).H / 2 + 30);
+  return sections.map((s) => {
+    if (s.x != null && s.y != null) return s;
+    const g = geo.get(s.name);
+    const out = { ...s, x: 500, y: Math.round(y + g.H / 2), rotation: s.rotation || 0, curve: s.curve || 0 };
+    y += g.H + 30;
+    return out;
+  });
+}
+const turn = (x, y, deg) => { const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a); return [x * c - y * s, x * s + y * c]; };
+// The whole venue as SVG. state(sec, seat) gives each seat's look: "open",
+// "taken", "sel", "off" (a block not on offer) or "blocked".
+export function venueSvg(sections, layout = {}, { state = (sec, st) => (st.s === "open" ? "open" : st.s === "blocked" ? "blocked" : "taken"), selected = null, editing = false, summary = null } = {}) {
+  const placed = venuePlaced(sections);
+  let x0 = VENUE_STAGE.x, y0 = VENUE_STAGE.y, x1 = VENUE_STAGE.x + VENUE_STAGE.w, y1 = VENUE_STAGE.y + VENUE_STAGE.h;
+  const img = layout.imageUrl && layout.imageWidth ? { w: layout.imageWidth, h: layout.imageHeight || layout.imageWidth * 0.75 } : null;
+  if (img) { x0 = Math.min(x0, 0); y0 = Math.min(y0, 0); x1 = Math.max(x1, img.w); y1 = Math.max(y1, img.h); }
+  const groups = placed.map((sec) => {
+    const g = blockGeometry(sec);
+    let seats = "";
+    for (const p of g.pts) {
+      const look = state(sec, p.st);
+      if (look === "blocked" && !editing) continue;
+      seats += `<rect x="${(p.x - 4).toFixed(1)}" y="${(p.y - 4).toFixed(1)}" width="8" height="8" rx="2" class="vs vs-${look}"${p.st.a ? ' data-a="1"' : ""}/>`;
+      const [tx, ty] = turn(p.x, p.y, sec.rotation || 0);
+      x0 = Math.min(x0, sec.x + tx - 6); x1 = Math.max(x1, sec.x + tx + 6); y0 = Math.min(y0, sec.y + ty - 6); y1 = Math.max(y1, sec.y + ty + 6);
+    }
+    const n = (((sec.rotation || 0) % 360) + 360) % 360, flip = n > 90 && n < 270;
+    const top = Math.min(...g.pts.map((p) => p.y)) - 8;
+    const s = summary ? summary(sec) : "";
+    return `<g class="vb${selected === sec.name ? " vb-sel" : ""}" data-block="${esc(sec.name)}" transform="translate(${sec.x} ${sec.y}) rotate(${sec.rotation || 0})" tabindex="0" role="button" aria-label="${esc(sec.name)}${s ? ", " + esc(s) : ""}">`
+      + `<rect class="vb-hit" x="${-g.W / 2 - 6}" y="${Math.min(-g.H / 2, top) - 10}" width="${g.W + 12}" height="${g.H + 22 + Math.max(0, -g.H / 2 - top)}" rx="6"/>${seats}`
+      + `<text class="vb-label" x="0" y="${top.toFixed(1)}" text-anchor="middle"${flip ? ` transform="rotate(180 0 ${top.toFixed(1)})"` : ""}>${esc(sec.name)}</text></g>`;
+  });
+  y0 -= 14;
+  const pad = 16;
+  const vb = `${(x0 - pad).toFixed(0)} ${(y0 - pad).toFixed(0)} ${(x1 - x0 + 2 * pad).toFixed(0)} ${(y1 - y0 + 2 * pad).toFixed(0)}`;
+  return raw(`<svg class="venue${editing ? " venue-edit" : ""}" viewBox="${vb}" role="group" aria-label="Venue map" preserveAspectRatio="xMidYMid meet">`
+    + (img ? `<image href="${esc(layout.imageUrl)}" x="0" y="0" width="${img.w}" height="${img.h}" preserveAspectRatio="xMidYMid meet" class="venue-plan"/>` : "")
+    + `<rect class="venue-stage" x="${VENUE_STAGE.x}" y="${VENUE_STAGE.y}" width="${VENUE_STAGE.w}" height="${VENUE_STAGE.h}" rx="6"/><text class="venue-stage-t" x="500" y="${VENUE_STAGE.y + 22}" text-anchor="middle">STAGE</text>`
+    + groups.join("") + `</svg>`);
+}
 // A seat map (from /seats): the stage, then each section's rows of seats as
 // buttons. canPick decides which seats can be tapped; picked are shown as chosen.
-export function seatMapHtml(sections, { canPick = () => true, picked = new Set(), showBlocked = false, dim = () => false } = {}) {
-  return html`<div class="seatmap-stage">Stage</div>${sections.map((sec) => html`<section class="seat-sec${dim(sec) ? " seat-sec-off" : ""}" aria-label="${sec.name}">
-    <h4>${sec.name} <span class="tiny muted">${sec.ticketType && sec.ticketType !== sec.name ? `${sec.ticketType} · ` : ""}${sec.priceCents ? moneyExact(sec.priceCents) : "Free"}</span></h4>
-    ${sec.rows.map((r) => html`<div class="seat-row"><span class="seat-rl" aria-hidden="true">${r.label}</span><div class="seat-line">${r.seats.map((st) => {
-      const sel = picked.has(st.id);
-      if (st.s === "blocked" && !showBlocked) return html`<span class="seat gap" aria-hidden="true"></span>`;
-      const state = sel ? " sel" : st.s === "blocked" ? " blocked" : st.s !== "open" ? " taken" : "";
-      const name = `${sec.name}, row ${r.label}, seat ${st.n}`;
-      const note = st.s === "taken" && !sel ? ", taken" : st.s === "blocked" ? ", not for sale" : "";
-      return html`<button type="button" class="seat${st.a ? " step" : ""}${state}" data-seat="${st.id}" data-short="${r.label}${st.n}" data-full="${name}" aria-label="${name}${note}${st.a ? ", step-free" : ""}" aria-pressed="${sel ? "true" : "false"}" ${raw(canPick(sec, st, sel) ? "" : "disabled")}>${st.n}</button>`;
-    })}</div><span class="seat-rl" aria-hidden="true">${r.label}</span></div>`)}</section>`)}`;
+export function seatMapHtml(sections, { canPick = () => true, picked = new Set(), showBlocked = false, dim = () => false, stage = true, heading = true } = {}) {
+  const gap = html`<span class="seat gap" aria-hidden="true"></span>`;
+  return html`${stage ? html`<div class="seatmap-stage">Stage</div>` : ""}${sections.map((sec) => {
+    // Every row as wide as the widest: a seat sits at its place in the block
+    // (pos), so shorter rows stay centred and a gap stays a gap.
+    let lo = Infinity, hi = -Infinity;
+    for (const r of sec.rows) for (const st of r.seats) { lo = Math.min(lo, st.p); hi = Math.max(hi, st.p); }
+    return html`<section class="seat-sec${dim(sec) ? " seat-sec-off" : ""}" aria-label="${sec.name}">
+    ${heading ? html`<h4>${sec.name} <span class="tiny muted">${sec.ticketType && sec.ticketType !== sec.name ? `${sec.ticketType} · ` : ""}${sec.priceCents ? moneyExact(sec.priceCents) : "Free"}</span></h4>` : ""}
+    ${sec.rows.map((r) => { let at = lo; const cells = [];
+      for (const st of r.seats) {
+        while (at < st.p) { cells.push(gap); at++; }
+        at = st.p + 1;
+        const sel = picked.has(st.id);
+        if (st.s === "blocked" && !showBlocked) { cells.push(gap); continue; }
+        const state = sel ? " sel" : st.s === "blocked" ? " blocked" : st.s !== "open" ? " taken" : "";
+        const name = `${sec.name}, row ${r.label}, seat ${st.n}`;
+        const note = st.s === "taken" && !sel ? ", taken" : st.s === "blocked" ? ", not for sale" : "";
+        cells.push(html`<button type="button" class="seat${st.a ? " step" : ""}${state}" data-seat="${st.id}" data-short="${r.label}${st.n}" data-full="${name}" aria-label="${name}${note}${st.a ? ", step-free" : ""}" aria-pressed="${sel ? "true" : "false"}" ${raw(canPick(sec, st, sel) ? "" : "disabled")}>${st.n}</button>`);
+      }
+      while (at <= hi) { cells.push(gap); at++; }
+      return html`<div class="seat-row"><span class="seat-rl" aria-hidden="true">${r.label}</span><div class="seat-line">${cells}</div><span class="seat-rl" aria-hidden="true">${r.label}</span></div>`; })}</section>`; })}`;
 }
 // Extras sold with tickets (lib/extras.php ADDON_KINDS).
 export const ADDON_KINDS = { parking: "Parking", merch: "Merchandise", vip: "VIP upgrade", food: "Food and drink", other: "Extra" };

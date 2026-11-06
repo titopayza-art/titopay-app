@@ -1452,6 +1452,27 @@ CREATE INDEX IF NOT EXISTS seats_event_idx ON seats (event_id, status);
 CREATE INDEX IF NOT EXISTS seats_type_idx ON seats (ticket_type_id, status);
 CREATE INDEX IF NOT EXISTS seats_order_idx ON seats (order_id);
 -- End of upgrade 56 tables.
+-- The venue map (upgrade 57): where each block of seats sits around the
+-- stage, turned and curved, over an optional picture of the venue's plan.
+CREATE TABLE IF NOT EXISTS seat_sections (
+  id         TEXT PRIMARY KEY,
+  event_id   TEXT NOT NULL REFERENCES events(id),
+  name       TEXT NOT NULL,
+  x          REAL,
+  y          REAL,
+  rotation   REAL NOT NULL DEFAULT 0,
+  curve      REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  UNIQUE (event_id, name)
+);
+CREATE TABLE IF NOT EXISTS seat_layouts (
+  event_id        TEXT PRIMARY KEY REFERENCES events(id),
+  image_upload_id TEXT,
+  image_width     INTEGER NOT NULL DEFAULT 1000,
+  image_height    INTEGER NOT NULL DEFAULT 0,
+  updated_at      TEXT NOT NULL
+);
+-- End of upgrade 57 tables.
 
 -- Organiser verification (FICA / KYC). Kept in its own tables: documents
 -- live encrypted in the data folder's private/ folder, never in public_html.

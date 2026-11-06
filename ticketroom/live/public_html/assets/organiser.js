@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { svgIcon, html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, ADDON_KINDS, seatMapHtml, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
+import { svgIcon, html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, plural, categoryLabel, fmtDate, fmtTime, fmtDateTime, toLocalInput, fromLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, emailLinkPage, wrongAccountPage, accountType, isStaff, qrPanel, ticketPng, authDialog, organiserSignupDialog, TICKET_KINDS, ADDON_KINDS, seatMapHtml, venueSvg, venuePlaced, AGE_GROUPS, ageGroupList, ageGroupText, phoneVerifyDialog, accountDeletionDialog, signOut } from "/assets/core.js?build=2026-10-22-phases";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
 import { teamSection, teamActivity } from "/assets/team.js";
@@ -506,53 +506,154 @@ async function extrasTab(el, d) {
 }
 
 // ---------------- seat map ----------------
-// Reserved seating: sections of rows and seats, each belonging to a ticket
-// type, which then sells exactly those seats. Seats can be kept off sale.
-async function seatingTab(el, d) {
+// Reserved seating on a map of the venue. Blocks of seats (rows of the same
+// or different lengths), each sold as one ticket type, are dragged into
+// place around the stage, turned and curved, over a picture of the venue's
+// plan. Once built, the map is copied to every other show at the venue.
+async function seatingTab(el, d, reload) {
   const editable = can("owner", "manager") && !["cancelled", "completed"].includes(d.event.status);
   const url = `${base()}/events/${d.event.id}/seats`;
   let data = await get(url);
-  let blocking = false;
+  let blocking = false, selected = null, dirty = false;
   const chosen = new Set();
+  let place = {};
+  const sync = () => { place = Object.fromEntries(venuePlaced(data.sections).map((s) => [s.name, { x: s.x, y: s.y, rotation: s.rotation || 0, curve: s.curve || 0 }])); };
+  sync();
+  const shown = () => data.sections.map((s) => ({ ...s, ...place[s.name] }));
+  const layoutBody = (extra = {}) => ({ sections: Object.entries(place).map(([name, p]) => ({ name, x: p.x, y: p.y, rotation: p.rotation, curve: p.curve })), imageWidth: data.layout.imageWidth, imageHeight: data.layout.imageHeight, ...extra });
   const draw = () => {
-    const sum = data.summary;
-    render(el, html`<section class="card stack"><div class="card-title"><h3>Seat map</h3>${editable ? html`<div class="row">${data.sections.length ? html`<button class="btn btn-ghost btn-sm" data-blockmode>${blocking ? "Done" : "Keep seats off sale"}</button>` : ""}<button class="btn btn-primary btn-sm" data-add>Add a section</button></div>` : ""}</div>
-      <p class="small muted mb-0">For theatres, halls, arenas and stadiums. Each section belongs to one ticket type, which then sells exactly its seats. Buyers choose their seats on this map, or take the best seats available, side by side where possible.</p>
-      ${sum.length ? html`<div class="table-wrap"><table><thead><tr><th>Section</th><th>Ticket type</th><th class="num">Seats</th><th class="num">Sold</th><th class="num">Being paid for</th><th class="num">Off sale</th><th></th></tr></thead><tbody>
+    const sum = data.summary, sel = selected && place[selected];
+    render(el, html`<section class="card stack"><div class="card-title"><h3>Seat map</h3>${editable ? html`<div class="row wrap">
+        ${!data.sections.length ? html`<button class="btn btn-ghost btn-sm" data-copy>Copy from another event</button>` : ""}
+        ${data.sections.length ? html`<button class="btn btn-ghost btn-sm" data-plan>${data.layout.imageUrl ? "Change venue plan" : "Add venue plan"}</button>${data.layout.imageUrl ? html`<button class="btn btn-ghost btn-sm" data-noplan>Remove plan</button>` : ""}
+          <button class="btn btn-ghost btn-sm" data-blockmode>${blocking ? "Done" : "Keep seats off sale"}</button>` : ""}
+        <button class="btn btn-primary btn-sm" data-add>Add a block</button><input type="file" accept="image/png,image/jpeg,image/webp" data-planfile hidden></div>` : ""}</div>
+      <p class="small muted mb-0">For theatres, arenas and stadiums. Each block of seats is sold as one ticket type, so its price is that ticket's price. Drag the blocks into place around the stage, turn and curve them, and add a picture of the venue's plan to trace over. Buyers see this map, tap a block and choose their seats, or take the best seats available.</p>
+      ${data.sections.length ? html`<div class="venue-editor"><div class="venue-wrap" data-canvas>${venueSvg(shown(), data.layout, { editing: true, selected })}</div>
+        <div class="ve-panel">${sel ? html`<strong>${selected}</strong>
+            <div class="field"><label for="ve-rot">Turn <output data-rot-o>${sel.rotation}°</output></label><input id="ve-rot" type="range" min="-180" max="180" step="1" value="${sel.rotation}" data-rot ${raw(editable ? "" : "disabled")}></div>
+            <div class="field"><label for="ve-curve">Curve <output data-curve-o>${sel.curve}°</output></label><input id="ve-curve" type="range" min="0" max="120" step="1" value="${sel.curve}" data-curve ${raw(editable ? "" : "disabled")}></div>
+            <p class="tiny muted mb-0">Drag the block to move it. Curve bends its rows into arcs facing the stage.</p>`
+          : html`<p class="small mb-0">${editable ? "Drag a block to move it. Tap a block to turn or curve it." : "Only owners and managers can change the map."}</p>`}
+          ${data.layout.imageUrl ? html`<div class="field"><label for="ve-plan">Plan size</label><input id="ve-plan" type="range" min="300" max="4000" step="10" value="${data.layout.imageWidth}" data-plan-size ${raw(editable ? "" : "disabled")}><span class="hint">Make the picture's seats line up with the blocks.</span></div>` : ""}
+          ${editable ? html`<button class="btn btn-primary" data-save ${raw(dirty ? "" : "disabled")}>${dirty ? "Save layout" : "Layout saved"}</button>` : ""}</div></div>` : ""}
+      ${sum.length ? html`<div class="table-wrap"><table><thead><tr><th>Block</th><th>Ticket type</th><th class="num">Seats</th><th class="num">Sold</th><th class="num">Being paid for</th><th class="num">Off sale</th><th></th></tr></thead><tbody>
         ${sum.map((r) => html`<tr><td><strong>${r.section}</strong></td><td>${r.ticket_type}</td><td class="num">${r.seats}</td><td class="num">${r.sold}</td><td class="num">${r.held}</td><td class="num">${r.blocked}</td>
           <td>${editable && !Number(r.sold) && !Number(r.held) ? html`<button class="btn btn-ghost btn-sm" data-remove="${r.section}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>`
-        : empty("No seats yet. Add a section, for example Stalls with rows A to J and 20 seats in each row.")}
+        : empty("No seats yet. Add a block, for example Block A with rows A to J and 20 seats in each row, or copy the map from another show at the same venue.")}
       ${blocking ? html`<p class="callout small mb-0">Tap seats to choose them, then keep them off sale (a sound desk, a pillar, house seats) or put them back on sale. Sold seats cannot be changed.</p>
-        <div class="row"><span class="small">${chosen.size} chosen</span><button class="btn btn-ghost btn-sm" data-apply="block" ${raw(chosen.size ? "" : "disabled")}>Keep off sale</button><button class="btn btn-ghost btn-sm" data-apply="free" ${raw(chosen.size ? "" : "disabled")}>Put on sale</button></div>` : ""}
-      ${data.sections.length ? html`<div class="seatmap org-map">${seatMapHtml(data.sections, { picked: chosen, showBlocked: true, canPick: (sec, st) => blocking && (st.s === "open" || st.s === "blocked") })}</div>
-        <div class="seat-legend tiny"><span><i class="seat"></i>On sale</span><span><i class="seat taken"></i>Sold or being paid for</span><span><i class="seat blocked"></i>Off sale</span><span><i class="seat step"></i>Step-free</span></div>` : ""}</section>`);
+        <div class="row"><span class="small">${chosen.size} chosen</span><button class="btn btn-ghost btn-sm" data-apply="block" ${raw(chosen.size ? "" : "disabled")}>Keep off sale</button><button class="btn btn-ghost btn-sm" data-apply="free" ${raw(chosen.size ? "" : "disabled")}>Put on sale</button></div>
+        <div class="seatmap org-map">${seatMapHtml(data.sections, { picked: chosen, showBlocked: true, canPick: (sec, st) => st.s === "open" || st.s === "blocked" })}</div>` : ""}
+      ${data.sections.length ? html`<div class="seat-legend tiny"><span><i class="seat"></i>On sale</span><span><i class="seat taken"></i>Sold or being paid for</span><span><i class="seat blocked"></i>Off sale</span><span><i class="seat step"></i>Step-free</span></div>` : ""}</section>`);
+    bind();
+  };
+  const bind = () => {
     $("[data-add]", el)?.addEventListener("click", addSection);
+    $("[data-copy]", el)?.addEventListener("click", copyFrom);
     $("[data-blockmode]", el)?.addEventListener("click", () => { blocking = !blocking; chosen.clear(); draw(); });
-    $$("[data-seat]", el).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.seat; if (chosen.has(id)) chosen.delete(id); else chosen.add(id); draw(); $(`[data-seat="${id}"]`, el)?.focus(); }));
+    $$(".org-map [data-seat]", el).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.seat; if (chosen.has(id)) chosen.delete(id); else chosen.add(id); draw(); $(`.org-map [data-seat="${id}"]`, el)?.focus(); }));
     $$("[data-apply]", el).forEach((b) => b.addEventListener("click", async () => {
-      try { data = await post(`${url}/block`, { seatIds: [...chosen], blocked: b.dataset.apply === "block" }); toast(`${data.changed} ${data.changed === 1 ? "seat" : "seats"} changed.`, "good"); chosen.clear(); draw(); }
+      try { const r = await post(`${url}/block`, { seatIds: [...chosen], blocked: b.dataset.apply === "block" }); data = { ...data, ...r }; toast(`${r.changed} ${r.changed === 1 ? "seat" : "seats"} changed.`, "good"); chosen.clear(); draw(); }
       catch (err) { toast(err.message, "bad"); }
     }));
     $$("[data-remove]", el).forEach((b) => b.addEventListener("click", async () => {
-      if (!(await confirmDialog(`Remove ${b.dataset.remove}?`, "Its seats are deleted from the map. The ticket type stays, as general admission.", { confirm: "Remove section" }))) return;
-      try { data = await post(`${url}/sections/remove`, { section: b.dataset.remove }); draw(); } catch (err) { toast(err.message, "bad"); }
+      if (!(await confirmDialog(`Remove ${b.dataset.remove}?`, "Its seats come off the map. The ticket type stays, as general admission.", { confirm: "Remove block" }))) return;
+      try { data = await post(`${url}/sections/remove`, { section: b.dataset.remove }); if (selected === b.dataset.remove) selected = null; sync(); draw(); } catch (err) { toast(err.message, "bad"); }
     }));
+    $("[data-save]", el)?.addEventListener("click", save);
+    // The venue plan: uploaded, then sized so its seats line up with the blocks.
+    $("[data-plan]", el)?.addEventListener("click", () => $("[data-planfile]", el).click());
+    $("[data-planfile]", el)?.addEventListener("change", async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      try {
+        const dim = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res([im.naturalWidth, im.naturalHeight]); im.onerror = () => rej(new Error("That picture could not be read. Use a PNG or JPEG.")); im.src = URL.createObjectURL(file); });
+        const up = await api("POST", `${base()}/uploads`, undefined, { raw: file, headers: { "content-type": file.type } });
+        const w = data.layout.imageWidth || 1000;
+        data = await put(`${url}/layout`, layoutBody({ imageUploadId: up.uploadId, imageWidth: w, imageHeight: Math.round((w * dim[1]) / dim[0]) }));
+        sync(); dirty = false; draw(); toast("Venue plan added. Drag the blocks over it.", "good");
+      } catch (err) { toast(err.message, "bad"); }
+    });
+    $("[data-noplan]", el)?.addEventListener("click", async () => { try { data = await put(`${url}/layout`, layoutBody({ imageUploadId: "" })); sync(); dirty = false; draw(); } catch (err) { toast(err.message, "bad"); } });
+    $("[data-plan-size]", el)?.addEventListener("change", (ev) => {
+      const w = Number(ev.target.value), old = data.layout.imageWidth || 1000;
+      data.layout = { ...data.layout, imageWidth: w, imageHeight: Math.round(((data.layout.imageHeight || old * 0.75) * w) / old) };
+      dirty = true; draw();
+    });
+    const g = selected && $(`[data-block="${CSS.escape(selected)}"]`, el);
+    const turnTo = () => g?.setAttribute("transform", `translate(${place[selected].x} ${place[selected].y}) rotate(${place[selected].rotation})`);
+    $("[data-rot]", el)?.addEventListener("input", (ev) => { place[selected].rotation = Number(ev.target.value); $("[data-rot-o]", el).textContent = `${ev.target.value}°`; turnTo(); });
+    $("[data-rot]", el)?.addEventListener("change", () => { dirty = true; draw(); });
+    $("[data-curve]", el)?.addEventListener("input", (ev) => { $("[data-curve-o]", el).textContent = `${ev.target.value}°`; });
+    $("[data-curve]", el)?.addEventListener("change", (ev) => { place[selected].curve = Number(ev.target.value); dirty = true; draw(); });
+    // Drag a block: map units follow the pointer, whatever the zoom.
+    const svg = $("[data-canvas] svg", el);
+    if (!svg) return;
+    $$("[data-block]", svg).forEach((blk) => {
+      blk.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selected = blk.dataset.block; draw(); } });
+      blk.addEventListener("pointerdown", (ev) => {
+        const name = blk.dataset.block, p0 = place[name];
+        const toMap = (e) => new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+        const start = toMap(ev), from = { x: p0.x, y: p0.y };
+        let moved = false;
+        const move = (e) => {
+          if (!editable) return;
+          const now = toMap(e), dx = now.x - start.x, dy = now.y - start.y;
+          if (!moved && Math.hypot(dx, dy) < 3) return;
+          moved = true;
+          p0.x = Math.round(from.x + dx); p0.y = Math.round(from.y + dy);
+          blk.setAttribute("transform", `translate(${p0.x} ${p0.y}) rotate(${p0.rotation})`);
+        };
+        const up = () => { svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", up); svg.removeEventListener("pointercancel", up); if (moved) dirty = true; selected = name; draw(); };
+        svg.setPointerCapture?.(ev.pointerId);
+        svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
+        ev.preventDefault();
+      });
+    });
+  };
+  const save = async () => {
+    try { data = await put(`${url}/layout`, layoutBody()); sync(); dirty = false; draw(); toast("Seat map saved. Buyers see it now.", "good"); }
+    catch (err) { toast(err.message, "bad"); }
+  };
+  const copyFrom = async () => {
+    const { events: list } = await get(`${url}/sources`);
+    if (!list.length) { toast("None of your other events has a seat map yet.", "bad"); return; }
+    const dlg = dialog("Copy a seat map", html`<form class="stack">
+      <p class="small muted mb-0">For another show at the same venue. Every block, seat, seat kept off sale, position and the venue plan are copied. Each block goes to the ticket type with the same name here; any that are missing are made for you at the same price.</p>
+      <div class="field"><label for="cp-from">Copy from</label><select id="cp-from" name="fromEventId">${list.map((x) => html`<option value="${x.id}">${x.title}, ${fmtDate(x.starts_at)} (${x.seats} seats)</option>`)}</select></div>
+      <button class="btn btn-primary">Copy seat map</button></form>`);
+    onSubmit($("form", dlg), async (v) => {
+      const r = await post(`${url}/copy`, { fromEventId: v.fromEventId });
+      dlg.close();
+      toast(`Copied ${r.seats} seats.${r.ticketTypesMade.length ? ` New ticket types: ${r.ticketTypesMade.join(", ")}.` : ""}`, "good");
+      reload();
+    });
   };
   const addSection = () => {
     const types = d.ticketTypes.filter((t) => t.status !== "hidden");
-    if (!types.length) { toast("Add a ticket type first (Tickets & pricing), for example Stalls or Balcony.", "bad"); return; }
-    const dlg = dialog("Add a section", html`<form class="stack">
-      <div class="grid-2"><div class="field"><label for="sn">Section name</label><input id="sn" name="section" required maxlength="40" placeholder="e.g. Stalls, Balcony, Block 104"></div>
+    if (!types.length) { toast("Add a ticket type first (Tickets & pricing), for example Block A or Balcony.", "bad"); return; }
+    const dlg = dialog("Add a block", html`<form class="stack">
+      <div class="grid-2"><div class="field"><label for="sn">Block name</label><input id="sn" name="section" required maxlength="40" placeholder="e.g. Block A Front, Balcony"></div>
         <div class="field"><label for="stt">Sold as</label><select id="stt" name="ticketTypeId">${types.map((t) => html`<option value="${t.id}">${t.name} (${t.price_cents ? moneyExact(t.price_cents) : "Free"})</option>`)}</select><span class="hint">The ticket type's price is the seat price.</span></div></div>
-      <div class="grid-2"><div class="field"><label for="sr">Rows</label><input id="sr" name="rows" required maxlength="400" placeholder="A-J"><span class="hint">A range like A-J or 1-20, or a list like AA,BB,CC.</span></div>
-        <div class="field"><label for="sp">Seats in each row</label><input id="sp" name="seatsPerRow" type="number" min="1" max="120" required value="20"></div></div>
+      <div class="field"><label for="sm">Rows</label><select id="sm" name="mode"><option value="same">Every row has the same number of seats</option><option value="each">Rows have different numbers of seats</option></select></div>
+      <div class="grid-2" data-mode="same"><div class="field"><label for="sr">Rows</label><input id="sr" name="rows" maxlength="400" placeholder="A-J"><span class="hint">A range like A-J or 1-20, or a list like AA,BB,CC.</span></div>
+        <div class="field"><label for="sp">Seats in each row</label><input id="sp" name="seatsPerRow" type="number" min="1" max="120" value="20"></div></div>
+      <div class="field" data-mode="each" hidden><label for="rs">Each row and its seats</label><textarea id="rs" name="rowSeats" rows="3" maxlength="1000" placeholder="A:10, B:12, C:14, D-H:16"></textarea><span class="hint">Front row first. Shorter rows are centred, so a block can narrow towards the stage.</span></div>
       <div class="grid-2"><div class="field"><label for="ss">First seat number</label><input id="ss" name="startNumber" type="number" min="1" max="9999" value="1"></div>
         <div class="field"><label for="sa">Step-free rows <span class="muted">(optional)</span></label><input id="sa" name="accessibleRows" maxlength="100" placeholder="e.g. A"><span class="hint">Shown to buyers who need seats without steps.</span></div></div>
-      <p class="tiny muted mb-0">Seats are numbered left to right as the audience faces the stage. Keep single seats off sale afterwards with "Keep seats off sale".</p>
-      <button class="btn btn-primary">Add section</button></form>`);
+      <p class="tiny muted mb-0">Seats are numbered left to right as the audience faces the stage. The new block appears under the others: drag it into place on the map.</p>
+      <button class="btn btn-primary">Add block</button></form>`);
+    const mode = $("[name=mode]", dlg);
+    const show = () => $$("[data-mode]", dlg).forEach((x) => { x.hidden = x.dataset.mode !== mode.value; });
+    mode.addEventListener("change", show);
     onSubmit($("form", dlg), async (v) => {
-      data = await post(`${url}/sections`, { section: v.section, ticketTypeId: v.ticketTypeId, rows: v.rows, seatsPerRow: Number(v.seatsPerRow), startNumber: Number(v.startNumber || 1), accessibleRows: v.accessibleRows || undefined });
-      dlg.close(); toast("Section added.", "good"); draw();
+      const body = { section: v.section, ticketTypeId: v.ticketTypeId, startNumber: Number(v.startNumber || 1), accessibleRows: v.accessibleRows || undefined };
+      if (v.mode === "each") body.rowSeats = v.rowSeats; else { body.rows = v.rows; body.seatsPerRow = Number(v.seatsPerRow); }
+      const r = await post(`${url}/sections`, body);
+      data = { ...data, ...r };
+      const keep = place; sync(); for (const [k, p] of Object.entries(keep)) if (place[k]) place[k] = p;
+      selected = v.section.trim().replace(/\s+/g, " ");
+      dlg.close(); toast("Block added. Drag it into place, then save.", "good"); dirty = true; draw();
     });
   };
   draw();

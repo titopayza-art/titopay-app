@@ -394,6 +394,19 @@ final class R
             return $n;
         }, $o);
     }
+    // A decimal number (positions and angles on the venue map), rounded to 0.1.
+    public static function num(array $o = []): Closure
+    {
+        $min = $o['min'] ?? -1e9; $max = $o['max'] ?? 1e9;
+        return v_rule(function ($v) use ($min, $max) {
+            if (!is_int($v) && !is_float($v) && !(is_string($v) && is_numeric(trim($v)))) vfail('Must be a number.');
+            $n = round((float) $v, 1);
+            if (!is_finite($n)) vfail('Must be a number.');
+            if ($n < $min) vfail("Must be at least $min.");
+            if ($n > $max) vfail("Must be at most $max.");
+            return $n;
+        }, $o);
+    }
     public static function bool(array $o = []): Closure
     {
         return v_rule(function ($v) {

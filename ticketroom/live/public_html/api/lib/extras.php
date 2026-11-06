@@ -247,15 +247,90 @@ function seat_rows(string $spec): array
     foreach ($list as $r) if (!preg_match('/^[A-Z0-9]{1,4}$/', $r)) return [];
     return count($list) <= 100 ? $list : [];
 }
+// Rows with their own number of seats: "A:10, B:12, C-F:14". Returns
+// [[label, seats], ...] in the order given, or [] if it cannot be read.
+function seat_row_counts(string $spec): array
+{
+    $out = [];
+    foreach (array_filter(array_map('trim', explode(',', strtoupper($spec))), 'strlen') as $part) {
+        if (!preg_match('/^([A-Z0-9 -]{1,9})\s*:\s*(\d{1,3})$/', $part, $m) || (int) $m[2] < 1 || (int) $m[2] > 120) return [];
+        $labels = seat_rows(trim($m[1]));
+        if (!$labels) return [];
+        foreach ($labels as $l) $out[] = [$l, (int) $m[2]];
+    }
+    if (count($out) > 100 || count(array_unique(array_column($out, 0))) !== count($out)) return [];
+    return $out;
+}
+// Where each block sits on the venue map (centre, turn and curve), and the
+// venue's plan behind it. Blocks not placed yet have x and y null.
+function seat_placements(string $eventId): array
+{
+    return array_column(rows('SELECT name, x, y, rotation, curve FROM seat_sections WHERE event_id = ?', [$eventId]), null, 'name');
+}
+function seat_layout(string $eventId): array
+{
+    $l = row('SELECT image_upload_id, image_width, image_height FROM seat_layouts WHERE event_id = ?', [$eventId]);
+    return ['imageUrl' => !empty($l['image_upload_id']) ? '/media/' . rawurlencode((string) $l['image_upload_id']) : null, 'imageUploadId' => $l['image_upload_id'] ?? null,
+        'imageWidth' => (int) ($l['image_width'] ?? 1000), 'imageHeight' => (int) ($l['image_height'] ?? 0)];
+}
+// Copies another event's seat map (blocks, seats, placement and plan) to an
+// event that has none yet: for every show at the same venue. Each block goes
+// to the ticket type of the same name, made from the other event's if missing.
+function seats_copy(array $from, array $to, array $actor): array
+{
+    if (val('SELECT 1 FROM seats WHERE event_id = ? LIMIT 1', [$to['id']])) throw conflict('This event already has a seat map. Remove its sections first.', 'seats_exist');
+    $src = rows('SELECT * FROM seats WHERE event_id = ? ORDER BY section_order, row_order, pos', [$from['id']]);
+    if (!$src) throw conflict('That event has no seat map to copy.', 'no_seats');
+    $srcTypes = array_column(rows('SELECT * FROM ticket_types WHERE event_id = ?', [$from['id']]), null, 'id');
+    $mine = array_column(rows('SELECT * FROM ticket_types WHERE event_id = ?', [$to['id']]), null, 'name');
+    $live = in_array($to['status'], ['published', 'suspended'], true);
+    $now = now_iso();
+    $map = [];
+    $made = [];
+    foreach (array_unique(array_column($src, 'ticket_type_id')) as $tid) {
+        $st = $srcTypes[$tid];
+        if (isset($mine[$st['name']])) {
+            $tt = $mine[$st['name']];
+            if ((int) $tt['quantity_sold'] + (int) $tt['quantity_held'] > 0) throw conflict("{$tt['name']} has already sold general admission tickets on this event. Rename it or make a new ticket type, then copy again.", 'ticket_type_sold');
+            $map[$tid] = $tt['id'];
+            continue;
+        }
+        if ($live) throw conflict("This event has no ticket type called {$st['name']}. Ask for it to be added (Tickets & pricing), then copy again.", 'event_change_review');
+        if ($to['is_free'] && (int) $st['price_cents'] > 0) throw conflict("{$st['name']} costs money, and this is a free event.", 'free_event');
+        $id = uuid();
+        insert('ticket_types', ['id' => $id, 'event_id' => $to['id'], 'name' => $st['name'], 'description' => $st['description'], 'price_cents' => (int) $st['price_cents'],
+            'quantity_total' => 0, 'per_order_limit' => (int) $st['per_order_limit'], 'status' => 'on_sale', 'sort_order' => (int) $st['sort_order'], 'kind' => $st['kind'],
+            'admits' => (int) $st['admits'], 'group_name' => $st['group_name'], 'created_at' => $now]);
+        $map[$tid] = $id;
+        $made[] = $st['name'];
+    }
+    foreach ($src as $x) {
+        q('INSERT INTO seats (id, event_id, ticket_type_id, section, section_order, row_label, row_order, seat_number, pos, step_free, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [uuid(), $to['id'], $map[$x['ticket_type_id']], $x['section'], $x['section_order'], $x['row_label'], $x['row_order'], $x['seat_number'], $x['pos'], $x['step_free'], $x['status'] === 'blocked' ? 'blocked' : 'open', $now]);
+    }
+    foreach (rows('SELECT * FROM seat_sections WHERE event_id = ?', [$from['id']]) as $p) {
+        q('INSERT INTO seat_sections (id, event_id, name, x, y, rotation, curve, updated_at) VALUES (?,?,?,?,?,?,?,?)', [uuid(), $to['id'], $p['name'], $p['x'], $p['y'], $p['rotation'], $p['curve'], $now]);
+    }
+    $l = row('SELECT * FROM seat_layouts WHERE event_id = ?', [$from['id']]);
+    if ($l) q('INSERT INTO seat_layouts (event_id, image_upload_id, image_width, image_height, updated_at) VALUES (?,?,?,?,?)', [$to['id'], $l['image_upload_id'], $l['image_width'], $l['image_height'], $now]);
+    foreach (array_unique($map) as $t) seats_sync_type($t);
+    audit('seats.copied', ['actor' => $actor, 'entityType' => 'event', 'entityId' => $to['id'], 'organiserId' => $to['organiser_id'], 'details' => ['from' => $from['id'], 'seats' => count($src), 'ticketTypesMade' => $made]]);
+    return ['seats' => count($src), 'ticketTypesMade' => $made];
+}
 // The seat map as the public sees it: sections, rows and seats with their
 // state (open, taken or not for sale). Never whose a seat is.
 function seat_map(string $eventId): array
 {
     $types = array_column(rows('SELECT id, name, price_cents, status FROM ticket_types WHERE event_id = ?', [$eventId]), null, 'id');
     $sections = [];
+    $placed = seat_placements($eventId);
     foreach (rows('SELECT id, ticket_type_id, section, section_order, row_label, seat_number, pos, step_free, status FROM seats WHERE event_id = ? ORDER BY section_order, section, row_order, pos', [$eventId]) as $s) {
         $k = $s['section'];
-        if (!isset($sections[$k])) $sections[$k] = ['name' => $k, 'ticketTypeId' => $s['ticket_type_id'], 'ticketType' => $types[$s['ticket_type_id']]['name'] ?? '', 'priceCents' => (int) ($types[$s['ticket_type_id']]['price_cents'] ?? 0), 'rows' => []];
+        if (!isset($sections[$k])) {
+            $pl = $placed[$k] ?? null;
+            $sections[$k] = ['name' => $k, 'ticketTypeId' => $s['ticket_type_id'], 'ticketType' => $types[$s['ticket_type_id']]['name'] ?? '', 'priceCents' => (int) ($types[$s['ticket_type_id']]['price_cents'] ?? 0),
+                'x' => $pl && $pl['x'] !== null ? (float) $pl['x'] : null, 'y' => $pl && $pl['y'] !== null ? (float) $pl['y'] : null, 'rotation' => (float) ($pl['rotation'] ?? 0), 'curve' => (float) ($pl['curve'] ?? 0), 'rows' => []];
+        }
         $sections[$k]['rows'][$s['row_label']][] = ['id' => $s['id'], 'n' => (int) $s['seat_number'], 'p' => (int) $s['pos'], 'a' => (int) $s['step_free'], 's' => $s['status'] === 'open' ? 'open' : ($s['status'] === 'blocked' ? 'blocked' : 'taken')];
     }
     return array_values(array_map(fn($sec) => ['rows' => array_map(fn($label, $seats) => ['label' => (string) $label, 'seats' => $seats], array_keys($sec['rows']), array_values($sec['rows']))] + $sec, $sections));

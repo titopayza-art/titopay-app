@@ -233,7 +233,7 @@ const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT
 const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 56;
+const SCHEMA_VERSION = 57;
 // The last upgrade included in schema.mysql.sql.
 const MYSQL_SCHEMA_BASE = 56;
 const UPGRADES = [
@@ -615,6 +615,14 @@ const UPGRADES = [
         'ALTER TABLE tickets ADD COLUMN seat_label TEXT',
         '@extras56',
     ],
+    // The venue map: blocks placed, turned and curved over a plan of the venue.
+    57 => [
+        '@venue57',
+        'mysql' => [
+            'CREATE TABLE IF NOT EXISTS seat_sections (id VARCHAR(191) NOT NULL, event_id VARCHAR(191) NOT NULL, name VARCHAR(191) NOT NULL, x DOUBLE, y DOUBLE, rotation DOUBLE NOT NULL DEFAULT 0, curve DOUBLE NOT NULL DEFAULT 0, updated_at VARCHAR(40) NOT NULL, PRIMARY KEY (id), UNIQUE KEY uq_seat_sections_event_name (event_id, name), FOREIGN KEY (event_id) REFERENCES events (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC',
+            'CREATE TABLE IF NOT EXISTS seat_layouts (event_id VARCHAR(191) NOT NULL, image_upload_id VARCHAR(191), image_width BIGINT NOT NULL DEFAULT 1000, image_height BIGINT NOT NULL DEFAULT 0, updated_at VARCHAR(40) NOT NULL, PRIMARY KEY (event_id), FOREIGN KEY (event_id) REFERENCES events (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC',
+        ],
+    ],
 ];
 // Promote's tables and columns (version 13), each only if missing.
 function tr_promote_tables(): void
@@ -730,7 +738,7 @@ function tr_upgrade_run(string $want): void
             foreach ($steps as $k => $sql) {
                 if ($k === 'mysql') continue;
                 try {
-                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), '@outbox56' => tr_upgrade_outbox_channels(), '@extras56' => tr_schema_section('-- Add-ons and reserved seats (upgrade 56).', '-- End of upgrade 56 tables.'), default => db()->exec($sql) };
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), '@outbox56' => tr_upgrade_outbox_channels(), '@extras56' => tr_schema_section('-- Add-ons and reserved seats (upgrade 56).', '-- End of upgrade 56 tables.'), '@venue57' => tr_schema_section('-- The venue map (upgrade 57)', '-- End of upgrade 57 tables.'), default => db()->exec($sql) };
                 } catch (PDOException $e) {
                     if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
                 }

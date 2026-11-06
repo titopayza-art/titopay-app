@@ -138,7 +138,7 @@ route('GET', '/api/public/events/:slug/seats', function ($a) {
     $ev = row("SELECT id FROM events WHERE slug = ? AND status IN ('published','cancelled','completed')", [$a['slug']]);
     if (!$ev) throw not_found('Event not found.');
     release_lapsed_holds($ev['id']);
-    return ['sections' => seat_map($ev['id'])];
+    return ['sections' => seat_map($ev['id']), 'layout' => seat_layout($ev['id'])];
 });
 
 route('POST', '/api/public/events/:slug/view', function ($a) {
