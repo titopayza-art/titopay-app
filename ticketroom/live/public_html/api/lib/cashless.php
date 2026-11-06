@@ -375,7 +375,7 @@ function wallet_history(string $userId, string $eventId): array
            SELECT 'desk_topup', reference, amount_cents, status, created_at, method, test FROM desk_topups WHERE user_id = ? AND event_id = ?
            UNION ALL
            SELECT 'cashout', reference, -(amount_cents + fee_cents), status, created_at, method, test FROM wallet_cashouts WHERE user_id = ? AND event_id = ?
-         ) ORDER BY created_at DESC LIMIT 200", [$userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId]));
+         ) h ORDER BY created_at DESC LIMIT 200", [$userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId, $userId, $eventId]));
 }
 
 // ============================================================== top-ups
