@@ -1,0 +1,108 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>TitoPay Admin · Design preview</title><style>
+    :root { --navy:#010a3f; --blue:#0b6fff; --line:#dbe5f1; --muted:#64748b; --bg:#f5f9ff; --card:#fff; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--navy); background:linear-gradient(180deg,#f7fbff,#edf6ff); }
+    main { width:min(1380px,calc(100% - 32px)); margin:0 auto; padding:24px 0 42px; }
+    header { position:sticky; top:0; z-index:20; display:flex; justify-content:space-between; align-items:center; gap:16px; margin:0 -16px 22px; padding:14px 16px; border:1px solid rgba(203,220,240,.9); border-radius:20px; background:rgba(255,255,255,.92); box-shadow:0 16px 48px rgba(6,43,120,.08); backdrop-filter:blur(16px); }
+    h1,h2,h3,p { margin:0; }
+    h1 { font-size:34px; line-height:1.08; }
+    h2 { font-size:22px; }
+    p { color:#52667f; line-height:1.55; }
+    a { color:inherit; }
+    .admin-brand { width:220px; max-width:100%; height:62px; display:flex; align-items:center; justify-content:center; margin-bottom:16px; padding:8px 18px; border:1px solid rgba(203,220,240,.95); border-radius:16px; background:#fff; box-shadow:0 10px 24px rgba(6,43,120,.07); }
+    .admin-brand img { width:180px; max-width:100%; height:42px; object-fit:contain; display:block; }
+    header .admin-brand { margin:0; width:190px; height:56px; }
+    header .admin-brand img { width:154px; height:36px; }
+    .admin-title { display:flex; align-items:center; gap:16px; }
+    .label { color:var(--blue); font-size:12px; font-weight:900; letter-spacing:.7px; text-transform:uppercase; }
+    .panel,.card { border:1px solid rgba(203,220,240,.95); border-radius:18px; background:var(--card); box-shadow:0 12px 32px rgba(6,43,120,.08); }
+    .panel { padding:20px; margin-bottom:16px; }
+    .login { max-width:460px; margin:9vh auto; display:grid; gap:14px; }
+    label { display:grid; gap:8px; color:#40556f; font-size:12px; font-weight:900; letter-spacing:.4px; text-transform:uppercase; }
+    input,select,textarea { width:100%; border:1px solid #d6e2ee; border-radius:12px; padding:12px 13px; color:var(--navy); background:#fff; font:inherit; }
+    textarea { min-height:96px; resize:vertical; }
+    button,.button { min-height:42px; display:inline-flex; align-items:center; justify-content:center; border:0; border-radius:10px; padding:0 14px; background:var(--blue); color:#fff; font:inherit; font-weight:850; cursor:pointer; text-decoration:none; }
+    .secondary { border:1px solid var(--line); background:#fff; color:var(--navy); }
+    .stats { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
+    .stat { padding:18px; border:1px solid var(--line); border-radius:16px; background:#fff; }
+    .stat span { display:block; color:var(--muted); font-size:12px; font-weight:900; text-transform:uppercase; }
+    .stat strong { display:block; margin-top:6px; font-size:30px; }
+    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+    .queue-grid { display:grid; grid-template-columns:1.15fr .85fr; gap:16px; align-items:start; margin-bottom:18px; }
+    .queue-stack { display:grid; gap:10px; }
+    .card { padding:18px; display:grid; gap:10px; }
+    .page-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
+    .dashboard-nav { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+    .dashboard-nav a { min-height:36px; display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; padding:0 12px; background:#fff; color:#28415f; font-size:13px; font-weight:900; text-decoration:none; }
+    .section-toolbar { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:12px; }
+    .section-toolbar p { max-width:780px; }
+    .export-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px; }
+    .export-card { min-height:86px; display:grid; gap:4px; align-content:center; border:1px solid var(--line); border-radius:14px; padding:13px; background:#f8fbff; color:var(--navy); text-decoration:none; }
+    .export-card strong { font-size:15px; }
+    .export-card span { color:var(--muted); font-size:12px; font-weight:800; }
+    .work-item { border:1px solid rgba(203,220,240,.95); border-radius:16px; background:#fff; box-shadow:0 10px 28px rgba(6,43,120,.06); overflow:hidden; }
+    .work-item[open] { box-shadow:0 18px 46px rgba(6,43,120,.1); }
+    .work-item summary { list-style:none; cursor:pointer; padding:14px 16px; }
+    .work-item summary::-webkit-details-marker { display:none; }
+    .summary-row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; }
+    .summary-main { display:grid; gap:5px; min-width:0; }
+    .summary-main h3 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:17px; }
+    .summary-main p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+    .summary-meta { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:7px; }
+    .work-body { display:grid; gap:12px; padding:0 16px 16px; border-top:1px solid #eef3f8; }
+    .work-body .notes { max-height:180px; overflow:auto; padding:10px; border:1px solid var(--line); border-radius:12px; background:#f8fbff; }
+    .archive-panel { margin-top:18px; border-style:dashed; background:linear-gradient(180deg,#fff,#f8fbff); }
+    .compact-form { margin-top:0; }
+    .small-muted { color:var(--muted); font-size:12px; font-weight:800; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; }
+    .pill { min-height:28px; display:inline-flex; align-items:center; padding:0 10px; border-radius:999px; background:#eaf4ff; color:var(--blue); font-size:12px; font-weight:850; }
+    .notes { white-space:pre-wrap; color:#52667f; font-size:14px; line-height:1.55; }
+    .attachment-list { display:grid; gap:7px; }
+    .attachment-list a { min-height:34px; display:flex; align-items:center; padding:0 10px; border:1px solid var(--line); border-radius:10px; background:#f7fbff; color:var(--navy); font-size:13px; font-weight:800; text-decoration:none; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-top:14px; }
+    .form-grid .full { grid-column:1 / -1; }
+    .notice { padding:12px 14px; border:1px solid #b7ebc6; border-radius:12px; background:#ecfdf3; color:#05603a; font-weight:800; margin-bottom:14px; }
+    .error-box { padding:12px 14px; border:1px solid #fda29b; border-radius:12px; background:#fff1f0; color:#b42318; font-weight:800; margin-bottom:14px; }
+    .ticket-card { border-left:4px solid var(--blue); }
+    .ticket-card.is-closed { border-left-color:#94a3b8; opacity:.92; }
+    .ticket-heading { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .ticket-heading strong { font-size:18px; }
+    .chat-card { border-left:4px solid #0ea5e9; }
+    .chat-card.is-closed { border-left-color:#94a3b8; opacity:.9; }
+    .chat-thread { max-height:310px; overflow:auto; display:grid; gap:8px; padding:10px; border:1px solid var(--line); border-radius:14px; background:#f8fbff; }
+    .chat-message { max-width:92%; padding:9px 10px; border-radius:12px; background:#fff; border:1px solid #e0e8f3; }
+    .chat-message.is-customer { justify-self:start; }
+    .chat-message.is-agent { justify-self:end; background:#eaf4ff; border-color:#cce2ff; }
+    .chat-message.is-system { justify-self:center; max-width:100%; background:#fff7ed; border-color:#fed7aa; }
+    .chat-message small { display:block; color:var(--muted); font-size:11px; margin-bottom:3px; }
+    .update-list { display:grid; gap:8px; margin-top:8px; }
+    .update { padding:10px; border:1px solid var(--line); border-radius:12px; background:#f8fbff; }
+    .update small { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }
+    .inline-check { display:flex; align-items:center; gap:8px; color:#40556f; font-size:13px; font-weight:800; text-transform:none; letter-spacing:0; }
+    .inline-check input { width:auto; }
+    .table-wrap { overflow:auto; }
+    table { width:100%; border-collapse:collapse; min-width:820px; }
+    th,td { padding:12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; font-size:14px; }
+    th { color:#40556f; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
+    .error { color:#b42318; font-weight:800; }
+    /* Portal background: the Sandton night skyline. A fixed layer (not background-attachment:fixed,
+       which iOS ignores) keeps it still while the page scrolls. */
+    body { position:relative; min-height:100vh; background:#010a3f; }
+    body::before { content:""; position:fixed; inset:0; z-index:-2; pointer-events:none; background-color:#010a3f; background-image:url("../assets/photos/sandton-dusk-towers-1200.jpg?v=20260930-photos"); background-image:image-set(url("../assets/photos/sandton-dusk-towers-1200.webp?v=20260930-photos") type("image/webp"), url("../assets/photos/sandton-dusk-towers-1200.jpg?v=20260930-photos") type("image/jpeg")); background-size:cover; background-position:center 24%; }
+    body::after { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; }
+    body.is-login::after { background:linear-gradient(180deg,rgba(1,10,63,.35),rgba(1,10,63,.62)); }
+    body.is-dashboard::after { background:linear-gradient(180deg,rgba(240,246,255,.9),rgba(240,246,255,.95)); }
+    body.is-login main { min-height:100vh; display:grid; align-items:center; padding:24px 0; }
+    body.is-login .login { margin:0 auto; width:100%; border-color:rgba(255,255,255,.6); background:rgba(255,255,255,.96); box-shadow:0 30px 80px rgba(0,0,0,.35); }
+    .photo-credit { position:fixed; right:14px; bottom:10px; color:rgba(255,255,255,.7); font-size:11px; font-weight:700; letter-spacing:.3px; }
+    @media (max-width:980px) { .queue-grid,.export-grid { grid-template-columns:1fr; } }
+    @media (max-width:860px) { header,.stats,.grid,.form-grid { grid-template-columns:1fr; display:grid; } .form-grid .full { grid-column:auto; } .summary-row { grid-template-columns:1fr; } .summary-meta { justify-content:flex-start; } }
+  </style><link rel="stylesheet" href="portal.css?v=1"><script src="portal.js?v=5" defer></script><link rel="stylesheet" href="../signature.css?v=17">
+<link rel="stylesheet" href="dashboard-layout.css?v=4">
+</head><body class="is-dashboard"><div class="preview-banner"><strong>Design preview</strong>Sample records only. Sign-in, exports, messages and database changes require PHP hosting. <a href="../">Back to website ↗</a></div><aside class="portal-sidebar" aria-label="Admin sidebar"><a class="portal-logo" href="#overview" aria-label="TitoPay admin home"><img src="../assets/titopay-admin-wordmark.png" alt="TitoPay"></a><div class="portal-account"><span class="portal-avatar" aria-hidden="true">T</span><div><strong>Preview account</strong><small>CEO · Sample data</small></div></div><nav class="portal-navigation" aria-label="Workspaces"><a href="#overview" data-workspace="overview"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg></span> Dashboard</a><a href="#support-chat" data-workspace="support-chat"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11a8 8 0 0 1-8 8H7l-4 3V11a9 9 0 0 1 18 0Z"/></svg></span> Live chat</a><a href="#ticket-desk" data-workspace="ticket-desk"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v5a2 2 0 0 0 0 4v5H4v-5a2 2 0 0 0 0-4Z M12 8v8"/></svg></span> Active tickets</a><a href="#ticket-archive" data-workspace="ticket-archive"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18v4H3zM5 8v12h14V8M9 12h6"/></svg></span> Archived tickets</a><a href="#careers" data-workspace="careers"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6V3h8v3M3 6h18v14H3zM3 12h18M10 12v3h4v-3"/></svg></span> Careers</a><a href="#website-submissions" data-workspace="website-submissions"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg></span> Website enquiries</a><a href="#staff" data-workspace="staff"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M20 8v6M17 11h6"/></svg></span> Staff</a><a href="#exports" data-workspace="exports"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></span> Downloads</a></nav><div class="portal-sidebar-bottom"><a href="../">View website ↗</a><small>Access is limited by your role.</small></div></aside><main><header><div class="admin-title"><div class="admin-brand"><img src="../assets/titopay-official-logo.png?v=20261106" alt="TitoPay"></div><div><span class="label">TitoPay Admin</span><h1>Operations dashboard</h1><p>Design preview · Sample data</p></div></div><div class="page-actions"><a class="button secondary" href="#exports">Download information</a><a class="button secondary" href="../">Website ↗</a></div></header><p class="preview-sample-label">This preview does not read or change your stored data.</p><section class="stats" aria-label="Sample summary"><article class="stat"><span>Waitlist</span><strong>1</strong></article><article class="stat"><span>Events</span><strong>0</strong></article><article class="stat"><span>Contact</span><strong>1</strong></article><article class="stat"><span>Applications</span><strong>0</strong></article><article class="stat"><span>Open chats</span><strong>1</strong></article><article class="stat"><span>Open tickets</span><strong>1</strong></article><article class="stat"><span>Closed tickets</span><strong>0</strong></article></section><div class="portal-search"><label for="portal-search">Find a record</label><input id="portal-search" type="search" placeholder="Search sample names, emails or reference numbers"><p id="search-feedback" role="status" aria-live="polite"></p></div><div class="workspace-filters"><label>Status<select id="record-status"><option value="">All statuses</option><option>open</option><option>pending</option><option>closed</option><option>active</option><option>declined</option><option>successful</option></select></label><label>Enquiry type<select id="record-type"><option value="">All enquiry types</option></select></label><button class="secondary" type="button" id="reset-record-filters">Reset filters</button></div><nav class="dashboard-nav" aria-label="Dashboard sections"><a href="#support-chat">Live chat</a><a href="#ticket-desk">Active tickets</a><a href="#ticket-archive">Archived tickets</a><a href="#careers">Careers</a><a href="#website-submissions">Website submissions</a><a href="#exports">Downloads</a></nav>
+<section class="panel" id="support-chat"><div class="section-toolbar"><div><span class="label">Live chat</span><h2>Customer conversations</h2><p>Open a conversation to read its history.</p></div></div><details class="work-item"><summary><div class="summary-row"><div class="summary-main"><span class="label">CHAT-DEMO-001</span><h3>When will TitoPay launch?</h3><p>Sample record · Design preview</p></div><div class="summary-meta"><span class="pill">open</span></div></div></summary><div class="work-body"><p>Sample message: I’d like to hear when the personal wallet is ready.</p><p class="small-muted">Replies and status changes are available in the authenticated PHP portal.</p></div></details></section>
+<section class="panel" id="ticket-desk"><div class="section-toolbar"><div><span class="label">Ticket desk</span><h2>Active tickets</h2><p>Keep each request and its updates together.</p></div></div><details class="work-item"><summary><div class="summary-row"><div class="summary-main"><span class="label">TKT-DEMO-001</span><h3>Business payment enquiry</h3><p>Sample record · Design preview</p></div><div class="summary-meta"><span class="pill">open</span></div></div></summary><div class="work-body"><p>Sample message: How can my business register interest?</p><p class="small-muted">Replies and status changes are available in the authenticated PHP portal.</p></div></details></section>
+<section class="panel" id="ticket-archive"><span class="label">Preserved records</span><h2>Archived tickets</h2><p>No archived sample tickets. Closing a ticket preserves its history.</p></section>
+<section class="panel" id="careers"><span class="label">Careers</span><h2>Applications</h2><p>No sample applications. Applicant documents remain restricted to authorised roles.</p></section>
+<section class="panel" id="website-submissions"><span class="label">Website</span><h2>Waitlist and contact requests</h2><div class="table-wrap"><table><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Source</th><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Phone</th><th scope="col">Interest / Request</th><th scope="col">Message</th></tr></thead><tbody><tr><td data-label="Date">2026-10-20T08:50:27+00:00</td><td data-label="Type">Waitlist</td><td data-label="Source">waitlist-page</td><td data-label="Name">Sample visitor</td><td data-label="Email">sample.visitor@example.com</td><td data-label="Phone">+27 00 000 0000</td><td data-label="Interest / Request">Personal wallet</td><td data-label="Message">Please send me launch updates.</td></tr><tr><td data-label="Date">2026-10-19T18:30:59+00:00</td><td data-label="Type">Contact</td><td data-label="Source">support</td><td data-label="Name">Sample business</td><td data-label="Email">sample.business@example.com</td><td data-label="Phone">+27 00 000 0000</td><td data-label="Interest / Request">Merchant enquiry</td><td data-label="Message">How can my business accept QR payments?</td></tr></tbody></table></div></section>
+<section class="panel" id="staff"><div class="section-toolbar"><div><span class="label">Staff access</span><h2>Add staff</h2><p>Give your team access to website support or career applications.</p></div></div><p>This design preview cannot create accounts. The signed-in CEO can add staff on PHP hosting.</p><div class="staff-form"><label>Full name<input disabled placeholder="Staff member’s name"></label><label>Staff email<input disabled placeholder="name@titopay.co.za"></label><label>Access<select disabled><option>Support — chats and support tickets</option><option>HR — career applications and HR tickets</option></select></label><label>Password<input disabled type="password" placeholder="12–72 characters"></label><button disabled>Create staff account</button></div></section><section class="panel" id="exports"><span class="label">Downloads</span><h2>Your records, when you need them</h2><p>The live portal provides role-approved CSV exports of submissions, tickets, chats and applications. Exports preserve stored records. Downloads are unavailable in this design preview.</p></section></main></body></html>

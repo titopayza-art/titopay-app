@@ -1,0 +1,88 @@
+RewriteEngine On
+
+# Do not serve internal archives or documentation from the public website root.
+# README.md describes the admin paths, feature flags and database configuration,
+# and was readable at /README.md.
+<FilesMatch "\.(zip|bak|sql|env|md)$">
+Require all denied
+</FilesMatch>
+
+# Serve the WebP photography with the right type (older hosts lack it, and
+# X-Content-Type-Options: nosniff below makes the type matter).
+AddType image/webp .webp
+AddType application/xml .xml
+
+# The website database, CVs and identity documents live under api/private/.
+# Never serve anything from there, whatever its file name.
+RedirectMatch 404 ^/api/private(/|$)
+
+# Compress text responses.
+<IfModule mod_deflate.c>
+AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml application/xml application/javascript text/javascript application/json image/svg+xml
+</IfModule>
+
+# Let browsers reuse static files. CSS, JS and resized images carry a ?v= query
+# that changes on every release, so long lifetimes are safe for them; HTML is
+# always revalidated so visitors see a release as soon as it is uploaded.
+<IfModule mod_expires.c>
+ExpiresActive On
+ExpiresDefault "access plus 0 seconds"
+ExpiresByType text/html "access plus 0 seconds"
+ExpiresByType text/css "access plus 30 days"
+ExpiresByType application/javascript "access plus 30 days"
+ExpiresByType text/javascript "access plus 30 days"
+ExpiresByType image/png "access plus 7 days"
+ExpiresByType image/jpeg "access plus 7 days"
+ExpiresByType image/webp "access plus 7 days"
+ExpiresByType image/x-icon "access plus 7 days"
+</IfModule>
+
+# Browser security headers. Every script, style, image and API call on this site
+# comes from titopay.co.za itself, so the policy only allows this origin.
+# 'unsafe-inline' for styles covers the inline <style> blocks in the admin and HR
+# pages; inline scripts stay blocked.
+<IfModule mod_headers.c>
+Header always set Strict-Transport-Security "max-age=31536000"
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+Header always set Cross-Origin-Opener-Policy "same-origin"
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+Header always unset X-Powered-By
+Header unset X-Powered-By
+</IfModule>
+
+# Force HTTPS.
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Keep one canonical host.
+RewriteCond %{HTTP_HOST} ^www\.titopay\.co\.za$ [NC]
+RewriteRule ^ https://titopay.co.za%{REQUEST_URI} [L,R=301]
+
+# Use the square TitoPay mark for browser icon requests; the wordmark is too wide for a tab icon.
+RewriteRule ^favicon\.ico$ /assets/titopay-mark.png [L,R=302]
+
+# Prefer the clean homepage URL.
+RewriteCond %{THE_REQUEST} \s/+index\.html[\s?] [NC]
+RewriteRule ^index\.html$ / [L,R=301]
+
+# Retire the prelaunch URL while preserving bookmarks and campaign links.
+RewriteRule ^waitlist(?:\.html)?/?$ https://app.titopay.co.za [R=302,L]
+
+# Prefer clean public page URLs.
+RewriteCond %{THE_REQUEST} \s/+((personal|business|events|fees|security|about|newsroom|careers|faqs|contact|legal|waitlist|install|more-about-titopay)\.html)[\s?] [NC]
+RewriteRule ^(.+)\.html$ /$1 [L,R=301]
+
+# Remove trailing slashes from clean page URLs when they are not real folders.
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.+)/$ /$1 [L,R=301]
+
+# Support clean page URLs such as /careers, /business and /contact.
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.html -f
+RewriteRule ^(.+?)/?$ $1.html [L]
+
+# Keep missing routes visibly distinct from the homepage.
+ErrorDocument 404 /404.html

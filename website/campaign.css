@@ -1,0 +1,78 @@
+/* Launch campaign image treatment: one strong human image, keeping the approved TitoPay layout intact. */
+.site-header a.nav-cta,.mobile-panel a.mobile-cta{background:#1764e8!important;color:#fff!important}.site-header a.nav-cta:hover,.site-header a.nav-cta:focus-visible,.mobile-panel a.mobile-cta:hover{background:#124bb4!important;color:#fff!important}.launch-content a.editorial-button,.launch-content a.editorial-button:hover,.launch-content a.editorial-button:focus-visible{background:#e4ecff!important;color:#13213a!important}.start-today a.editorial-button,.start-today a.editorial-button:hover,.start-today a.editorial-button:focus-visible{background:#14223c!important;color:#fff!important}
+html{scroll-behavior:smooth;scroll-padding-top:90px}*,*::before,*::after{box-sizing:border-box}img{max-width:100%}a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #2978f5;outline-offset:5px}
+.launch-backdrop { background: linear-gradient(90deg, rgba(3,15,42,.94) 0%, rgba(3,15,42,.69) 45%, rgba(3,15,42,.14) 100%), url('assets/photos/titopay-get-the-app.jpg') center 46% / cover; }
+@media (max-width:760px) { .launch-backdrop { background: linear-gradient(90deg, rgba(3,15,42,.92), rgba(3,15,42,.42)), url('assets/photos/titopay-get-the-app-900.jpg') 58% center / cover; } }
+
+.real-payments-photo{max-width:680px;margin:56px auto 0;border-radius:20px;overflow:hidden}.real-payments-photo img{display:block;width:100%;height:430px;object-fit:cover}@media(max-width:760px){.real-payments-photo{margin-top:36px}.real-payments-photo img{height:320px}}
+.footer-partner{display:inline-flex;align-items:center;gap:8px;color:#526071;font-size:11px;white-space:nowrap}.footer-partner img{display:block;width:86px;height:25px;object-fit:contain;object-position:left center}@media(max-width:760px){.footer-partner{order:3;width:100%;justify-content:center;margin-top:12px}.footer-simple{gap:14px}}
+.product-phone{margin:0 auto;text-align:center;max-width:350px;isolation:isolate}.product-phone img{display:block;width:100%;height:auto;mix-blend-mode:multiply;filter:drop-shadow(0 24px 32px rgba(20,34,60,.2))}.product-phone figcaption{height:26px;margin-top:14px;overflow:hidden}.service-rotator{position:relative;display:block;height:26px;color:#2557b5;font-size:14px;font-weight:650}.service-rotator b{position:absolute;inset:0;opacity:0;animation:service-cycle 9s infinite}.service-rotator b:nth-child(1){animation-delay:0s}.service-rotator b:nth-child(2){animation-delay:3s}.service-rotator b:nth-child(3){animation-delay:6s}@keyframes service-cycle{0%,28%{opacity:1;transform:translateY(0)}33%,100%{opacity:0;transform:translateY(-8px)}}@media(prefers-reduced-motion:reduce){.service-rotator b{animation:none}.service-rotator b:not(:first-child){display:none}}
+
+.personal-app-screen{width:310px;margin:0;filter:drop-shadow(0 24px 35px rgba(20,34,60,.22))}.personal-app-screen img{display:block;width:100%;height:auto}@media(max-width:760px){.personal-app-screen{width:260px}}
+
+.business-app-screen{width:310px;margin:0;filter:drop-shadow(0 24px 35px rgba(20,34,60,.22));isolation:isolate}.business-app-screen img{display:block;width:100%;height:auto;mix-blend-mode:multiply}@media(max-width:760px){.business-app-screen{width:260px}}
+
+/* Final launch composition. Product imagery sits directly on the brand canvas. */
+.editorial-home .personal-story,.editorial-home .business-story{padding:100px 0}
+.editorial-home .personal-story>.container,.editorial-home .business-story>.container{display:grid;grid-template-columns:1fr 1fr;gap:40px 72px;align-items:center}
+.editorial-home .editorial-heading{text-align:left;min-width:0}
+.editorial-home .editorial-heading>p:not(.section-overline){max-width:460px}
+.editorial-home .personal-stage,.editorial-home .business-stage{padding:0;display:flex;justify-content:center;min-width:0;position:relative}
+.editorial-home .money-note{display:none}
+.editorial-home .personal-app-screen,.editorial-home .business-app-screen{width:min(100%,330px);margin:0;filter:none;isolation:auto}
+.personal-app-screen img,.business-app-screen img,.product-phone img{mix-blend-mode:normal!important;filter:none!important}
+.editorial-home .service-rotator{margin-top:14px;text-align:center;height:32px;font-size:15px}
+.business-event-link{grid-column:1/-1;text-align:left!important;margin:0!important}
+.editorial-home .real-payments-photo{grid-column:1/-1;width:100%;max-width:none;margin:20px 0 0;border-radius:24px}
+.editorial-home .real-payments-photo img{height:390px;object-position:center 63%}
+.editorial-home .business-story .editorial-heading{grid-column:2;grid-row:1}.editorial-home .business-stage{grid-column:1;grid-row:1}
+.start-today{padding:100px 0;background:#e6ecfc;text-align:center}.start-today h2{color:#14223c}.start-today p{color:#4f6078}.start-actions{display:flex;justify-content:center;align-items:center;gap:28px;margin:28px 0}.start-actions>a:last-child{font-size:14px;color:#2557b5}.start-note{font-size:12px!important}
+.site-footer .footer-simple{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap}.site-footer .footer-partner{flex:none}.site-footer .footer-partner img{width:100px;height:32px}.site-footer .footer-simple>span{font-size:11px}
+.service-rotator b{opacity:0;animation:service-cycle 9s infinite}.service-rotator b:nth-child(2){animation-delay:3s}.service-rotator b:nth-child(3){animation-delay:6s}
+.launch-content .editorial-button{transition:transform .2s,box-shadow .2s}.launch-content .editorial-button:hover{box-shadow:0 8px 25px #00102b40;transform:translateY(-2px)}
+@media(max-width:760px){
+ .editorial-home .personal-story,.editorial-home .business-story{padding:64px 0}
+ .editorial-home .personal-story>.container,.editorial-home .business-story>.container{grid-template-columns:1fr;gap:32px}
+ .editorial-home .business-story .editorial-heading,.editorial-home .business-stage{grid-column:auto;grid-row:auto}
+ .editorial-home .personal-app-screen,.editorial-home .business-app-screen{width:min(85%,290px)}
+ .editorial-home .editorial-heading{text-align:center}.editorial-home .editorial-heading>p:not(.section-overline){margin-inline:auto}
+ .editorial-home .real-payments-photo img{height:300px}.business-event-link{text-align:center!important}
+ .launch-content{padding-top:48px!important;padding-bottom:72px!important}.launch-hero{min-height:680px!important}
+ .hero-location{display:none}.start-today{padding:64px 0}.start-actions{flex-direction:column;gap:20px}
+ .site-footer .footer-simple{flex-direction:column;text-align:center}.site-footer .footer-partner{order:0;width:auto;margin:0}
+ .page-grid>.product-phone{width:min(90%,320px)}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.service-rotator b{animation:none!important}.service-rotator b:first-child{opacity:1}.service-rotator b:not(:first-child){display:none}}
+
+/* Fees page */
+.fee-table-wrap{overflow-x:auto;border:1px solid #cbd5ed;border-radius:10px;background:#eaf0ff}
+.fee-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;}
+.fee-table th,.fee-table td{padding:14px 16px;text-align:left;border-bottom:1px solid #cbd5ed;font-size:15px;white-space:nowrap}
+.fee-table th{font-weight:600;color:#14223c;font-size:13px}
+.fee-table tbody tr:last-child td{border-bottom:0}
+.fee-note{margin-top:14px;color:#4f6078;font-size:14px}
+.info-card p strong{font-size:26px;font-weight:600;color:#14223c;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+
+/* Compact cookie banner on phones so it doesn't cover the hero */
+@media (max-width:640px){
+  .privacy-banner{left:10px;right:10px;bottom:10px;width:auto;grid-template-columns:1fr;gap:10px;padding:12px 14px;border-radius:16px}
+  .privacy-banner-copy{gap:4px}
+  .privacy-banner-copy .label{display:none}
+  .privacy-banner h2{font-size:16px}
+  .privacy-banner p{font-size:12px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .privacy-banner-actions{justify-content:flex-start;gap:6px}
+  .privacy-banner-actions .btn{min-height:38px;padding:0 14px;font-size:13px}
+  .privacy-link-button{min-height:38px;font-size:12px}
+}
+
+/* Clearer zero in "R0" */
+.signature-fees strong,.info-card p strong,.fee-table td{font-variant-numeric:tabular-nums}
+@media (max-width:640px){
+  .privacy-banner-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .privacy-banner-actions .btn{width:100%;min-height:38px;margin:0;padding:0 8px}
+  .privacy-banner-actions .privacy-link-button{grid-column:1 / -1;min-height:32px}
+  .privacy-banner-actions [data-privacy-accept]{grid-column:1}
+  .fee-table th,.fee-table td{padding:12px 10px;font-size:13px}
+  .fee-table th{white-space:normal}
+}
+.signature-fees strong,.info-card p strong{font-feature-settings:"zero" 1;letter-spacing:0}
