@@ -33,11 +33,12 @@ require TR_APP . '/lib/testevent.php';
 require TR_APP . '/lib/team.php';
 require TR_APP . '/lib/seo.php';
 require TR_APP . '/lib/extras.php';
+require TR_APP . '/lib/devices.php';
 
 // The API's route files, loaded by name. A file left behind by an older
 // upload (one no longer in this list) is never run. A new route file must be
 // added here.
-const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'exchange', 'extras', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
+const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'devices', 'exchange', 'extras', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
 function tr_load_routes(): void
 {
     foreach (TR_ROUTE_FILES as $f) require_once TR_APP . "/routes/$f.php";
@@ -233,7 +234,7 @@ const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT
 const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 57;
+const SCHEMA_VERSION = 58;
 // The last upgrade included in schema.mysql.sql.
 const MYSQL_SCHEMA_BASE = 56;
 const UPGRADES = [
@@ -615,6 +616,15 @@ const UPGRADES = [
         'ALTER TABLE tickets ADD COLUMN seat_label TEXT',
         '@extras56',
     ],
+    // Linked devices: handhelds and phones at a gate or top-up desk.
+    58 => [
+        'ALTER TABLE users ADD COLUMN device_id TEXT',
+        '@devices58',
+        'mysql' => [
+            'ALTER TABLE users ADD COLUMN device_id VARCHAR(191)',
+            "CREATE TABLE IF NOT EXISTS event_devices (id VARCHAR(191) NOT NULL, event_id VARCHAR(191) NOT NULL, name MEDIUMTEXT NOT NULL, can_scan BIGINT NOT NULL DEFAULT 1, can_topup BIGINT NOT NULL DEFAULT 0, gate MEDIUMTEXT, reader_format VARCHAR(16) NOT NULL DEFAULT 'hex', reader_reverse BIGINT NOT NULL DEFAULT 0, user_id VARCHAR(191) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'pending', pair_code_hash VARCHAR(191), pair_expires_at VARCHAR(40), paired_at VARCHAR(40), last_seen_at VARCHAR(40), user_agent MEDIUMTEXT, created_by VARCHAR(191), created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL, PRIMARY KEY (id), KEY event_devices_event_idx (event_id, status), KEY event_devices_code_idx (pair_code_hash), FOREIGN KEY (event_id) REFERENCES events (id), FOREIGN KEY (user_id) REFERENCES users (id), FOREIGN KEY (created_by) REFERENCES users (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC",
+        ],
+    ],
     // The venue map: blocks placed, turned and curved over a plan of the venue.
     57 => [
         '@venue57',
@@ -738,7 +748,7 @@ function tr_upgrade_run(string $want): void
             foreach ($steps as $k => $sql) {
                 if ($k === 'mysql') continue;
                 try {
-                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), '@outbox56' => tr_upgrade_outbox_channels(), '@extras56' => tr_schema_section('-- Add-ons and reserved seats (upgrade 56).', '-- End of upgrade 56 tables.'), '@venue57' => tr_schema_section('-- The venue map (upgrade 57)', '-- End of upgrade 57 tables.'), default => db()->exec($sql) };
+                    match ($sql) { '@refs' => tr_backfill_refs(), '@emailkeys' => tr_backfill_email_keys(), '@owner' => tr_mark_owner(), '@verification' => tr_verification_tables(), '@cashless' => tr_upgrade_cashless(), '@promote' => tr_promote_tables(), '@cashdesk' => tr_upgrade_cashdesk(), '@exchange' => tr_upgrade_exchange(), '@ops' => tr_upgrade_ops(), '@outbox56' => tr_upgrade_outbox_channels(), '@extras56' => tr_schema_section('-- Add-ons and reserved seats (upgrade 56).', '-- End of upgrade 56 tables.'), '@venue57' => tr_schema_section('-- The venue map (upgrade 57)', '-- End of upgrade 57 tables.'), '@devices58' => tr_schema_section('-- Linked devices (upgrade 58)', '-- End of upgrade 58 tables.'), default => db()->exec($sql) };
                 } catch (PDOException $e) {
                     if (!str_contains($e->getMessage(), 'duplicate column name')) throw $e;
                 }
@@ -925,6 +935,7 @@ function tr_handle(): void
         }
         $GLOBALS['TR_REQ'] = ['method' => $method, 'path' => $path, 'body' => $body, 'raw' => $raw];
         tr_load_routes();
+        device_guard($method, $path);
         // The customer portal's API is for customer accounts. Organisers and
         // staff have their own portals (liking an event is open to anyone signed in).
         if (str_starts_with($path, '/api/me/') && $path !== '/api/me/likes' && user() && account_type(user()) !== 'customer') {

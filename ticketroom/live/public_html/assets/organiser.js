@@ -240,7 +240,7 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["extras", "Extras"], ["seating", "Seat map"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["wristbands", "Wristbands & desk"], ["checks", "Permits & checks"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["extras", "Extras"], ["seating", "Seat map"], ["box-office", "Box office"], ["promos", "Promos & links"], ["promote", "Promote"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["devices", "Devices"], ["team", "Team activity"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["wristbands", "Wristbands & desk"], ["checks", "Permits & checks"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "", vendor, section }) {
   const d = await get(`${base()}/events/${id}`);
@@ -312,7 +312,7 @@ async function eventWorkspace({ id, tab = "", vendor, section }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, extras: extrasTab, seating: seatingTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, team: teamTab, passes: passesTab, vendors: vendorsTab, wristbands: wristbandsTab, checks: checksTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, extras: extrasTab, seating: seatingTab, "box-office": boxOfficeTab, promos: promosTab, promote: promoteTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, devices: devicesTab, team: teamTab, passes: passesTab, vendors: vendorsTab, wristbands: wristbandsTab, checks: checksTab, details: detailsTab };
   render(el, spinner());
   await fns[tab](el, d, () => eventWorkspace({ id, tab, vendor, section }), { vendor, section });
 }
@@ -657,6 +657,72 @@ async function seatingTab(el, d, reload) {
     });
   };
   draw();
+}
+
+// ---------------- linked devices ----------------
+// Handheld scanners and phones set up for this event: at a gate (scan
+// tickets), at a top-up desk, or both. Each links once with a pairing code
+// and then signs in as itself, for this event only.
+async function devicesTab(el, d) {
+  const editable = can("owner", "manager") && !["cancelled", "completed"].includes(d.event.status);
+  const url = `${base()}/events/${d.event.id}/devices`;
+  const cashless = !!d.event.cashless_enabled && FEATURES.cashless;
+  const seen = (iso) => { if (!iso) return "Not linked yet"; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 2 ? "Online now" : m < 60 ? `Seen ${m} min ago` : `Seen ${fmtDateTime(iso)}`; };
+  const draw = async () => {
+    const { devices } = await get(url);
+    render(el, html`<section class="card stack"><div class="card-title"><h3>Devices</h3>${editable ? html`<button class="btn btn-primary btn-sm" data-add>Link a device</button>` : ""}</div>
+      <p class="small muted mb-0">Rugged handheld scanners, tablets and phones for the gates and the top-up desk. Each is linked once with a code, signs in as itself for this event only, and can do nothing else. Built-in barcode, NFC and RFID readers work, and so do USB and Bluetooth readers.</p>
+      ${devices.length ? html`<div class="table-wrap"><table><thead><tr><th>Device</th><th>For</th><th>Status</th><th class="num">Scans</th>${cashless ? html`<th class="num">Top-ups</th>` : ""}<th></th></tr></thead><tbody>
+        ${devices.map((x) => html`<tr><td><strong>${x.name}</strong>${x.gate ? html`<div class="small muted">Gate: ${x.gate}</div>` : ""}</td>
+          <td>${[x.canScan ? "Gate" : "", x.canTopup ? "Top-ups" : ""].filter(Boolean).join(" and ")}</td>
+          <td>${x.status === "active" ? html`<span class="badge good">Linked</span><div class="small muted">${seen(x.lastSeenAt)}</div>` : html`<span class="badge plain">Waiting for code</span>`}</td>
+          <td class="num">${x.scans}</td>${cashless ? html`<td class="num">${x.topups}</td>` : ""}
+          <td>${editable ? html`<div class="row nowrap"><button class="btn btn-ghost btn-sm" data-code="${x.id}">${x.status === "active" ? "New code" : "Show code"}</button><button class="btn btn-ghost btn-sm" data-edit="${x.id}">Edit</button><button class="btn btn-ghost btn-sm" data-revoke="${x.id}">Unlink</button></div>` : ""}</td></tr>`)}</tbody></table></div>`
+        : empty("No devices yet. Link a handheld or a phone for each gate and top-up desk.")}
+      <details class="small"><summary>How to link a device</summary><ol class="mb-0">
+        <li>Press Link a device, name it (for example Gate 1 handheld) and choose what it is for.</li>
+        <li>On the device, open ${location.host}/scan and choose Link a device, or scan the QR code with its camera or reader.</li>
+        <li>Type the code if you did not scan it. The code works once, for 15 minutes.</li>
+        <li>Hardware readers type what they read: tickets, wristbands and cards are picked up without touching the screen. If wristbands do not match, set the reader's number format under Edit.</li></ol></details></section>`);
+    $("[data-add]", el)?.addEventListener("click", () => form());
+    $$("[data-edit]", el).forEach((b) => b.addEventListener("click", () => form(devices.find((x) => x.id === b.dataset.edit))));
+    $$("[data-code]", el).forEach((b) => b.addEventListener("click", async () => {
+      const x = devices.find((y) => y.id === b.dataset.code);
+      if (x.status === "active" && !(await confirmDialog(`New code for ${x.name}?`, "The device is signed out now and needs the new code to scan again.", { confirm: "Make new code" }))) return;
+      try { showCode(x.name, await post(`${url}/${x.id}/code`, {})); draw(); } catch (err) { toast(err.message, "bad"); }
+    }));
+    $$("[data-revoke]", el).forEach((b) => b.addEventListener("click", async () => {
+      const x = devices.find((y) => y.id === b.dataset.revoke);
+      if (!(await confirmDialog(`Unlink ${x.name}?`, "It stops working straight away. Its scans and top-ups stay on record.", { confirm: "Unlink", danger: true }))) return;
+      try { await post(`${url}/${x.id}/revoke`, {}); toast("Unlinked.", "good"); draw(); } catch (err) { toast(err.message, "bad"); }
+    }));
+  };
+  const showCode = (name, r) => {
+    const dlg = dialog(`Link ${name}`, html`<div class="stack pair-show"><p class="mb-0">On the device, scan this code, or open <strong>${location.host}/scan</strong>, choose Link a device and type:</p>
+      <p class="pair-big mono" aria-label="Pairing code">${r.code}</p><div data-qr></div>
+      <p class="tiny muted mb-0">Works once, until ${fmtTime(r.expiresAt)}.</p><button class="btn btn-primary" data-close>Done</button></div>`);
+    $("[data-qr]", dlg).append(qrPanel(r.qrSvg, { name: `${name} pairing code`, caption: name }));
+  };
+  const form = (x = null) => {
+    const dlg = dialog(x ? `Edit ${x.name}` : "Link a device", html`<form class="stack">
+      <div class="field"><label for="dn">Name</label><input id="dn" name="name" required minlength="2" maxlength="60" value="${x?.name || ""}" placeholder="e.g. Gate 1 handheld"></div>
+      <fieldset class="field"><legend class="label">What it is for</legend>
+        <label class="check"><input type="checkbox" name="canScan" ${raw(!x || x.canScan ? "checked" : "")}><span>Gate: scan tickets and wristbands</span></label>
+        ${cashless ? html`<label class="check"><input type="checkbox" name="canTopup" ${raw(x?.canTopup ? "checked" : "")}><span>Top-up desk and wristband desk</span></label>` : html`<p class="tiny muted mb-0">Top-ups need cashless switched on for this event.</p>`}</fieldset>
+      <div class="field"><label for="dg">Gate name <span class="muted">(optional)</span></label><input id="dg" name="gate" maxlength="40" value="${x?.gate || ""}" placeholder="e.g. North gate"><span class="hint">Shown with each scan in Team activity.</span></div>
+      <details ${raw(x && (x.readerFormat !== "hex" || x.readerReverse) ? "open" : "")}><summary class="small">Reader settings</summary><div class="stack mt">
+        <div class="field"><label for="df">Chip numbers arrive as</label><select id="df" name="readerFormat"><option value="hex" ${raw(x?.readerFormat !== "decimal" ? "selected" : "")}>Hex, like 04A1B2C3 (most NFC readers and phones)</option><option value="decimal" ${raw(x?.readerFormat === "decimal" ? "selected" : "")}>A decimal number, like 0012345678 (many RFID readers)</option></select></div>
+        <label class="check"><input type="checkbox" name="readerReverse" ${raw(x?.readerReverse ? "checked" : "")}><span>The reader sends the chip number in reverse byte order</span></label>
+        <p class="tiny muted mb-0">Only change these if a wristband registered on one device is not recognised on this one.</p></div></details>
+      <button class="btn btn-primary">${x ? "Save" : "Make pairing code"}</button></form>`);
+    onSubmit($("form", dlg), async (v) => {
+      const body = { name: v.name, canScan: !!v.canScan, canTopup: !!v.canTopup, gate: v.gate || undefined, readerFormat: v.readerFormat || "hex", readerReverse: !!v.readerReverse };
+      if (x) { await patch(`${url}/${x.id}`, body); dlg.close(); toast("Saved.", "good"); }
+      else { const r = await post(url, body); dlg.close(); showCode(v.name, r); }
+      draw();
+    });
+  };
+  await draw();
 }
 
 // Owner/manager event tab and cashier scanner both use the same online-only

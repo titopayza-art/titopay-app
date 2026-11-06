@@ -62,3 +62,70 @@ export function beep(ok) {
     o.start(); o.stop(ctx.currentTime + (ok ? 0.12 : 0.35));
   } catch { /* audio blocked */ }
 }
+
+// ---- hardware readers ------------------------------------------------------
+// Rugged handhelds (their built-in barcode, NFC or RFID reader), and USB or
+// Bluetooth readers, type what they read like a keyboard, ending with Enter.
+// Keys arriving faster than a person types, while no text box has the
+// cursor, are one read: it goes to the screen's current handler.
+let wedgeTarget = null, wedgeBuf = "", wedgeLast = 0, wedgeOn = false;
+let readerOpts = { format: "hex", reverse: false };
+export function setReaderOptions(o) { readerOpts = { ...readerOpts, ...o }; }
+export function setWedgeTarget(fn) {
+  wedgeTarget = fn;
+  if (wedgeOn) return;
+  wedgeOn = true;
+  document.addEventListener("keydown", (e) => {
+    if (!wedgeTarget || e.ctrlKey || e.metaKey || e.altKey) return;
+    const el = document.activeElement;
+    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+    const now = performance.now();
+    if (now - wedgeLast > 80) wedgeBuf = "";
+    wedgeLast = now;
+    if (e.key === "Enter" || e.key === "Tab") {
+      const v = wedgeBuf.trim();
+      wedgeBuf = "";
+      if (v.length >= 4) { e.preventDefault(); wedgeTarget(readerValue(v)); }
+      return;
+    }
+    if (e.key.length === 1) { wedgeBuf += e.key; if (wedgeBuf.length > 300) wedgeBuf = ""; }
+  }, true);
+}
+// What a reader typed, as the server expects it: ticket and tag QR codes as
+// they are; a chip number as "UID:" + hex. Readers send chip numbers as hex
+// (04:A1:B2…, 04A1B2…) or, set on the device, as a decimal number, and some
+// in reverse byte order.
+export function readerValue(raw) {
+  const v = String(raw).trim();
+  if (/^(TR1|TP1|TRT1)\./i.test(v) || /^UID:/i.test(v)) return v;
+  let hex = null;
+  const plain = v.replace(/[:\s-]/g, "");
+  if (readerOpts.format === "decimal" && /^\d{6,20}$/.test(v)) {
+    const n = BigInt(v);
+    hex = n.toString(16).toUpperCase();
+    hex = hex.padStart(hex.length <= 8 ? 8 : 14, "0");
+  } else if (/^([0-9A-Fa-f]{2}[:\s-]){3,11}[0-9A-Fa-f]{2}$/.test(v) || (/^[0-9A-Fa-f]+$/.test(plain) && [8, 14, 16, 20, 24].includes(plain.length) && /[0-9]/.test(plain) && /^[0-9A-F]+$/i.test(plain) && !/^[2-9A-HJ-NP-TV-Z]{10}$/i.test(plain))) {
+    hex = plain.toUpperCase();
+  }
+  if (!hex) return v;
+  if (readerOpts.reverse) hex = hex.match(/../g).reverse().join("");
+  return `UID:${hex}`;
+}
+// A text box a reader may type into (the gate's code box, the desk's search):
+// call the result when the form is sent; it gives the value converted like a
+// reader's when it arrived in one fast burst, as typed otherwise.
+export function readerBox(input) {
+  let first = 0, last = 0, n = 0;
+  input.addEventListener("keydown", (e) => {
+    if (e.key.length !== 1) return;
+    const now = performance.now();
+    if (now - last > 80) { first = now; n = 0; }
+    last = now; n++;
+  });
+  return () => {
+    const v = input.value.trim();
+    const burst = n >= 4 && (last - first) / Math.max(1, n - 1) < 40;
+    n = 0;
+    return burst ? readerValue(v) : v;
+  };
+}

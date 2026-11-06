@@ -566,10 +566,14 @@ function load_session(): void
     $GLOBALS['TR_SESSION'] = null;
     $token = $_COOKIE[SESSION_COOKIE] ?? '';
     if (!is_string($token) || $token === '' || strlen($token) > 100) return;
-    $r = row('SELECT s.id AS session_id, s.csrf_token, s.created_at AS session_created_at, s.expires_at AS session_expires_at, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at, u.account_type
+    $r = row('SELECT s.id AS session_id, s.csrf_token, s.created_at AS session_created_at, s.expires_at AS session_expires_at, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at, u.account_type, u.device_id
                 FROM sessions s JOIN users u ON u.id = s.user_id
                WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?', [sha256($token), now_iso()]);
     if (!$r || $r['status'] !== 'active') return;
+    // A linked device: valid while the device is, with no idle timeout (a
+    // gate can stand quiet for an hour between waves).
+    $device = null;
+    if (!empty($r['device_id'])) { $device = function_exists('device_for_user') ? device_for_user((string) $r['device_id']) : null; if (!$device) return; }
     // Staff powers belong to staff accounts only: a role row on a customer or
     // organiser account, however it got there, counts for nothing.
     $roles = $r['account_type'] === 'staff' ? array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$r['id']]), 'role') : [];
@@ -582,7 +586,7 @@ function load_session(): void
     // extend an idle deadline. Background polling and third-party requests
     // must not keep a session alive indefinitely.
     $hasRecentActivity = ($_SERVER['HTTP_X_TR_ACTIVITY'] ?? '') === '1';
-    if ($hasRecentActivity && $nextExpiry - $currentExpiry >= 60) {
+    if (!$device && $hasRecentActivity && $nextExpiry - $currentExpiry >= 60) {
         $expiry = iso_at($nextExpiry);
         q('UPDATE sessions SET expires_at = ? WHERE id = ? AND revoked_at IS NULL', [$expiry, $r['session_id']]);
         header('Set-Cookie: ' . cookie_header($token, $nextExpiry), false);
@@ -592,6 +596,7 @@ function load_session(): void
         'id' => $r['id'], 'email' => $r['email'], 'fullName' => $r['full_name'], 'phone' => $r['phone'],
         'emailVerified' => $r['email_verified_at'] !== null, 'platformRoles' => $roles, 'accountType' => $r['account_type'],
         'primaryRole' => array_values(array_intersect(['admin', 'finance', 'support'], $roles))[0] ?? 'user',
+        'device' => $device,
     ];
 }
 function user(): ?array { return $GLOBALS['TR_USER'] ?? null; }

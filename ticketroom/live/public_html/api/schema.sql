@@ -28,7 +28,9 @@ CREATE TABLE users (
   spending_pin_hash   TEXT,
   pin_failed_attempts INTEGER NOT NULL DEFAULT 0,
   pin_locked_until    TEXT,
-  email_otp_enabled   INTEGER NOT NULL DEFAULT 0 CHECK (email_otp_enabled IN (0,1))
+  email_otp_enabled   INTEGER NOT NULL DEFAULT 0 CHECK (email_otp_enabled IN (0,1)),
+  -- Upgrade 58: set on a linked device's own account (event_devices).
+  device_id           TEXT
 );
 CREATE UNIQUE INDEX users_email_uq ON users (lower(email));
 CREATE INDEX users_type_idx ON users (account_type, created_at);
@@ -1473,6 +1475,33 @@ CREATE TABLE IF NOT EXISTS seat_layouts (
   updated_at      TEXT NOT NULL
 );
 -- End of upgrade 57 tables.
+-- Linked devices (upgrade 58): a handheld scanner or a phone at a gate or a
+-- top-up desk, linked to one event with a pairing code. It signs in as itself
+-- (a device account, users.device_id), so its scans and top-ups carry its name,
+-- and it can do nothing else. Revoked, it stops at once.
+CREATE TABLE IF NOT EXISTS event_devices (
+  id              TEXT PRIMARY KEY,
+  event_id        TEXT NOT NULL REFERENCES events(id),
+  name            TEXT NOT NULL,
+  can_scan        INTEGER NOT NULL DEFAULT 1,
+  can_topup       INTEGER NOT NULL DEFAULT 0,
+  gate            TEXT,
+  reader_format   TEXT NOT NULL DEFAULT 'hex' CHECK (reader_format IN ('hex','decimal')),
+  reader_reverse  INTEGER NOT NULL DEFAULT 0,
+  user_id         TEXT NOT NULL REFERENCES users(id),
+  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','active','revoked')),
+  pair_code_hash  TEXT,
+  pair_expires_at TEXT,
+  paired_at       TEXT,
+  last_seen_at    TEXT,
+  user_agent      TEXT,
+  created_by      TEXT REFERENCES users(id),
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS event_devices_event_idx ON event_devices (event_id, status);
+CREATE INDEX IF NOT EXISTS event_devices_code_idx ON event_devices (pair_code_hash);
+-- End of upgrade 58 tables.
 
 -- Organiser verification (FICA / KYC). Kept in its own tables: documents
 -- live encrypted in the data folder's private/ folder, never in public_html.

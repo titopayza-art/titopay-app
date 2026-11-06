@@ -41,7 +41,7 @@ route('GET', '/api/admin/dashboard', function () {
     adm_any();
     // Test events (Admin portal, Test event) and everything on them are left out:
     // their event, organiser, orders, and guests who booked nothing else.
-    $users = row("SELECT count(*) AS total, COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END),0) AS new7 FROM users u WHERE status <> 'deleted'
+    $users = row("SELECT count(*) AS total, COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END),0) AS new7 FROM users u WHERE status <> 'deleted' AND device_id IS NULL
                     AND NOT (guest = 1 AND EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = u.id AND e.is_test = 1)
                              AND NOT EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = u.id AND e.is_test = 0))", [iso_in(-7 * 86400)]);
     $orgs = row("SELECT COALESCE(SUM(status = 'pending'),0) AS pending, COALESCE(SUM(status = 'approved'),0) AS approved FROM organisers WHERE is_test = 0");
@@ -413,11 +413,11 @@ route('GET', '/api/admin/users', function () {
     $list = rows("SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_type, u.guest, u.created_at, u.email_verified_at,
                          (SELECT group_concat(o.name, ', ') FROM organiser_members m JOIN organisers o ON o.id = m.organiser_id WHERE m.user_id = u.id) AS organisations
                     FROM users u
-                   WHERE u.account_type <> 'staff' AND (? = '' OR u.account_type = ?) AND (u.status = 'deleted') = (? = 1)
+                   WHERE u.account_type <> 'staff' AND u.device_id IS NULL AND (? = '' OR u.account_type = ?) AND (u.status = 'deleted') = (? = 1)
                      AND (? = '' OR lower(u.email) LIKE lower(?) OR lower(u.full_name) LIKE lower(?) OR lower(COALESCE(u.phone,'')) LIKE lower(?))
                    ORDER BY u.created_at DESC LIMIT 100", [$type, $type, $deleted, $s, $like, $like, $like]);
     $counts = [];
-    foreach (rows("SELECT account_type, count(*) AS n FROM users WHERE account_type <> 'staff' AND status <> 'deleted' GROUP BY account_type") as $r) $counts[$r['account_type']] = (int) $r['n'];
+    foreach (rows("SELECT account_type, count(*) AS n FROM users WHERE account_type <> 'staff' AND device_id IS NULL AND status <> 'deleted' GROUP BY account_type") as $r) $counts[$r['account_type']] = (int) $r['n'];
     $counts['deleted'] = (int) val("SELECT count(*) FROM users WHERE account_type <> 'staff' AND status = 'deleted'");
     return ['users' => $list, 'counts' => $counts];
 });

@@ -1,14 +1,17 @@
 // Gate scanner and registration (tag) desk for event staff.
-import { portalsFor, svgIcon, html, render, $, $$, get, post, header, plural, requireUser, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features, installPrompt, pullToRefresh } from "/assets/core.js";
+import { portalsFor, svgIcon, html, render, $, $$, get, post, header, plural, requireUser, me, pageReady, authDialog, toast, fmtTime, empty, spinner, emailLinkPage, wrongAccountPage, accountType, features, installPrompt, pullToRefresh } from "/assets/core.js";
 import { deskApp } from "/assets/cashdesk.js";
 import { boxOfficeApp } from "/assets/boxoffice.js?build=2026-10-22-phases";
-import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
+import { Camera, readNfc, nfcSupported, beep, setWedgeTarget, setReaderOptions, readerBox } from "/assets/reader.js";
 import * as offline from "/assets/scan-offline.js";
 
 const main = $("#main");
 // The top-up desk is offered only where the server has it (features.cashDesk).
 let DESK = false;
 let EVENT = null, cam = null, nfcAbort = null, mode = "gate", deskTicket = null;
+// A linked device (a gate handheld, a top-up desk phone): signed in as itself,
+// for one event. Set from /api/auth/me.
+let DEVICE = null;
 // "Open the scanner" on the admin portal's Test event page: /scan?test=<event id>.
 const TEST_EVENT = new URLSearchParams(location.search).get("test");
 
@@ -28,6 +31,7 @@ async function pickEvent() {
   if (!events.length) return render(main, html`<div class="card">${empty("You aren't assigned to any live events. Ask the organiser to add you as staff.")}</div>`);
   const chosen = TEST_EVENT && events.find((e) => e.id === TEST_EVENT);
   if (chosen) { localStorage.setItem("tr_scan_event", chosen.id); return start(chosen); }
+  if (DEVICE) { const mine = events.find((e) => e.id === DEVICE.eventId); if (mine) return start(mine); }
   const saved = localStorage.getItem("tr_scan_event");
   const found = events.find((e) => e.id === saved);
   if (found && events.length === 1) return start(found);
@@ -37,6 +41,7 @@ async function pickEvent() {
 
 function start(ev) {
   EVENT = ev; STATS = null;
+  setWedgeTarget((v) => handle(v));
   offline.forgetOthers(ev.id);
   if (!ev.can_scan && ev.can_sell_tickets) return boxOfficeApp(main, ev.id, { onBack: () => { localStorage.removeItem("tr_scan_event"); pickEvent(); }, backLabel: "Change event" });
   mode = ev.can_scan ? "gate" : "desk";
@@ -46,7 +51,7 @@ function start(ev) {
   // On a phone the scanner is a full-screen tool: a slim bar with the event, the
   // counts under it, one big Scan button, and the camera over the whole screen.
   document.body.classList.add("scan-live");
-  render(main, html`<div class="scan-top"><img src="/assets/logo-mark.svg" alt="" width="28" height="21"><div class="scan-ev"><span class="scan-team">Event team</span><h1 class="scan-title">${ev.title}</h1></div><button type="button" class="btn btn-link scan-change" data-change>Change</button></div>
+  render(main, html`<div class="scan-top"><img src="/assets/logo-mark.svg" alt="" width="28" height="21"><div class="scan-ev"><span class="scan-team">${DEVICE ? `Linked device: ${DEVICE.name}` : "Event team"}</span><h1 class="scan-title">${ev.title}</h1></div>${DEVICE ? "" : html`<button type="button" class="btn btn-link scan-change" data-change>Change</button>`}</div>
     ${Number(ev.is_test) === 1 ? html`<p class="tk-test mt" role="note" data-test-event>TEST EVENT · scans here are practice, not a real event</p>` : ""}${ev.age_restriction ? html`<p class="callout warn small mb-0 mt" data-age>Age rule: ${ageRule(ev.age_restriction)}</p>` : ""}
     ${tools.length > 1 ? html`<div class="tabs mt" role="tablist">${tools}</div>` : ""}
     <div class="scan-counts" aria-live="polite"><span id="stats" class="small"></span><span class="netbar on" id="net">Online</span></div>
@@ -63,7 +68,7 @@ function start(ev) {
       <p class="scan-cam-hint">Hold the ticket's QR code inside the frame</p>
     </div>
     <div class="scan-flash" id="scan-flash" hidden aria-hidden="true"></div>`);
-  $("[data-change]").addEventListener("click", () => { closeCamera(); offline.stop(); localStorage.removeItem("tr_scan_event"); pickEvent(); });
+  $("[data-change]")?.addEventListener("click", () => { closeCamera(); offline.stop(); localStorage.removeItem("tr_scan_event"); pickEvent(); });
   $("[data-cam]").addEventListener("click", openCamera);
   $("[data-cam-close]").addEventListener("click", closeCamera);
   $("#scan-flash").addEventListener("click", endFlash);
@@ -71,7 +76,8 @@ function start(ev) {
     nfcAbort?.abort(); nfcAbort = new AbortController();
     try { await readNfc((v) => handle(v, true), nfcAbort.signal); toast("Hold the tag to the back of the phone."); } catch (err) { toast(`NFC: ${err.message}`, "bad"); }
   });
-  $("#manual").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#mc").value.trim(); if (v) handle(v); $("#mc").value = ""; });
+  const typed = readerBox($("#mc"));
+  $("#manual").addEventListener("submit", (e) => { e.preventDefault(); const v = typed(); if (v) handle(v); $("#mc").value = ""; });
   // The top-up and cash-out desk takes the whole screen; "Back to scanning" returns here.
   const leave = () => { closeCamera(); nfcAbort?.abort(); offline.stop(); document.body.classList.remove("scan-live"); };
   $("[data-topup]")?.addEventListener("click", () => { leave(); deskApp(main, ev.id, { onBack: () => start(ev), backLabel: "Back to scanning" }); });
@@ -253,7 +259,32 @@ window.addEventListener("online", () => setNet(true));
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
+// Link this phone or handheld to an event with the organiser's pairing code
+// (from the QR they show, or typed in). Whoever is signed in on this browser
+// is signed out: from now on it is the device.
+async function linkDevice(code = "") {
+  document.body.classList.remove("scan-live");
+  render($("#header"), html`<div class="wrap"><span class="wordmark">TICKET<b>ROOM</b></span></div>`);
+  render(main, html`<div class="card stack link-card"><h1 class="mb-0">Link this device</h1>
+    <p class="mb-0">For a handheld scanner or a phone at a gate or top-up desk. The organiser adds the device under the event's Devices tab and shows you a code.</p>
+    <form class="stack" id="pair"><div class="field"><label for="pc">Pairing code</label><input id="pc" name="code" class="mono pair-code" value="${code}" required autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-2345" maxlength="12"></div>
+      <button class="btn btn-primary btn-block">Link device</button></form>
+    <p class="tiny muted mb-0">Anyone signed in on this browser is signed out. The device can only scan and take top-ups at that event.</p>
+    <p class="small mb-0"><a href="/scan">Sign in as a person instead</a></p></div>`);
+  pageReady?.();
+  const go = async (c) => {
+    try { await post("/api/devices/pair", { code: c }); location.replace("/scan"); }
+    catch (err) { toast(err.message, "bad"); }
+  };
+  $("#pair").addEventListener("submit", (e) => { e.preventDefault(); go($("#pc").value.trim()); });
+  // Scanning the organiser's QR with a handheld's reader types the link here.
+  setWedgeTarget((v) => { const m = String(v).match(/pair=([A-Za-z0-9-]{8,12})/); go(m ? m[1] : v); });
+  if (code) go(code);
+}
+
 (async () => {
+  const pairCode = new URLSearchParams(location.search).get("pair");
+  if (pairCode !== null || location.hash === "#/link") return linkDevice(pairCode || "");
   // Reopened with no signal at all: carry on with the list saved on this phone.
   const saved = localStorage.getItem("tr_scan_event");
   const reachable = navigator.onLine !== false && await fetch("/api/health", { cache: "no-store" }).then((r) => r.text()).then(() => true, () => false);
@@ -265,8 +296,29 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   await header($("#header"), { portal: "scanner" });
   // A scanner's "set your password" link opens here.
   if (emailLinkPage("scanner")) return;
+  // Signed out: the sign-in box opens at once; behind it, the way to link a
+  // handheld or phone with the organiser's pairing code instead.
+  if (!(await me())) {
+    render(main, html`<div class="card stack link-card"><h1 class="mb-0">Gate and top-up desk</h1><p class="mb-0">Event team: sign in with your own account. A handheld or phone set up by the organiser: link it with its pairing code.</p>
+      <div class="row"><button class="btn btn-primary" data-signin>Sign in</button><a class="btn btn-ghost" href="/scan?pair=">Link a device</a></div></div>`);
+    $("[data-signin]").addEventListener("click", () => authDialog("signin", { reason: "Gate staff: sign in to scan tickets.", portal: "scanner", onDone: () => location.reload() }));
+  }
   const u = await requireUser("Gate staff: sign in to scan tickets.", "scanner");
   if (!u) return render(main, empty("Sign in to scan."));
+  if (u.device) {
+    DEVICE = u.device;
+    setReaderOptions({ format: DEVICE.readerFormat || "hex", reverse: !!DEVICE.readerReverse });
+    if (DEVICE.gate) localStorage.setItem("tr_gate", DEVICE.gate);
+    render($("#header"), html`<div class="wrap row between"><span class="wordmark">TICKET<b>ROOM</b></span><button class="btn btn-link btn-sm" data-unlink>Unlink</button></div>`);
+    $("[data-unlink]").addEventListener("click", async () => {
+      if (!confirm("Unlink this device? It will need a new code from the organiser to scan again.")) return;
+      await post("/api/auth/logout", {}).catch(() => {}); location.replace("/scan");
+    });
+    render(main, spinner());
+    installPrompt();
+    DESK = !!(await features()).cashDesk;
+    return pickEvent();
+  }
   // TicketRoom staff use the scanner only for a test event, opened from the admin portal.
   if (accountType(u) === "staff" && !TEST_EVENT) return wrongAccountPage(u, "scanner");
   // Not on any event team (and not an organiser): this page is not for them.

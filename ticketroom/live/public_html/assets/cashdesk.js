@@ -3,7 +3,7 @@
 // one hand: find the guest, pick an amount, cash or card, confirm, done.
 // Every amount, balance and outcome comes from the server.
 import { svgIcon, html, render, $, $$, get, post, toast, moneyExact, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, parseRand } from "/assets/core.js";
-import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
+import { Camera, readNfc, nfcSupported, beep, setWedgeTarget, readerBox } from "/assets/reader.js";
 
 const rand = (c) => moneyExact(c).replace(/\.00$/, "");
 
@@ -43,7 +43,10 @@ export async function deskApp(el, eventId, { onBack, backLabel = "Back" } = {}) 
       try { guest = (await post(`/api/cashdesk/events/${eventId}/lookup`, { query: q })).guest; amount = 0; method = null; beep(true); draw(); }
       catch (err) { beep(false); find(err.message); }
     };
-    $("#dfind", el).addEventListener("submit", (e) => { e.preventDefault(); const v = $("#dq", el).value.trim(); if (v) go(v); });
+    const typed = readerBox($("#dq", el));
+    $("#dfind", el).addEventListener("submit", (e) => { e.preventDefault(); const v = typed(); if (v) go(v); });
+    // A handheld's reader, when the cursor is not in the box.
+    setWedgeTarget(go);
     $("[data-cam]", el).addEventListener("click", async () => { cam = new Camera($("#dcam", el), go); try { await cam.start(); } catch { toast("Camera unavailable. Type the band code instead.", "bad"); } });
     $("[data-nfc]", el)?.addEventListener("click", async () => { nfc = new AbortController(); try { await readNfc(go, nfc.signal); toast("Hold the wristband to the back of the phone."); } catch (err) { toast(`NFC: ${err.message}`, "bad"); } });
     $("#dq", el).focus();

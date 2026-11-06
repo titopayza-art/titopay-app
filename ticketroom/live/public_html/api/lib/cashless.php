@@ -115,7 +115,7 @@ function tag_normalise(?string $input): ?array
     $code = '[' . CODE_ALPHABET . ']';
     if (!$uidPrefix && preg_match("/^($code{4})-($code{4})$/", strtoupper($s), $m)) return ['kind' => 'code', 'value' => $m[1] . $m[2]];
     $uid = strtoupper((string) preg_replace('/[:\s-]/', '', (string) preg_replace('/^UID:/i', '', $s)));
-    if (preg_match('/^([0-9A-F]{8}|[0-9A-F]{14}|[0-9A-F]{20})$/', $uid)) return ['kind' => 'uid', 'value' => $uid, 'maybeCode' => !$uidPrefix && preg_match("/^$code{8}$/", $uid)];
+    if (preg_match('/^([0-9A-F]{8}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{20}|[0-9A-F]{24})$/', $uid)) return ['kind' => 'uid', 'value' => $uid, 'maybeCode' => !$uidPrefix && preg_match("/^$code{8}$/", $uid)];
     if (!$uidPrefix && preg_match("/^$code{8}$/", $uid)) return ['kind' => 'code', 'value' => $uid];
     return null;
 }

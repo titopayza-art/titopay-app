@@ -9,7 +9,9 @@ What is ready, what only you can do, and the first marketing steps.
   gate scanner with offline mode, test events, VerifyNow checks, wallet passes,
   reserved seating on a map of the venue (blocks placed around the stage,
   copied to every show at the same venue), extras sold with tickets (parking,
-  merchandise, VIP upgrades) and tickets on WhatsApp.
+  merchandise, VIP upgrades), tickets on WhatsApp, and linked devices for
+  the gates and top-up desks (rugged handhelds, phones, USB and Bluetooth
+  barcode, NFC and RFID readers).
 - Every automated test suite passes, on SQLite (Afrihost) and on MySQL
   (your own server). No overselling under load.
 - Security: HTTPS only, strict security headers, rate limits, signed tickets,
@@ -47,6 +49,16 @@ What is ready, what only you can do, and the first marketing steps.
    Officer (the Privacy Policy and PAIA manual show it).
 10. **Remove sample content.** Make sure no test or sample events are
     published (test events never show to the public, but check drafts too).
+
+## Before your first event with handhelds
+
+- Link each handheld under the event's Devices tab (one code per device, it
+  works once for 15 minutes) and scan a test ticket on it.
+- Register two wristbands on the desk device and tap them at a gate device.
+  If a band is not recognised, set the reader's number format under Edit
+  (hex or decimal, reverse byte order) so all devices read bands the same way.
+- Keep the handhelds charged, on the venue Wi-Fi or mobile data; the gate
+  keeps working offline with the ticket list it downloaded.
 
 ## Launch week: marketing
 

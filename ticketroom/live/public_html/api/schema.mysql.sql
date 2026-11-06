@@ -24,6 +24,7 @@ CREATE TABLE users (
   pin_failed_attempts BIGINT NOT NULL DEFAULT 0,
   pin_locked_until MEDIUMTEXT,
   email_otp_enabled BIGINT NOT NULL DEFAULT 0,
+  device_id MEDIUMTEXT,
   PRIMARY KEY (id),
   email_lc VARCHAR(191) GENERATED ALWAYS AS (lower(email)) STORED INVISIBLE,
   CHECK (status IN ('active','suspended','deleted')),
@@ -2002,6 +2003,37 @@ CREATE TABLE seat_layouts (
   PRIMARY KEY (event_id),
   FOREIGN KEY (event_id) REFERENCES events (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
+CREATE TABLE event_devices (
+  id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  name MEDIUMTEXT NOT NULL,
+  can_scan BIGINT NOT NULL DEFAULT 1,
+  can_topup BIGINT NOT NULL DEFAULT 0,
+  gate MEDIUMTEXT,
+  reader_format MEDIUMTEXT NOT NULL DEFAULT ('hex'),
+  reader_reverse BIGINT NOT NULL DEFAULT 0,
+  user_id VARCHAR(191) NOT NULL,
+  status VARCHAR(191) NOT NULL DEFAULT 'pending',
+  pair_code_hash VARCHAR(191),
+  pair_expires_at MEDIUMTEXT,
+  paired_at MEDIUMTEXT,
+  last_seen_at MEDIUMTEXT,
+  user_agent MEDIUMTEXT,
+  created_by VARCHAR(191),
+  created_at MEDIUMTEXT NOT NULL,
+  updated_at MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (id),
+  FOREIGN KEY (created_by) REFERENCES users (id),
+  FOREIGN KEY (user_id) REFERENCES users (id),
+  FOREIGN KEY (event_id) REFERENCES events (id),
+  CHECK (reader_format IN ('hex','decimal')),
+  CHECK (status IN ('pending','active','revoked'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=DYNAMIC
+;;
+CREATE INDEX event_devices_event_idx ON event_devices (event_id, status)
+;;
+CREATE INDEX event_devices_code_idx ON event_devices (pair_code_hash)
 ;;
 CREATE TABLE organiser_verification (
   organiser_id VARCHAR(191) NOT NULL,

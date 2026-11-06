@@ -244,6 +244,8 @@ route('GET', '/api/auth/me', function () {
     // The first administrator signs in with a temporary password; the pages
     // keep reminding them until it is changed.
     if (val('SELECT 1 FROM meta WHERE key = ?', ['temp_password:' . user()['id']])) $p['mustChangePassword'] = true;
+    // A linked device (a gate handheld, a top-up desk phone): its event, roles and reader.
+    if (!empty(user()['device'])) $p['device'] = user()['device'];
     return ['user' => $p, 'csrfToken' => session()['csrfToken']];
 });
 
