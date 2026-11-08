@@ -658,6 +658,14 @@ function initSupportChat() {
       next: ["what", "waitlist", "safe"]
     },
     {
+      id: "methods",
+      label: "How can I top up or withdraw?",
+      keywords: ["visa", "mastercard", "card", "cards", "capitec", "apple", "google", "method", "methods", "topup", "deposit", "withdraw", "withdrawal", "withdrawals", "load", "add", "cash", "out", "cashout"],
+      answer: "Top up, withdraw and receive payouts with Visa, Mastercard, Capitec Pay, Apple Pay, Google Pay and more. Top ups are instant and withdrawals take minutes. The app shows every option available to you.",
+      link: "fees", linkText: "See top up and withdrawal fees",
+      next: ["speed", "fees", "what"]
+    },
+    {
       id: "speed",
       label: "How fast are top ups and withdrawals?",
       keywords: ["fast", "quick", "speed", "instant", "instantly", "long", "minutes", "hours", "days", "payout", "payouts", "arrive", "clear", "wait", "waiting"],

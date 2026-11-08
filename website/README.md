@@ -8,6 +8,7 @@ The launch site uses the approved TitoPay blue palette, supplied campaign photog
 
 ## Speed, TitoPay Chat and ownership (8 November 2026)
 
+- **We accept is for top ups and withdrawals.** The section is now labelled "Top ups & withdrawals" and says the methods are for topping up, withdrawing and receiving payouts. A matching FAQ and Tito assistant answer were added.
 - **Speed.** The homepage has a new "Your money moves when you do" section below "We accept". It says top ups are instant and withdrawals and payouts take minutes, compared with 48–72 hours at "many other providers". The bar animation shows how long each one takes. The same message appears on the Personal and Business pages, beside the fees on the Fees page, in a new FAQ and in the Tito assistant. A short note explains that withdrawal times can depend on the customer's bank.
 - **TitoPay Chat.** A new "Chat first. Then pay." section on the homepage shows an animated chat that ends in a payment. Matching cards were added to Personal and Business, plus a FAQ and a Tito assistant answer.
 - **About us.** It now says "Proudly South African" and "Black-owned", and the page's search and share descriptions mention it.
