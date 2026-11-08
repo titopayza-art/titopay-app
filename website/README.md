@@ -6,6 +6,13 @@ Prepared 3 November 2026; launch-readiness pass 6 November 2026. This package up
 
 The launch site uses the approved TitoPay blue palette, supplied campaign photography, transparent Personal and Business app screens, rotating service labels and a Peach Payments footer. The installation guide includes the supplied PWA explanation and separate phone instructions. The live domain must be updated from this release before these changes reach customers.
 
+## Speed, TitoPay Chat and ownership (8 November 2026)
+
+- **Speed.** The homepage has a new "Your money moves when you do" section below "We accept". It says top ups are instant and withdrawals and payouts take minutes, compared with 48–72 hours at "many other providers". The bar animation shows how long each one takes. The same message appears on the Personal and Business pages, beside the fees on the Fees page, in a new FAQ and in the Tito assistant. A short note explains that withdrawal times can depend on the customer's bank.
+- **TitoPay Chat.** A new "Chat first. Then pay." section on the homepage shows an animated chat that ends in a payment. Matching cards were added to Personal and Business, plus a FAQ and a Tito assistant answer.
+- **About us.** It now says "Proudly South African" and "Black-owned", and the page's search and share descriptions mention it.
+- **Owner to confirm before launch:** keep evidence for the 48–72 hour comparison, for example the published payout times of the providers you compare against. South Africa's advertising rules require comparative claims to be backed up. No competitor is named on the site.
+
 ## Payment methods and motion (8 November 2026)
 
 - The homepage has a new **We accept** section directly below the hero. It shows Visa, Mastercard, Capitec Pay, Apple Pay and Google Pay logos, plus a highlighted "& more" pill. That pill and the line under it link to the app, where customers see every way to pay. The logos are SVG files in `assets/payments/` and are served from this site, as the security policy requires. The Capitec Pay logo comes from Peach Payments' website. The Visa, Apple Pay and Google Pay logos are the single-colour versions from the Simple Icons set. The Mastercard symbol was drawn to the brand's published colours. Check that each brand's guidelines allow you to show its logo. Peach Payments can usually confirm this for its merchants.

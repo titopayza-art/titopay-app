@@ -19,7 +19,7 @@
   }, { threshold: 0.15, rootMargin: "0px 0px -6% 0px" });
 
   // The payment section runs its own staggered sequence (see motion.css).
-  document.querySelectorAll(".pay-methods").forEach((section) => {
+  document.querySelectorAll(".pay-methods, .speed-story, .chat-story").forEach((section) => {
     if (below(section)) observer.observe(section);
     else section.classList.add("tm-in");
   });
@@ -61,7 +61,7 @@
   // cross the observer threshold. Once the visitor reaches the bottom, show it all.
   function revealRest() {
     if (window.innerHeight + window.scrollY < document.documentElement.scrollHeight - 4) return;
-    document.querySelectorAll(".tm-reveal:not(.tm-in), .pay-methods:not(.tm-in)").forEach((el) => {
+    document.querySelectorAll(".tm-reveal:not(.tm-in), .pay-methods:not(.tm-in), .speed-story:not(.tm-in), .chat-story:not(.tm-in)").forEach((el) => {
       el.classList.add("tm-in");
       observer.unobserve(el);
     });

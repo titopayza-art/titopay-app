@@ -658,6 +658,30 @@ function initSupportChat() {
       next: ["what", "waitlist", "safe"]
     },
     {
+      id: "speed",
+      label: "How fast are top ups and withdrawals?",
+      keywords: ["fast", "quick", "speed", "instant", "instantly", "long", "minutes", "hours", "days", "payout", "payouts", "arrive", "clear", "wait", "waiting"],
+      answer: "Top ups land in your wallet instantly. Withdrawals and payouts reach your bank in minutes, where many other providers take 48 to 72 hours. Timing can depend on your bank, and the app shows the status of every withdrawal.",
+      link: "fees", linkText: "See top up and withdrawal fees",
+      next: ["fees", "chat", "what"]
+    },
+    {
+      id: "chat",
+      label: "Can I chat before I pay someone?",
+      keywords: ["chat", "message", "messages", "messaging", "talk", "before", "confirm", "check", "seller", "buyer"],
+      answer: "Yes. Use TitoPay Chat in the app to message someone before you pay them. Confirm the amount and check you have the right person, then send.",
+      link: "https://app.titopay.co.za", linkText: "Open TitoPay",
+      next: ["speed", "safe", "fees"]
+    },
+    {
+      id: "owner",
+      label: "Who owns TitoPay?",
+      keywords: ["owner", "owned", "owns", "ownership", "black", "founder", "founded", "who", "company", "south", "african", "local"],
+      answer: "TitoPay (Pty) Ltd is a proudly South African, Black-owned company.",
+      link: "about", linkText: "About TitoPay",
+      next: ["what", "careers", "contact"]
+    },
+    {
       id: "what",
       label: "What can I do with TitoPay?",
       keywords: ["what", "do", "does", "wallet", "features", "send", "receive", "bills", "shop", "transfer", "money", "use", "work", "works", "how", "titopay", "about", "explain"],
@@ -741,7 +765,7 @@ function initSupportChat() {
     }
   ];
   const byId = Object.fromEntries(knowledge.map((item) => [item.id, item]));
-  const starters = ["launch", "fees", "waitlist"];
+  const starters = ["launch", "fees", "speed"];
   const humanWords = ["human", "person", "agent", "consultant", "operator", "callback", "call me back", "talk to someone", "speak to someone", "talk to a person", "real person"];
   const greetingWords = ["hi", "hello", "hey", "howzit", "sawubona", "molo", "dumela", "good morning", "good afternoon", "good evening"];
   const thanksWords = ["thanks", "thank you", "thank", "cheers", "appreciate", "great", "awesome", "ok", "okay", "cool"];
