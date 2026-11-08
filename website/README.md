@@ -6,6 +6,18 @@ Prepared 3 November 2026; launch-readiness pass 6 November 2026. This package up
 
 The launch site uses the approved TitoPay blue palette, supplied campaign photography, transparent Personal and Business app screens, rotating service labels and a Peach Payments footer. The installation guide includes the supplied PWA explanation and separate phone instructions. The live domain must be updated from this release before these changes reach customers.
 
+## Payment methods and motion (8 November 2026)
+
+- The homepage has a new **We accept** section directly below the hero. It shows Visa, Mastercard, Capitec Pay, Apple Pay and Google Pay logos, plus "& more". The logos are SVG files in `assets/payments/` and are served from this site, as the security policy requires. The Capitec Pay logo comes from Peach Payments' website. The Visa, Apple Pay and Google Pay logos are the single-colour versions from the Simple Icons set. The Mastercard symbol was drawn to the brand's published colours. Check that each brand's guidelines allow you to show its logo. Peach Payments can usually confirm this for its merchants.
+- The new `motion.css` and `motion.js` add animation to every public page:
+  - the hero fades in in sequence and its photo slowly drifts
+  - the R0 fees pop in with a shimmer
+  - the app phones float gently
+  - the payment pills drop in one by one and bob
+  - sections and cards reveal as they scroll into view
+  - buttons show a light sweep when hovered
+- The animation is decoration only. With JavaScript off, or with Reduce Motion switched on, every element shows in its final place.
+
 ## Launch-readiness pass (6 November 2026)
 
 This release builds on the 3 November package. Upload it the same way (steps below).
