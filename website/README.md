@@ -8,7 +8,7 @@ The launch site uses the approved TitoPay blue palette, supplied campaign photog
 
 ## Payment methods and motion (8 November 2026)
 
-- The homepage has a new **We accept** section directly below the hero. It shows Visa, Mastercard, Capitec Pay, Apple Pay and Google Pay logos, plus "& more". The logos are SVG files in `assets/payments/` and are served from this site, as the security policy requires. The Capitec Pay logo comes from Peach Payments' website. The Visa, Apple Pay and Google Pay logos are the single-colour versions from the Simple Icons set. The Mastercard symbol was drawn to the brand's published colours. Check that each brand's guidelines allow you to show its logo. Peach Payments can usually confirm this for its merchants.
+- The homepage has a new **We accept** section directly below the hero. It shows Visa, Mastercard, Capitec Pay, Apple Pay and Google Pay logos, plus a highlighted "& more" pill. That pill and the line under it link to the app, where customers see every way to pay. The logos are SVG files in `assets/payments/` and are served from this site, as the security policy requires. The Capitec Pay logo comes from Peach Payments' website. The Visa, Apple Pay and Google Pay logos are the single-colour versions from the Simple Icons set. The Mastercard symbol was drawn to the brand's published colours. Check that each brand's guidelines allow you to show its logo. Peach Payments can usually confirm this for its merchants.
 - The new `motion.css` and `motion.js` add animation to every public page:
   - the hero fades in in sequence and its photo slowly drifts
   - the R0 fees pop in with a shimmer

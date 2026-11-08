@@ -14,12 +14,19 @@
 .pay-capitec img{height:34px}
 .pay-apple img{height:36px}
 .pay-google img{height:26px}
-.pay-more{background:#14223c;color:#fff}
+/* "& more" is the headline pill: TitoPay blue, larger, and a link to the app. */
+.pay-pill.pay-more{padding:0;background:linear-gradient(120deg,#0b6fff 0%,#1d4ed8 55%,#14223c 100%);background-size:200% 100%;box-shadow:0 14px 34px rgba(11,111,255,.35)}
+.pay-more a{display:inline-flex;align-items:center;gap:10px;min-height:inherit;padding:0 34px;color:#fff;text-decoration:none;font-size:21px;font-weight:700;border-radius:inherit}
+.pay-more a:focus-visible{outline:3px solid #14223c;outline-offset:3px}
+.pay-more svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+.pay-more-note{margin:26px 0 0;color:#4f6078;font-size:15px}
+.pay-more-note a{white-space:nowrap;color:#0b5bd3;font-weight:600;text-decoration:none;border-bottom:1px solid currentColor}
 @media(max-width:560px){
  .pay-methods{padding:64px 0 72px}
  .pay-methods-copy{font-size:15px;margin-bottom:28px}
  .pay-pills{gap:10px}
  .pay-pill{min-height:52px;padding:0 20px;font-size:16px}
+ .pay-more a{padding:0 26px;font-size:18px}.pay-more-note{font-size:14px}
  .pay-pill img{height:22px}.pay-visa img{height:17px}.pay-mc img{height:24px}.pay-capitec img{height:28px}.pay-apple img{height:29px}.pay-google img{height:21px}
 }
 
@@ -62,13 +69,17 @@
  .pay-methods.tm-in .section-overline{animation:tm-rise .6s ease-out both}
  .pay-methods.tm-in h2{animation:tm-zoom .8s cubic-bezier(.2,.8,.2,1) .08s both}
  .pay-methods.tm-in .pay-methods-copy{animation:tm-rise .6s ease-out .2s both}
- .pay-methods.tm-in .pay-pill{animation:tm-drop .7s cubic-bezier(.2,.9,.3,1.3) both,tm-bob 5s ease-in-out infinite}
+ .pay-methods.tm-in .pay-pill{animation:tm-drop .7s cubic-bezier(.2,.9,.3,1.3) backwards,tm-bob 5s ease-in-out infinite}
  .pay-methods.tm-in .pay-pill:nth-child(1){animation-delay:.3s,1.3s}
  .pay-methods.tm-in .pay-pill:nth-child(2){animation-delay:.4s,1.8s}
  .pay-methods.tm-in .pay-pill:nth-child(3){animation-delay:.5s,2.3s}
  .pay-methods.tm-in .pay-pill:nth-child(4){animation-delay:.6s,2.8s}
  .pay-methods.tm-in .pay-pill:nth-child(5){animation-delay:.7s,3.3s}
- .pay-methods.tm-in .pay-pill:nth-child(6){animation-delay:.8s,3.8s}
+ .pay-methods.tm-in .pay-pill.pay-more{animation:tm-burst .9s cubic-bezier(.2,.9,.3,1.5) 1s backwards,tm-more-glow 2.8s ease-in-out 2s infinite,tm-gradient 6s ease-in-out 2s infinite}
+ .pay-more svg{animation:tm-spin-in 1s cubic-bezier(.2,.9,.3,1.3) 1.2s both}
+ .pay-more:hover{transform:translateY(-4px) scale(1.07)}
+ .tm-ready .pay-methods:not(.tm-in) .pay-more-note{opacity:0}
+ .pay-methods.tm-in .pay-more-note{animation:tm-rise .6s ease-out 1.5s both}
  .pay-methods::before{animation:tm-breathe 8s ease-in-out infinite}
 
  /* Generic scroll reveal, applied by motion.js only to content that starts
@@ -92,4 +103,8 @@
 @keyframes tm-drift{from{transform:scale(1.02) translate3d(0,0,0)}to{transform:scale(1.1) translate3d(-1.5%,-1%,0)}}
 @keyframes tm-shimmer{0%,70%{background-position:100% 0}100%{background-position:-50% 0}}
 @keyframes tm-glow{0%,100%{box-shadow:0 0 0 0 rgba(11,111,255,0)}50%{box-shadow:0 0 0 7px rgba(11,111,255,.16)}}
+@keyframes tm-burst{0%{opacity:0;transform:scale(.4)}60%{opacity:1;transform:scale(1.12)}100%{opacity:1;transform:none}}
+@keyframes tm-more-glow{0%,100%{box-shadow:0 14px 34px rgba(11,111,255,.35),0 0 0 0 rgba(11,111,255,.35)}50%{box-shadow:0 14px 34px rgba(11,111,255,.35),0 0 0 12px rgba(11,111,255,0)}}
+@keyframes tm-gradient{0%,100%{background-position:0 0}50%{background-position:100% 0}}
+@keyframes tm-spin-in{from{transform:rotate(-180deg) scale(.3)}to{transform:none}}
 @keyframes tm-breathe{0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
