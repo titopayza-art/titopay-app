@@ -30,6 +30,7 @@ A static site (HTML, CSS and vanilla JS) with no build step and no dependencies.
 - [ ] Confirm final pricing (the current figures come from the business plan and are marked "indicative").
 - [ ] Update the footer once the company is registered (add the registration number and remove "registration pending").
 - [ ] Trademark clearance for "SeaGeek".
+- [ ] Partner names (home page, "Partner network") are plain text with a no-endorsement note. Once agreements are signed, confirm each partner is happy to be named, and get permission before adding any partner logos.
 
 The site deliberately leaves out the business plan's financial projections and fundraising figures. They're confidential and belong in the investor pack, not on a public website.
 
