@@ -1,41 +1,55 @@
-# seageek.co.za
+# SeaGeek platform
 
-Corporate website for **SeaGeek Technologies (Pty) Ltd**: *Intelligence. Connected.*
+Website, API gateway, customer dashboard, admin back office, billing automation and SeaGeek Desk for **seageek.co.za**. PHP 8.1+, MySQL (or SQLite for testing), no build step.
 
-A static site (HTML, CSS and vanilla JS) with no build step and no dependencies. Upload it to any web host.
+## What's in the box
 
-## Pages
+| Part | Where | What it does |
+|---|---|---|
+| Public website | `/`, `/pricing`, `/desk`, `/developers`, `/about`, `/contact` | Marketing pages with the animated seabed and sharks, live pricing from the database |
+| API docs | `/docs`, `/docs/{product}`, `/docs/openapi.json` | Generated from `app/catalog.php`, with cURL, PHP, Node.js and Python samples |
+| REST API | `/api/v1/...` | SMS, Mail, Auth (OTP), WhatsApp, Verify, Voice, AI, Desk, account and usage |
+| Customer dashboard | `/dashboard` | Sandbox and live environments per product, API keys, usage, credit, payments, invoices, webhooks, team, Desk |
+| Admin | `/admin` | Customers, wholesale partners and routing, plans and pricing, invoices, support desk, settings, jobs |
+| Desk | `/dashboard/desk`, `/admin/desk`, `/help`, `/h/{company}` | Zendesk-style help desk: omnichannel tickets, AI agent with human handover, help centre, macros, SLAs, ratings |
+| Chat widget | `assets/js/chat-widget.js` | On every page; customers can embed it on their own sites |
+| Automation | `php cli.php cron` (every minute) or `php cli.php worker` | Renewals, invoices, reminders, locking and unlocking, low-balance alerts, queued sends, webhooks, email |
 
-| File | Purpose |
-|---|---|
-| `index.html` | Home: hero, 10 products, platform, industries, pricing, trust, roadmap, early access |
-| `developers.html` | API preview: quickstart, auth, environments, idempotency, webhooks, errors, endpoints, SDKs |
-| `about.html` | Vision, mission, values, how we're building, partners & investors |
-| `contact.html` | Enquiry form and contact channels (`?plan=business` pre-selects a plan) |
-| `privacy.html` | POPIA privacy notice, PAIA, acceptable use (**draft, needs legal review**) |
-| `404.html` | "Lost at sea" error page |
+## Quick start (shared hosting, e.g. Afrihost cPanel)
 
-## Deploy
+1. Create a MySQL database and user in cPanel.
+2. Upload the **contents** of this folder to `public_html/`.
+3. Open your domain. The installer checks the server, asks for the database details and creates your admin account.
+4. Add a cron job in cPanel to run every minute:
+   `php /home/YOURUSER/public_html/cli.php cron >/dev/null 2>&1`
+5. Sign in at `/admin`, then:
+   - **Wholesale partners**: add credentials for each partner and switch them on.
+   - **Settings**: PayFast merchant details, bank details for EFT, VAT status.
+   - **Settings > Support chatbot**: choose Anthropic or OpenAI (keys go on the partner rows).
 
-1. Upload the **contents** of this folder to your web root (`public_html/` on Afrihost or cPanel hosts).
-2. `.htaccess` handles the 404 page, forces HTTPS on `www.seageek.co.za`, and sets security and caching headers (Apache).
-   On Netlify, Vercel or Cloudflare Pages, upload the folder as-is. Those hosts ignore `.htaccess`.
-3. Make sure an SSL certificate is active before the HTTPS redirect goes live.
+Full steps, including a VPS or Docker setup, are in [`guides/DEPLOY.md`](guides/DEPLOY.md).
 
-## Before going live
+## Guides
 
-- [ ] Set up the mailboxes used on the site: `hello@`, `sales@`, `partners@`, `privacy@seageek.co.za`.
-- [ ] Forms currently open the visitor's email app (`mailto:`). To collect submissions directly, point the forms at a form service or your own endpoint (see `assets/js/main.js`, the `form[data-mailto]` handler).
-- [ ] Have the privacy notice reviewed by a POPIA practitioner, then remove the "Draft" notices.
-- [ ] Confirm final pricing (the current figures come from the business plan and are marked "indicative").
-- [ ] Update the footer once the company is registered (add the registration number and remove "registration pending").
-- [ ] Trademark clearance for "SeaGeek".
-- [ ] Partner names (home page, "Partner network") are plain text with a no-endorsement note. Once agreements are signed, confirm each partner is happy to be named, and get permission before adding any partner logos.
+- [`guides/DEPLOY.md`](guides/DEPLOY.md): shared hosting, VPS (nginx + PHP-FPM), Docker
+- [`guides/SCALING.md`](guides/SCALING.md): moving servers, backups, growing from one server to many
+- [`guides/OPERATIONS.md`](guides/OPERATIONS.md): connecting wholesale partners, what runs automatically, what still needs a person
 
-The site deliberately leaves out the business plan's financial projections and fundraising figures. They're confidential and belong in the investor pack, not on a public website.
+## Local development
 
-## Editing
+```bash
+composer install
+php -S 127.0.0.1:8000 index.php      # open http://127.0.0.1:8000 and choose SQLite in the installer
+php cli.php cron                     # run the scheduled jobs once
+```
 
-- Colours, fonts and spacing are defined as tokens at the top of `assets/css/style.css`.
-- The animated seabed is `assets/js/ocean.js`. Any `<canvas data-ocean data-horizon="0.5">` renders one. It pauses when off-screen and falls back to a still frame for visitors who prefer reduced motion.
-- Header and footer markup is repeated in each page, so edit them in every file.
+## Requirements
+
+PHP 8.1+ with `pdo_mysql` (or `pdo_sqlite`), `curl`, `sodium`, `mbstring`. Composer packages are already in `vendor/` (Anthropic PHP SDK and Guzzle), so shared hosts don't need Composer.
+
+## Security notes
+
+- `app/`, `storage/`, `vendor/`, `docker/` and `guides/` are blocked from the web (`.htaccess`, `docker/nginx.conf`).
+- Partner credentials, PayFast secrets and AI keys are encrypted at rest with `app_key` from `app/config.php`. **Back up `app_key`**: without it, stored secrets can't be decrypted.
+- API keys are stored as SHA-256 hashes and shown once. Passwords use PHP's `password_hash`.
+- Every form has CSRF protection; sign-in, sign-up, chat, OTP and API calls are rate-limited.

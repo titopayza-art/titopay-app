@@ -1,0 +1,1 @@
+<section class="lost"><div><div class="code mono" style="font-size:clamp(64px,14vw,140px);color:var(--muted)">404</div><h1 style="font-size:clamp(28px,4vw,40px)">Page not found</h1><p class="lead" style="margin:14px auto 26px">The page you asked for doesn't exist or has moved.</p><a class="btn btn-primary" href="/">Go to the home page</a></div></section>

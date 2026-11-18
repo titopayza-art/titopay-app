@@ -1,5 +1,9 @@
 User-agent: *
 Allow: /
-Disallow: /404.html
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /api/
+Disallow: /t/
+Disallow: /chat/
 
 Sitemap: https://www.seageek.co.za/sitemap.xml

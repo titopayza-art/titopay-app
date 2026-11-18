@@ -1,0 +1,5 @@
+app/config.php
+storage/*.sqlite*
+storage/logs/*.log
+storage/cache/sess_*
+.git

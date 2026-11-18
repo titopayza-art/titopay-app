@@ -1,0 +1,489 @@
+<?php
+/**
+ * SeaGeek platform core: configuration, database, security, settings, mail queue, HTTP client.
+ */
+declare(strict_types=1);
+
+const APP_ROOT = __DIR__ . '/..';
+const APP_DIR = __DIR__;
+const STORAGE = APP_ROOT . '/storage';
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+function config(?string $key = null, $default = null, bool $reload = false)
+{
+    static $cfg = null;
+    if ($cfg === null || $reload) {
+        $file = APP_DIR . '/config.php';
+        $cfg = is_file($file) ? require $file : [];
+        // Environment variables override the file, so containers and new servers need no file edits.
+        $env = [
+            'app_url' => 'SG_APP_URL', 'app_key' => 'SG_APP_KEY', 'cron_token' => 'SG_CRON_TOKEN',
+            'db.driver' => 'SG_DB_DRIVER', 'db.host' => 'SG_DB_HOST', 'db.port' => 'SG_DB_PORT',
+            'db.name' => 'SG_DB_NAME', 'db.user' => 'SG_DB_USER', 'db.pass' => 'SG_DB_PASS', 'db.path' => 'SG_DB_PATH',
+        ];
+        foreach ($env as $path => $var) {
+            $v = getenv($var);
+            if ($v === false || $v === '') continue;
+            [$a, $b] = array_pad(explode('.', $path), 2, null);
+            if ($b === null) $cfg[$a] = $v; else $cfg[$a][$b] = $v;
+        }
+    }
+    if ($key === null) return $cfg;
+    $node = $cfg;
+    foreach (explode('.', $key) as $part) {
+        if (!is_array($node) || !array_key_exists($part, $node)) return $default;
+        $node = $node[$part];
+    }
+    return $node;
+}
+
+function installed(): bool
+{
+    return is_file(APP_DIR . '/config.php') || (getenv('SG_APP_KEY') !== false && getenv('SG_APP_KEY') !== '');
+}
+
+function app_url(string $path = ''): string
+{
+    $base = rtrim((string) config('app_url', ''), '/');
+    if ($base === '') {
+        $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
+        $base = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
+    }
+    return $base . '/' . ltrim($path, '/');
+}
+
+function now(): string { return gmdate('Y-m-d H:i:s'); }
+function ts(string $modify): string { return gmdate('Y-m-d H:i:s', strtotime($modify)); }
+
+function log_line(string $channel, string $message, array $context = []): void
+{
+    $line = '[' . now() . '] ' . $message . ($context ? ' ' . json_encode($context, JSON_UNESCAPED_SLASHES) : '') . "\n";
+    @file_put_contents(STORAGE . '/logs/' . preg_replace('/[^a-z0-9_-]/', '', $channel) . '.log', $line, FILE_APPEND | LOCK_EX);
+}
+
+// ---------------------------------------------------------------------------
+// Database (MySQL in production, SQLite for local development)
+// ---------------------------------------------------------------------------
+
+final class DB
+{
+    private static ?PDO $pdo = null;
+
+    public static function pdo(): PDO
+    {
+        if (self::$pdo) return self::$pdo;
+        self::$pdo = self::connect(config('db', []));
+        return self::$pdo;
+    }
+
+    public static function connect(array $c): PDO
+    {
+        $opts = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false];
+        if (($c['driver'] ?? 'mysql') === 'sqlite') {
+            $pdo = new PDO('sqlite:' . $c['path'], null, null, $opts);
+            $pdo->exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+            return $pdo;
+        }
+        $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $c['host'] ?? 'localhost', (int) ($c['port'] ?? 3306), $c['name'] ?? '');
+        $pdo = new PDO($dsn, $c['user'] ?? '', $c['pass'] ?? '', $opts);
+        $pdo->exec("SET time_zone = '+00:00'");
+        return $pdo;
+    }
+
+    public static function driver(): string
+    {
+        return self::pdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
+    }
+
+    public static function run(string $sql, array $params = []): PDOStatement
+    {
+        $st = self::pdo()->prepare($sql);
+        $st->execute($params);
+        return $st;
+    }
+
+    public static function one(string $sql, array $params = []): ?array
+    {
+        $row = self::run($sql, $params)->fetch();
+        return $row === false ? null : $row;
+    }
+
+    public static function all(string $sql, array $params = []): array
+    {
+        return self::run($sql, $params)->fetchAll();
+    }
+
+    public static function value(string $sql, array $params = [])
+    {
+        $v = self::run($sql, $params)->fetchColumn();
+        return $v === false ? null : $v;
+    }
+
+    public static function insert(string $table, array $data): int
+    {
+        $cols = array_keys($data);
+        $sql = 'INSERT INTO ' . $table . ' (' . implode(',', $cols) . ') VALUES (' . implode(',', array_fill(0, count($cols), '?')) . ')';
+        self::run($sql, array_values($data));
+        return (int) self::pdo()->lastInsertId();
+    }
+
+    public static function update(string $table, array $data, string $where, array $params = []): int
+    {
+        $set = implode(',', array_map(fn($c) => "$c = ?", array_keys($data)));
+        return self::run("UPDATE $table SET $set WHERE $where", array_merge(array_values($data), $params))->rowCount();
+    }
+
+    public static function tx(callable $fn)
+    {
+        $pdo = self::pdo();
+        if ($pdo->inTransaction()) return $fn();
+        $pdo->beginTransaction();
+        try {
+            $result = $fn();
+            $pdo->commit();
+            return $result;
+        } catch (Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Encryption for stored secrets (partner credentials, API provider keys)
+// ---------------------------------------------------------------------------
+
+final class Crypto
+{
+    private static function key(): string
+    {
+        $k = base64_decode((string) config('app_key', ''), true);
+        if ($k === false || strlen($k) !== SODIUM_CRYPTO_SECRETBOX_KEYBYTES) {
+            throw new RuntimeException('app_key missing or invalid in app/config.php');
+        }
+        return $k;
+    }
+
+    public static function encrypt(string $plain): string
+    {
+        $nonce = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+        return 'v1:' . base64_encode($nonce . sodium_crypto_secretbox($plain, $nonce, self::key()));
+    }
+
+    public static function decrypt(?string $cipher): string
+    {
+        if ($cipher === null || $cipher === '') return '';
+        if (strncmp($cipher, 'v1:', 3) !== 0) return $cipher;
+        $raw = base64_decode(substr($cipher, 3), true);
+        $nonce = substr($raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+        $plain = sodium_crypto_secretbox_open(substr($raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES), $nonce, self::key());
+        if ($plain === false) throw new RuntimeException('Could not decrypt a stored secret. Has app_key changed?');
+        return $plain;
+    }
+
+    public static function token(int $bytes = 24): string
+    {
+        return rtrim(strtr(base64_encode(random_bytes($bytes)), '+/', '-_'), '=');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Settings (key/value, editable in admin; secrets encrypted)
+// ---------------------------------------------------------------------------
+
+final class Settings
+{
+    private static ?array $cache = null;
+
+    public const SECRET_KEYS = ['payfast_merchant_key', 'payfast_passphrase', 'anthropic_api_key', 'openai_api_key'];
+
+    public const DEFAULTS = [
+        'company_name' => 'SeaGeek Technologies (Pty) Ltd',
+        'support_email' => 'hello@seageek.co.za',
+        'mail_from_name' => 'SeaGeek',
+        'mail_from_address' => 'hello@seageek.co.za',
+        'vat_registered' => '0',
+        'vat_number' => '',
+        'vat_rate' => '15',
+        'bank_name' => '',
+        'bank_account_name' => 'SeaGeek Technologies (Pty) Ltd',
+        'bank_account_number' => '',
+        'bank_branch_code' => '',
+        'payfast_mode' => 'sandbox',
+        'payfast_merchant_id' => '10000100',
+        'payfast_merchant_key' => '46f0cd694581a',
+        'payfast_passphrase' => '',
+        'min_topup' => '100',
+        'invoice_due_days' => '7',
+        'reminder_days' => '0,3,6',
+        'lock_after_days' => '7',
+        'low_balance_default' => '50',
+        'chat_provider' => 'anthropic',
+        'chat_model_anthropic' => 'claude-opus-5-5',
+        'chat_model_openai' => 'gpt-5-mini',
+        'anthropic_api_key' => '',
+        'openai_api_key' => '',
+        'chat_extra_knowledge' => '',
+        'support_hours' => 'Monday to Friday, 08:00 to 17:00 (SAST)',
+        'usd_zar' => '18.50',
+        'ai_markup_pct' => '40',
+        'last_cron_at' => '',
+    ];
+
+    public static function get(string $key, ?string $default = null): string
+    {
+        if (self::$cache === null) self::load();
+        if (array_key_exists($key, self::$cache)) {
+            $v = self::$cache[$key];
+            return in_array($key, self::SECRET_KEYS, true) ? Crypto::decrypt($v) : $v;
+        }
+        return $default ?? (self::DEFAULTS[$key] ?? '');
+    }
+
+    public static function set(string $key, string $value): void
+    {
+        $stored = in_array($key, self::SECRET_KEYS, true) && $value !== '' ? Crypto::encrypt($value) : $value;
+        if (DB::one('SELECT k FROM settings WHERE k = ?', [$key])) {
+            DB::update('settings', ['v' => $stored], 'k = ?', [$key]);
+        } else {
+            DB::insert('settings', ['k' => $key, 'v' => $stored]);
+        }
+        self::$cache = null;
+    }
+
+    private static function load(): void
+    {
+        self::$cache = [];
+        foreach (DB::all('SELECT k, v FROM settings') as $r) self::$cache[$r['k']] = $r['v'];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Request helpers, escaping, CSRF, flash
+// ---------------------------------------------------------------------------
+
+function e($v): string { return htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
+
+function input(string $key, $default = null)
+{
+    $v = $_POST[$key] ?? $_GET[$key] ?? $default;
+    return is_string($v) ? trim($v) : $v;
+}
+
+function is_post(): bool { return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'; }
+
+function client_ip(): string { return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'; }
+
+function redirect(string $to): never
+{
+    header('Location: ' . (str_starts_with($to, 'http') ? $to : app_url($to)));
+    exit;
+}
+
+function json_out($data, int $status = 200): never
+{
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    exit;
+}
+
+function start_session(): void
+{
+    if (session_status() === PHP_SESSION_ACTIVE) return;
+    $secure = str_starts_with(app_url(), 'https://');
+    session_name('sg_session');
+    session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
+    if (installed()) {
+        session_set_save_handler(new DbSessionHandler(), true);
+        ini_set('session.gc_maxlifetime', '28800');
+    } else {
+        session_save_path(STORAGE . '/cache');
+    }
+    session_start();
+}
+
+function csrf_token(): string
+{
+    if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = Crypto::token(32);
+    return $_SESSION['csrf'];
+}
+
+function csrf_field(): string { return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">'; }
+
+function csrf_check(): void
+{
+    $sent = $_POST['_csrf'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    if (!is_string($sent) || !hash_equals(csrf_token(), $sent)) {
+        http_response_code(419);
+        exit('This form has expired. Go back, refresh the page and try again.');
+    }
+}
+
+function flash(string $type, string $message): void { $_SESSION['flash'][] = [$type, $message]; }
+
+function take_flash(): array
+{
+    $f = $_SESSION['flash'] ?? [];
+    unset($_SESSION['flash']);
+    return $f;
+}
+
+function old(string $key, string $default = ''): string { return e($_SESSION['old'][$key] ?? $default); }
+
+/** Rand amount: R1,234.50, -R0.29, and extra decimals only when they matter (R0.015). */
+function zar($amount, int $decimals = 2): string
+{
+    $a = (float) $amount;
+    $s = number_format(abs($a), $decimals, '.', ',');
+    if ($decimals > 2) $s = preg_replace('/(\.\d\d\d*?)0+$/', '$1', $s);
+    return ($a < 0 && round($a, $decimals) != 0 ? '-R' : 'R') . $s;
+}
+
+function rate_limited(string $key, int $max, int $windowSeconds): bool
+{
+    $window = (int) floor(time() / $windowSeconds);
+    $k = substr(hash('sha256', $key), 0, 40);
+    $row = DB::one('SELECT count FROM rate_limits WHERE k = ? AND window_start = ?', [$k, $window]);
+    if (!$row) {
+        DB::run('DELETE FROM rate_limits WHERE k = ?', [$k]);
+        DB::insert('rate_limits', ['k' => $k, 'window_start' => $window, 'count' => 1]);
+        return false;
+    }
+    if ((int) $row['count'] >= $max) return true;
+    DB::run('UPDATE rate_limits SET count = count + 1 WHERE k = ? AND window_start = ?', [$k, $window]);
+    return false;
+}
+
+function audit(string $action, ?int $orgId = null, string $detail = ''): void
+{
+    DB::insert('audit_log', [
+        'user_id' => Auth::id(), 'org_id' => $orgId, 'action' => $action,
+        'detail' => mb_substr($detail, 0, 500), 'ip' => client_ip(), 'created_at' => now(),
+    ]);
+}
+
+// ---------------------------------------------------------------------------
+// Views
+// ---------------------------------------------------------------------------
+
+function view(string $template, array $data = [], ?string $layout = null): string
+{
+    extract($data, EXTR_SKIP);
+    ob_start();
+    require APP_DIR . '/views/' . $template . '.php';
+    $content = ob_get_clean();
+    if ($layout === null) return $content;
+    ob_start();
+    require APP_DIR . '/views/layouts/' . $layout . '.php';
+    return ob_get_clean();
+}
+
+function render(string $template, array $data = [], string $layout = 'site'): never
+{
+    header('Content-Type: text/html; charset=utf-8');
+    echo view($template, $data, $layout);
+    exit;
+}
+
+function icon(string $name, string $class = ''): string
+{
+    static $paths = null;
+    $paths ??= require APP_DIR . '/icons.php';
+    $c = $class ? ' class="' . e($class) . '"' : '';
+    return '<svg' . $c . ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ($paths[$name] ?? '') . '</svg>';
+}
+
+// ---------------------------------------------------------------------------
+// Outbound HTTP (cURL)
+// ---------------------------------------------------------------------------
+
+final class Http
+{
+    /** @return array{status:int, body:string, json:mixed, error:?string} */
+    public static function request(string $method, string $url, array $headers = [], $body = null, int $timeout = 30): array
+    {
+        $ch = curl_init($url);
+        $h = [];
+        foreach ($headers as $k => $v) $h[] = is_int($k) ? $v : "$k: $v";
+        if (is_array($body)) {
+            $body = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $h[] = 'Content-Type: application/json';
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_CUSTOMREQUEST => strtoupper($method),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => $h,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_USERAGENT => 'SeaGeek-Platform/1.0',
+        ]);
+        if ($body !== null) curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        $resp = curl_exec($ch);
+        $err = $resp === false ? curl_error($ch) : null;
+        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        $resp = $resp === false ? '' : (string) $resp;
+        return ['status' => $status, 'body' => $resp, 'json' => json_decode($resp, true), 'error' => $err];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Email: everything goes through a queue; cron delivers it.
+// ---------------------------------------------------------------------------
+
+final class Mail
+{
+    public static function queue(string $to, string $subject, string $template, array $data = []): void
+    {
+        $data['subject'] = $subject;
+        $html = view('emails/' . $template, $data, 'email');
+        DB::insert('email_outbox', [
+            'to_addr' => $to, 'subject' => $subject, 'html' => $html,
+            'text_body' => trim(html_entity_decode(strip_tags(preg_replace('/<(br|\/p|\/h\d|\/li|\/tr)>/i', "\n", $html)))),
+            'status' => 'queued', 'attempts' => 0, 'created_at' => now(),
+        ]);
+    }
+
+    /** Send queued mail. Uses the active Amazon SES partner if configured, otherwise PHP mail(). */
+    public static function deliver(int $limit = 50): int
+    {
+        $sent = 0;
+        $rows = DB::all("SELECT * FROM email_outbox WHERE status = 'queued' AND attempts < 5 ORDER BY id LIMIT " . (int) $limit);
+        foreach ($rows as $m) {
+            $fromName = Settings::get('mail_from_name');
+            $fromAddr = Settings::get('mail_from_address');
+            $ok = false;
+            $error = '';
+            $ses = Partners::firstActive('mail', 'ses');
+            try {
+                if ($ses) {
+                    $res = Adapters::sesSend($ses, [
+                        'from' => sprintf('%s <%s>', $fromName, $fromAddr), 'to' => [$m['to_addr']],
+                        'subject' => $m['subject'], 'html' => $m['html'], 'text' => $m['text_body'],
+                    ]);
+                    $ok = $res['ok'];
+                    $error = $res['error'] ?? '';
+                } else {
+                    $headers = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: " .
+                        mb_encode_mimeheader($fromName) . " <$fromAddr>\r\nReply-To: " . Settings::get('support_email');
+                    $ok = @mail($m['to_addr'], mb_encode_mimeheader($m['subject']), $m['html'], $headers);
+                    if (!$ok) $error = 'mail() returned false';
+                }
+            } catch (Throwable $e) {
+                $error = $e->getMessage();
+            }
+            DB::update('email_outbox', [
+                'status' => $ok ? 'sent' : ((int) $m['attempts'] + 1 >= 5 ? 'failed' : 'queued'),
+                'attempts' => (int) $m['attempts'] + 1, 'last_error' => mb_substr($error, 0, 500),
+                'sent_at' => $ok ? now() : null,
+            ], 'id = ?', [$m['id']]);
+            if ($ok) $sent++;
+        }
+        return $sent;
+    }
+}

@@ -1,0 +1,2 @@
+<p>Hi <?= e($name) ?>,</p><p>Confirm your email address to finish creating your SeaGeek account. Your sandbox API key is created as soon as you do.</p>
+<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e($link) ?>">Confirm email</a></p><p style="color:#5c7178;font-size:13px">The link works for 3 days. If you didn't sign up, ignore this email.</p>

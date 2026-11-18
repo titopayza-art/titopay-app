@@ -1,0 +1,10 @@
+# Created by the installer or at runtime; never commit
+app/config.php
+storage/*.sqlite*
+storage/logs/*.log
+storage/cache/*
+!storage/cache/.gitkeep
+docker/.env
+# Installed by Composer (shipped inside the deploy zip)
+vendor/*
+!vendor/.htaccess

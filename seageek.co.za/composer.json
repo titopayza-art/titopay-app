@@ -1,0 +1,16 @@
+{
+    "name": "seageek/platform",
+    "description": "SeaGeek API platform, dashboards, billing and Desk",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-sodium": "*",
+        "ext-mbstring": "*",
+        "ext-pdo": "*",
+        "anthropic-ai/sdk": "^1.10",
+        "guzzlehttp/guzzle": "^7.9"
+    },
+    "config": { "optimize-autoloader": true, "sort-packages": true, "allow-plugins": { "php-http/discovery": true } }
+}

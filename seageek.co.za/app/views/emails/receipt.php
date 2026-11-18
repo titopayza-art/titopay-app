@@ -1,0 +1,2 @@
+<p>Hi <?= e($user['name']) ?>,</p><p>We've received <b><?= zar($invoice['total']) ?></b> for invoice <b><?= e($invoice['number']) ?></b>: <?= e($invoice['description']) ?>. Thank you.</p>
+<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/dashboard/invoice/' . $invoice['number'])) ?>">View invoice</a></p>

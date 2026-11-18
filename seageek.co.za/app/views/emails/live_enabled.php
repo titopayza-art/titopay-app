@@ -1,0 +1,2 @@
+<p>Hi <?= e($user['name']) ?>,</p><p>Live access is on for <b><?= e($org['name']) ?></b>. Your live API key is in the dashboard under API keys. Swap it in for your sandbox key and you're sending for real.</p>
+<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/dashboard/keys')) ?>">Open API keys</a></p>

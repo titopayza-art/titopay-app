@@ -1,0 +1,4 @@
+<p>Hi <?= e($user['name']) ?>,</p>
+<p><?= $days <= 0 ? 'Invoice <b>' . e($invoice['number']) . '</b> for <b>' . zar($invoice['total']) . '</b> is due today.' : 'Invoice <b>' . e($invoice['number']) . '</b> for <b>' . zar($invoice['total']) . '</b> is ' . (int) $days . ' day' . ($days === 1 ? '' : 's') . ' overdue.' ?></p>
+<?php if ($lock_in > 0): ?><p>If it stays unpaid, live API access pauses in <?= (int) $lock_in ?> day<?= $lock_in === 1 ? '' : 's' ?>. Sandbox keeps working.</p><?php else: ?><p>Live API access will pause shortly if it stays unpaid.</p><?php endif; ?>
+<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/dashboard/billing')) ?>">Pay now</a></p><p style="color:#5c7178;font-size:13px">Already paid by EFT? Reply with your proof of payment and we'll match it.</p>

@@ -1,0 +1,7 @@
+<form class="toolbar" method="get"><input name="q" value="<?= e($q) ?>" placeholder="Search name or email"><select name="status" onchange="this.form.submit()"><option value="">Any status</option><?php foreach (['active', 'locked', 'closed'] as $s): ?><option <?= $st === $s ? 'selected' : '' ?>><?= $s ?></option><?php endforeach; ?></select><button class="btn btn-ghost btn-sm">Search</button></form>
+<div class="panel flush">
+  <?php if (!$orgs): ?><div class="empty">No customers match.</div><?php else: ?>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Customer</th><th>Plan</th><th>Status</th><th>Access</th><th class="right">Balance</th><th class="right">Usage this month</th><th>Joined</th></tr></thead><tbody>
+  <?php foreach ($orgs as $o): ?><tr class="click" onclick="location.href='/admin/orgs/<?= (int) $o['id'] ?>'"><td><a class="link" href="/admin/orgs/<?= (int) $o['id'] ?>"><?= e($o['name']) ?></a><div class="muted small"><?= e($o['email']) ?></div></td><td class="small"><?= e($o['plan_code']) ?></td><td><?php $status = $o['status']; require APP_DIR . '/views/partials/status.php'; ?></td><td><span class="pill <?= $o['live_enabled'] ? 'green' : 'violet' ?>"><?= $o['live_enabled'] ? 'Live' : 'Sandbox' ?></span></td><td class="right mono small"><?= zar($o['balance']) ?></td><td class="right mono small"><?= zar($o['month_usage']) ?></td><td class="muted small"><?= e(date('j M Y', strtotime($o['created_at']))) ?></td></tr><?php endforeach; ?>
+  </tbody></table></div><?php endif; ?>
+</div>

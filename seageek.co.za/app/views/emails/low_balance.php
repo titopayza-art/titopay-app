@@ -1,0 +1,2 @@
+<p>Hi <?= e($user['name']) ?>,</p><p>Your SeaGeek balance is <b><?= zar($org['balance']) ?></b>. <?= !empty($reason) ? e($reason) . '. ' : '' ?>When it runs out, live requests are refused until you add credit.</p>
+<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/dashboard/billing#topup')) ?>">Add credit</a></p>

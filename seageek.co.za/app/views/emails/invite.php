@@ -1,0 +1,1 @@
+<p>Hi,</p><p><?= e($by['name']) ?> added you to <b><?= e($org['name']) ?></b> on SeaGeek. Choose a password to sign in.</p><p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e($link) ?>">Set your password</a></p>

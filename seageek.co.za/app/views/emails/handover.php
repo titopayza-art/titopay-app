@@ -1,0 +1,2 @@
+<p><b>#<?= (int) $ticket['number'] ?> <?= e($ticket['subject']) ?></b> needs a person.</p><p>Reason: <?= e($reason) ?></p><p>From: <?= e($ticket['requester_name'] ?: '') ?> <?= e($ticket['requester_email'] ?: $ticket['requester_phone'] ?: '') ?></p>
+<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url(Desk::house()['id'] == $ticket['org_id'] ? '/admin/desk/' . $ticket['number'] : '/dashboard/desk/' . $ticket['number'])) ?>">Open ticket</a></p>

@@ -1,0 +1,2 @@
+<p>Hi <?= e($user['name']) ?>,</p><p>Live API access for <b><?= e($org['name']) ?></b> is paused because invoice <b><?= e($invoice['number']) ?></b> (<?= zar($invoice['total']) ?>) is unpaid. Your sandbox keys and data are untouched.</p>
+<p>Access comes back automatically as soon as the payment clears.</p><p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/dashboard/billing')) ?>">Pay and restore access</a></p>
