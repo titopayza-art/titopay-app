@@ -193,10 +193,10 @@
       }
     }
     for (i = 0; i < pts.length; i++) {
-      var q = pts[i], rad = (3 + q[2] * 9) * (1.2 - q[4] * 0.6);
+      var q = pts[i], rad = (2 + q[2] * 3) * (1.2 - q[4] * 0.6);
       var col = q[3] === "v" ? "169,139,255" : "95,227,207";
       var grd = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], rad * 2.4);
-      grd.addColorStop(0, "rgba(" + col + "," + (0.55 + q[2] * 0.4) + ")");
+      grd.addColorStop(0, "rgba(" + col + "," + (0.3 + q[2] * 0.25) + ")");
       grd.addColorStop(1, "rgba(" + col + ",0)");
       ctx.fillStyle = grd;
       ctx.beginPath(); ctx.arc(q[0], q[1], rad * 2.4, 0, Math.PI * 2); ctx.fill();
