@@ -1,42 +1,41 @@
-<div class="wrap docs-shell">
-  <?php require APP_DIR . '/views/docs/_side.php'; ?>
-  <div>
-    <h1 style="font-size:clamp(34px,4.6vw,52px)">API documentation</h1>
-    <p class="lead" style="margin-top:14px">One REST API for every SeaGeek product. JSON in and out, the same errors everywhere, signed webhooks and safe retries.</p>
+<?php
+$slug = 'overview';
+$pageTitle = 'SeaGeek API documentation';
+$lead = 'One REST API for messaging, identity, AI, QR codes and customer service in South Africa. JSON in and out, the same errors everywhere, signed webhooks and safe retries. Everything is billed in rand from one credit balance.';
+require __DIR__ . '/_top.php';
+$groups = ['Messaging' => ['sms', 'mail', 'whatsapp', 'voice'], 'Identity and security' => ['auth', 'verify'], 'AI and service' => ['ai', 'desk'], 'No-code tools' => ['stores', 'qr'], 'Coming in 2028' => ['notify', 'sign']];
+?>
+<div class="start-cards">
+  <a href="/docs/quickstart" class="start-card"><b>Quickstart</b><span>Send your first SMS in five minutes, then go live.</span></a>
+  <a href="/docs/authentication" class="start-card"><b>Authentication</b><span>Keys, the Authorization header and keeping keys safe.</span></a>
+  <a href="/docs/environments" class="start-card"><b>Sandbox and live</b><span>Free testing with realistic results, and the go-live checklist.</span></a>
+  <a href="/docs/webhooks" class="start-card"><b>Webhooks</b><span>Delivery receipts and inbound messages, signed and retried.</span></a>
+</div>
 
-    <h2 style="margin-top:44px;font-size:26px">Base URL and keys</h2>
-    <p class="muted" style="margin-top:8px">All requests go to <code>https://www.seageek.co.za/api/v1</code> over HTTPS. Send your key in the Authorization header. Keys starting <code>sg_test_</code> use the free sandbox; <code>sg_live_</code> keys send for real and are billed from your credit.</p>
-    <pre class="snippet" style="margin-top:12px">curl https://www.seageek.co.za/api/v1/balance \
+<h2 id="base-url">Base URL</h2>
+<p>All requests go to <code>https://www.seageek.co.za/api/v1</code> over HTTPS with your key in the <code>Authorization</code> header.</p>
+<pre class="snippet">curl https://www.seageek.co.za/api/v1/balance \
   -H "Authorization: Bearer sg_test_your_key"</pre>
 
-    <h2 style="margin-top:40px;font-size:26px">Products</h2>
-    <div class="grid cols-3" style="margin-top:16px">
-      <?php foreach ($services as $k => $sv): ?><a class="svc" href="/docs/<?= $k ?>"><span class="top"><?= icon($sv['icon']) ?><span class="pill <?= $sv['status'] === 'live' ? 'green' : ($sv['status'] === 'beta' ? 'amber' : '') ?>"><?= ucfirst($sv['status'] === 'live' ? 'Available' : $sv['status']) ?></span></span><b><?= e($sv['name']) ?></b><span class="muted small"><?= e($sv['summary']) ?></span></a><?php endforeach; ?>
-    </div>
-
-    <h2 style="margin-top:44px;font-size:26px">Account endpoints</h2>
-    <table class="params" style="margin-top:10px"><?php foreach (Catalog::platformEndpoints() as [$m, $p, $d]): ?><tr><td><span class="method m-<?= strtolower($m) ?>"><?= $m ?></span> <code><?= e($p) ?></code></td><td class="muted"><?= e($d) ?></td></tr><?php endforeach; ?></table>
-
-    <h2 style="margin-top:44px;font-size:26px">Errors</h2>
-    <p class="muted" style="margin-top:8px">Errors return the HTTP status below and a body like <code>{"error": {"type": "insufficient_balance", "message": "..."}, "request_id": "req_..."}</code>. Quote the request ID when you contact support.</p>
-    <table class="params" style="margin-top:10px">
-      <?php foreach ([['400', 'invalid_json', 'The body is not valid JSON.'], ['401', 'authentication_error', 'Missing, invalid or revoked key.'], ['402', 'insufficient_balance / account_locked', 'Not enough credit, or live access is paused for an unpaid invoice.'], ['403', 'live_not_enabled / kyb_required', 'Live access or business verification still needed.'], ['404', 'not_found', 'No such endpoint or object.'], ['409', '–', 'Not used. Repeated Idempotency-Keys replay the first response instead.'], ['422', 'missing_parameter, invalid_number, …', 'A parameter is missing or wrong. Nothing was charged.'], ['429', 'rate_limited / ai_cap_reached / ai_rate_limited', 'Slow down, or your AI spending cap was reached.'], ['5xx', 'api_error / provider_error', 'A problem on our side or at a partner. Retry with the same Idempotency-Key.']] as [$c, $t, $d]): ?>
-      <tr><td><code><?= $c ?></code><span class="type"><?= e($t) ?></span></td><td class="muted"><?= e($d) ?></td></tr><?php endforeach; ?>
-    </table>
-
-    <h2 style="margin-top:44px;font-size:26px">Idempotency</h2>
-    <p class="muted" style="margin-top:8px">Add <code>Idempotency-Key: your-unique-value</code> to any POST. If you retry with the same key, we return the first response and do not send or charge again.</p>
-
-    <h2 style="margin-top:44px;font-size:26px">Webhooks</h2>
-    <p class="muted" style="margin-top:8px">Set your endpoint in the dashboard. Each event is a POST with a JSON body and a <code>SeaGeek-Signature: t=TIMESTAMP,v1=HMAC</code> header, where HMAC is SHA-256 of <code>TIMESTAMP.BODY</code> using your signing secret. Reply with any 2xx status. We retry for 24 hours.</p>
-    <pre class="snippet" style="margin-top:12px">// PHP
-[$t, $v1] = sscanf($_SERVER['HTTP_SEAGEEK_SIGNATURE'], 't=%d,v1=%s');
-$body = file_get_contents('php://input');
-$ok = hash_equals(hash_hmac('sha256', $t . '.' . $body, getenv('SEAGEEK_WEBHOOK_SECRET')), $v1)
-   &amp;&amp; abs(time() - $t) &lt; 300;</pre>
-    <p class="muted small" style="margin-top:10px">Events: message.delivered, message.read, message.failed, whatsapp.inbound, verify.completed, desk.ticket_created, desk.handover, ping.</p>
-
-    <h2 style="margin-top:44px;font-size:26px">Limits</h2>
-    <p class="muted" style="margin-top:8px">Request rates, AI spending caps and the longest AI reply depend on your plan (see <code>GET /v1/account</code>). The AI cap is checked before each AI request, so you are never charged past it.</p>
-  </div>
+<?php foreach ($groups as $g => $keys): ?>
+<h2 id="<?= e(trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($g)), '-')) ?>"><?= e($g) ?></h2>
+<div class="docs-products">
+  <?php foreach ($keys as $k): $sv = Catalog::services()[$k]; ?>
+    <a class="docs-product" href="/docs/<?= $k ?>">
+      <span class="product-icon"><?= icon($sv['icon']) ?></span>
+      <span><b><?= e($sv['name']) ?></b><?php if ($sv['status'] !== 'live'): ?> <small class="muted"><?= $sv['status'] === 'beta' ? 'Beta' : 'Planned' ?></small><?php endif; ?><span class="muted"><?= e($sv['summary']) ?></span></span>
+    </a>
+  <?php endforeach; ?>
 </div>
+<?php endforeach; ?>
+
+<h2 id="conventions">Conventions</h2>
+<table class="params">
+  <tr><td>Format</td><td class="muted">JSON request and response bodies, UTF-8. Send <code>Content-Type: application/json</code>.</td></tr>
+  <tr><td>Money</td><td class="muted">Amounts are numbers in rand (ZAR), excluding VAT, e.g. <code>0.29</code>.</td></tr>
+  <tr><td>Phone numbers</td><td class="muted">E.164 such as <code>+27821234567</code>. Local formats like <code>082 123 4567</code> are converted for you.</td></tr>
+  <tr><td>Times</td><td class="muted">ISO 8601 in UTC, e.g. <code>2026-11-18T09:15:02+00:00</code>.</td></tr>
+  <tr><td>IDs</td><td class="muted">Strings with a prefix: <code>msg_</code> messages, <code>chk_</code> checks, <code>qr_</code> QR codes, <code>evt_</code> webhook events, <code>req_</code> requests.</td></tr>
+  <tr><td>Versioning</td><td class="muted">The version is in the path (<code>/v1</code>). We add fields without notice but never remove or rename them within a version. See the <a class="link" href="/docs/changelog">changelog</a>.</td></tr>
+</table>
+<?php require __DIR__ . '/_bottom.php'; ?>

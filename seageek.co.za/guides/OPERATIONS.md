@@ -79,3 +79,34 @@ These appear under **Needs a person** on the admin overview and as tickets in th
 ## Pricing and margins
 
 Default prices are in Admin > Plans & pricing. Each rate shows your selling price, the wholesale cost and the margin. The costs in the database are estimates: replace them with the numbers from your signed partner contracts before launch. AI prices follow the provider's USD list price × the USD/ZAR rate × (1 + markup); update the exchange rate monthly.
+
+## Email delivery (SMTP)
+
+Admin, Settings, Email delivery. Fill in the SMTP details from your host, Microsoft 365 or Google Workspace:
+
+| Provider | Host | Port | Security |
+|---|---|---|---|
+| Afrihost and most cPanel hosts | mail.seageek.co.za | 465 | SSL/TLS |
+| Microsoft 365 | smtp.office365.com | 587 | STARTTLS |
+| Google Workspace | smtp.gmail.com | 587 | STARTTLS (use an app password) |
+| Amazon SES (SMTP interface) | email-smtp.af-south-1.amazonaws.com | 587 | STARTTLS |
+
+Save, then use *Send a test email*. From the server you can also run `php cli.php test-email you@seageek.co.za`.
+Add SPF, DKIM and DMARC records for seageek.co.za at your DNS host so mail lands in inboxes, not spam.
+
+## Staff and permissions
+
+Admin, Staff and permissions. Roles: Owner (everything), Administrator (everything except staff), Developer
+(partners, settings, jobs, customers), Customer support (desk, customers), Finance (money, customers),
+Marketing (campaigns, contacts, QR codes, customers) or Custom. Invited staff get a link to set a password.
+Switching someone off signs them out at once. There is always at least one owner.
+
+## Marketing, QR codes and store SMS
+
+- **Newsletters**: Admin, Marketing. Send to *All SeaGeek customers* (owners and billing contacts) or the
+  *Website newsletter* list (people who subscribe in the site footer). Unsubscribes are honoured automatically.
+- **QR codes**: customers pay R20 per code from credit (plan discounts apply). Dynamic codes go through
+  `/q/{code}`, so they can be changed and counted. Admin, Marketing, QR codes lists every customer's codes.
+- **Store SMS**: customers connect Shopify, WooCommerce, Wix or any platform with a private link. Each order
+  SMS costs R0.50 (store_sms rate under Plans, packages and rates). Abandoned-cart reminders are sent by cron.
+- **Campaigns** are sent in batches by cron and the worker; failed messages are refunded like any API send.

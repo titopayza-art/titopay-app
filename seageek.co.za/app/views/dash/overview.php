@@ -66,9 +66,11 @@ $aiPct = $aiCap > 0 ? min(100, round($aiSpent / $aiCap * 100)) : 0;
           'verify' => $org['kyb_status'] === 'approved' ? 'KYB approved' : 'KYB needed for live',
           'ai' => 'Cap ' . zar($aiCap, 0),
           'desk' => $desk['open'] . ' open tickets',
+          'qr' => DB::value('SELECT COUNT(*) FROM qr_codes WHERE org_id = ?', [$org['id']]) . ' codes',
+          'stores' => DB::value('SELECT COUNT(*) FROM stores WHERE org_id = ?', [$org['id']]) ? DB::value('SELECT COUNT(*) FROM stores WHERE org_id = ?', [$org['id']]) . ' store(s) connected' : 'Connect a store',
           default => 'Ready',
       }; ?>
-      <a class="svc" href="<?= $k === 'desk' ? '/dashboard/desk' : '/dashboard/service/' . $k ?>">
+      <a class="svc" href="<?= ['desk' => '/dashboard/desk', 'qr' => '/dashboard/qr', 'stores' => '/dashboard/stores'][$k] ?? '/dashboard/service/' . $k ?>">
         <?php $sst = $k === 'desk' ? 'active' : ($svcStatus[$k] ?? 'inactive');
           [$pcls, $plabel] = match (true) {
               $sst === 'active' && $org['live_enabled'] && $org['status'] === 'active' => ['green', 'Live'],

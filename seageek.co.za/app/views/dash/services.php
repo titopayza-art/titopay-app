@@ -41,7 +41,7 @@ $labels = ['active' => ['green', 'Active'], 'pending' => ['amber', 'Pending appr
       </div>
     <?php endif; ?>
     <div class="foot">
-      <?php if ($st === 'active'): ?><a class="btn btn-ghost btn-xs" href="<?= $svc === 'desk' ? '/dashboard/desk' : '/dashboard/service/' . e($svc) ?>">Open <?= e($s['name']) ?></a><?php else: ?><span class="on-note">Sandbox works before you switch on</span><?php endif; ?>
+      <?php if ($st === 'active'): ?><a class="btn btn-ghost btn-xs" href="<?= e(['desk' => '/dashboard/desk', 'qr' => '/dashboard/qr', 'stores' => '/dashboard/stores'][$svc] ?? '/dashboard/service/' . $svc) ?>">Open <?= e($s['name']) ?></a><?php else: ?><span class="on-note">Sandbox works before you switch on</span><?php endif; ?>
       <a class="link small" href="/docs/<?= e($svc) ?>" target="_blank" rel="noopener">Docs</a>
     </div>
   </div>

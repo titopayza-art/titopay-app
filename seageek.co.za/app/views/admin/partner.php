@@ -28,7 +28,8 @@
     <?php else: ?>
       <h2 style="margin-top:8px"><?= $p['driver'] === 'anthropic' ? 'Anthropic' : 'OpenAI' ?></h2>
       <div class="field"><label>API key (stored encrypted; blank keeps saved)</label><input name="cfg[api_key]" type="password" placeholder="<?= !empty($cfg['api_key']) ? 'Saved' : '' ?>"></div>
-      <?php if ($p['driver'] === 'openai'): ?><div class="field"><label>Base URL</label><input name="cfg[base_url]" value="<?= $f('base_url', 'https://api.openai.com/v1') ?>"></div><?php endif; ?>
+      <?php if ($p['driver'] === 'openai'): ?><div class="field"><label>Base URL</label><input name="cfg[base_url]" value="<?= $f('base_url', 'https://api.openai.com/v1') ?>"></div>
+      <?php else: ?><div class="field"><label>Base URL <span class="muted">(leave empty unless you use a gateway or proxy)</span></label><input name="cfg[base_url]" value="<?= $f('base_url', '') ?>" placeholder="https://api.anthropic.com"></div><?php endif; ?>
     <?php endif; ?>
     <button class="btn btn-primary">Save partner</button>
   </form>

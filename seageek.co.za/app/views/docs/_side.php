@@ -1,10 +1,14 @@
-<nav class="docs-side" aria-label="API sections">
-  <h4>Start here</h4>
-  <a href="/docs" class="<?= empty($slug) ? 'on' : '' ?>">Overview</a>
-  <a href="/developers">How it connects</a>
-  <h4>Products</h4>
-  <?php foreach ($services as $k => $sv): ?><a href="/docs/<?= $k ?>" class="<?= ($slug ?? '') === $k ? 'on' : '' ?>"><?= e($sv['name']) ?><?php if ($sv['status'] !== 'live'): ?><small><?= $sv['status'] === 'beta' ? 'Beta' : 'Planned' ?></small><?php endif; ?></a><?php endforeach; ?>
-  <h4>Reference</h4>
-  <a href="/docs/openapi.json">OpenAPI spec</a>
-  <a href="/status">Status</a>
+<?php $cur = $slug ?? 'overview'; ?>
+<nav class="docs-side" aria-label="Documentation">
+  <div class="docs-search">
+    <input type="search" placeholder="Search the docs" aria-label="Search the docs" data-docs-search autocomplete="off">
+    <div class="docs-results" data-docs-results hidden></div>
+  </div>
+  <?php foreach (Docs::nav() as $navGroup => $navItems): ?>
+    <h4><?= e($navGroup) ?></h4>
+    <?php foreach ($navItems as [$navTitle, $navHref, $navSlug, $navBadge]): ?>
+      <a href="<?= e($navHref) ?>" class="<?= $navSlug === $cur ? 'on' : '' ?>"<?= $navSlug === $cur ? ' aria-current="page"' : '' ?>><span><?= e($navTitle) ?></span><?php if ($navBadge): ?><small><?= e($navBadge) ?></small><?php endif; ?></a>
+    <?php endforeach; ?>
+  <?php endforeach; ?>
 </nav>
+<script type="application/json" id="docs-index"><?= json_encode(Docs::searchIndex(), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) ?></script>

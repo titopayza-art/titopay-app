@@ -472,6 +472,7 @@ final class Cron
                 DB::run('DELETE FROM rate_limits WHERE window_start < ?', [(int) floor(time() / 60) - 120]);
                 DB::run('DELETE FROM sessions WHERE updated_at < ?', [time() - 86400 * 2]);
                 DB::run("DELETE FROM otp_codes WHERE expires_at < ?", [ts('-30 days')]);
+                DB::run('DELETE FROM idempotency WHERE created_at < ?', [ts('-24 hours')]);
                 DB::run("UPDATE invoices SET status = 'void' WHERE status = 'unpaid' AND kind IN ('topup','order') AND created_at < ?", [ts('-30 days')]);
                 DB::run("UPDATE quotes SET status = 'expired' WHERE status = 'open' AND valid_until < ?", [now()]);
                 return 'ok';

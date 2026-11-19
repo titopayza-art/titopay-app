@@ -22,7 +22,7 @@ foreach (Catalog::services() as $slug => $s) {
 foreach (Catalog::platformEndpoints() as [$m, $p, $d]) $paths[$p][strtolower($m)] = ['tags' => ['Account'], 'summary' => $d, 'responses' => ['200' => ['description' => 'OK']]];
 return [
     'openapi' => '3.1.0',
-    'info' => ['title' => 'SeaGeek API', 'version' => '1.0.0', 'description' => 'SMS, Mail, Auth, WhatsApp, Verify, Voice, AI and Desk. Amounts are in ZAR.', 'contact' => ['email' => 'hello@seageek.co.za']],
+    'info' => ['title' => 'SeaGeek API', 'version' => '1.0.0', 'description' => 'SMS, Mail, Auth, WhatsApp, Verify, Voice, AI, Desk, QR Codes and Store SMS. Amounts are in ZAR, excluding VAT.', 'contact' => ['email' => 'hello@seageek.co.za']],
     'servers' => [['url' => rtrim(app_url('/api'), '/')]],
     'security' => [['bearer' => []]],
     'components' => [

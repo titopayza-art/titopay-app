@@ -89,8 +89,10 @@ $r->add('GET', '/pricing', fn() => render('site/pricing', ['title' => 'Pricing',
 $r->add('GET', '/desk', fn() => render('site/desk', ['title' => 'Desk', 'nav' => 'desk']));
 $r->add('GET', '/developers', fn() => render('site/developers', ['title' => 'Developers', 'nav' => 'developers']));
 $r->add('GET', '/docs', fn() => render('docs/index', ['title' => 'API documentation', 'nav' => 'developers', 'services' => Catalog::services()]));
+$r->add('GET', '/docs/search.json', fn() => json_out(Docs::searchIndex()));
 $r->add('GET', '/docs/openapi.json', fn() => json_out(require APP_DIR . '/openapi.php'));
 $r->add('GET', '/docs/{service}', function ($service) {
+    if (isset(Docs::guides()[$service])) render('docs/guide', ['title' => Docs::guides()[$service][0] . ' | SeaGeek API', 'nav' => 'developers', 'slug' => $service]);
     $all = Catalog::services();
     if (!isset($all[$service])) { http_response_code(404); render('site/404', ['title' => 'Not found']); }
     $rates = $all[$service]['units'] ? DB::all('SELECT * FROM rates WHERE unit IN (' . implode(',', array_fill(0, count($all[$service]['units']), '?')) . ')', $all[$service]['units']) : [];
@@ -857,6 +859,8 @@ $r->add('GET', '/sitemap.xml', function () {
     header('Content-Type: application/xml; charset=utf-8');
     $urls = ['/', '/pricing', '/desk', '/developers', '/docs', '/about', '/contact', '/help', '/status', '/privacy', '/terms'];
     foreach (array_keys(Catalog::services()) as $k) $urls[] = '/docs/' . $k;
+    foreach (array_keys(Docs::guides()) as $k) $urls[] = '/docs/' . $k;
+    $urls[] = '/quote';
     foreach (DB::all('SELECT slug FROM articles WHERE org_id = ? AND published = 1', [Desk::house()['id']]) as $a) $urls[] = '/help/' . $a['slug'];
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
     foreach ($urls as $u) echo '<url><loc>' . e(app_url($u)) . '</loc></url>';

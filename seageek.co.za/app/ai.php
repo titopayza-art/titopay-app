@@ -42,7 +42,10 @@ final class Ai
         $handoverDesc = 'Hand the conversation to a human support agent. Use when the customer asks for a person, is upset, raises a billing dispute, refund, legal or account-security matter, or when the knowledge provided does not answer the question.';
 
         if ($provider === 'anthropic') {
-            $client = new AnthropicClient(apiKey: $key);
+            $ap = DB::one("SELECT * FROM partners WHERE service = 'ai' AND driver = 'anthropic' ORDER BY active DESC, priority LIMIT 1");
+            $baseUrl = $ap ? trim((string) (Partners::config($ap)['base_url'] ?? '')) : '';
+            // A base URL is only needed for a proxy or gateway in front of Anthropic; normally it stays empty.
+            $client = $baseUrl !== '' ? new AnthropicClient(apiKey: $key, baseUrl: $baseUrl) : new AnthropicClient(apiKey: $key);
             $tools = $allowHandover ? [['name' => self::HANDOVER_TOOL, 'description' => $handoverDesc, 'inputSchema' => $handoverSchema]] : null;
             try {
                 $msg = $client->beta->messages->create(
@@ -169,7 +172,8 @@ final class Ai
         return trim(<<<TXT
         $intro
 
-        Answer using only the knowledge below. Keep replies short and plain: two to four sentences, no headings, no lists unless the customer asks for steps. Use South African English.
+        Answer using only the knowledge below. Keep replies short and plain: two to four sentences, no headings, no lists unless the customer asks for steps.
+        Reply in the language the customer writes in (for example English, isiZulu, Afrikaans, Sesotho, French or Portuguese). Default to South African English.
         If the knowledge doesn't cover the question, say you'll pass it to the team and use the handover tool. Never invent prices, dates, features or policies. Never ask for passwords, card numbers or API keys.
 
         $custom
