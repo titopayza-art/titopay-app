@@ -16,6 +16,10 @@ if (!installed()) {
     exit;
 }
 
+// Store webhooks (Shopify, WooCommerce, any platform) authenticate with the link and a signature, not an API key
+if (preg_match('#^/api/v1/stores/hooks/([A-Za-z0-9_-]{16,64})$#', $path, $m)) {
+    Stores::receive($m[1]);
+}
 if (str_starts_with($path, '/api/v1/')) {
     Gateway::handle($_SERVER['REQUEST_METHOD'] ?? 'GET', substr($path, 8));
 }

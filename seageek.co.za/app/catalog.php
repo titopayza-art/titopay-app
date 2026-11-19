@@ -46,6 +46,10 @@ final class Catalog
             $p('voice_500', 'voice', 'Voice 500 minutes', 'About 500 call minutes to SA numbers', 445, 445, 1),
             $p('ai_500', 'ai', 'AI R500', 'Credit for Claude and GPT usage', 500, 500, 1),
             $p('ai_2500', 'ai', 'AI R2,500', 'R2,500 of credit for R2,375', 2375, 2500, 2),
+            $p('qr_10', 'qr', '10 QR codes', 'R200 of credit for R180 (R18 a code)', 180, 200, 1),
+            $p('qr_50', 'qr', '50 QR codes', 'R1,000 of credit for R850 (R17 a code)', 850, 1000, 2),
+            $p('store_1k', 'stores', 'Store SMS 1,000', 'About 1,000 order SMS at R0.50', 500, 500, 1),
+            $p('store_5k', 'stores', 'Store SMS 5,000', 'R2,500 of credit for R2,250 (R0.45 an SMS)', 2250, 2500, 2),
         ];
     }
 
@@ -71,6 +75,8 @@ final class Catalog
             $r('verify_business', 'verify', 'Company (CIPC) check', 16.00, 7.00, 'per check'),
             $r('verify_bank', 'verify', 'Bank account verification', 6.50, 2.50, 'per check'),
             $r('voice_minute', 'voice', 'Voice call to SA numbers', 0.89, 0.45, 'per started minute'),
+            $r('qr_code', 'qr', 'QR code', 20.00, 0.00, 'per code'),
+            $r('store_sms', 'stores', 'Store SMS (Shopify, WooCommerce and more)', 0.50, 0.19, 'per SMS'),
         ];
     }
 
@@ -305,6 +311,47 @@ final class Catalog
                 ],
                 'events' => ['desk.ticket_created', 'desk.handover'],
                 'sandbox' => 'Sandbox tickets are created in your inbox with a "sandbox" tag and no email is sent.',
+            ],
+            'qr' => [
+                'name' => 'QR Codes', 'icon' => 'qr', 'status' => 'live', 'units' => ['qr_code'],
+                'summary' => 'Paste a link, get a QR code for print, packaging and signage. Change where it points later and see how often it is scanned.',
+                'intro' => 'Each code costs R20 once, charged from your credit when it is created. Dynamic codes point to a short seageek.co.za link, so you can change the destination without reprinting and every scan is counted. Static codes hold the link itself and can never change.',
+                'endpoints' => [
+                    ['POST', '/v1/qr/codes', 'Create a QR code', 'Creates the code and returns links to PNG and SVG images you can download or embed.',
+                        [$p('url', 'string', true, 'Where the code should send people. Must start with https:// or http://.'),
+                         $p('name', 'string', false, 'Your label, e.g. "Menu table cards".'),
+                         $p('dynamic', 'boolean', false, 'true (default) for an editable short link with scan counts; false to encode the URL itself.'),
+                         $p('color', 'string', false, 'Dark colour as a hex value. Default #0b1f27. Keep it dark on a light background so phones can read it.'),
+                         $p('reference', 'string', false, 'Your own reference.')],
+                        ['url' => 'https://kasibites.co.za/menu', 'name' => 'Table cards', 'dynamic' => true],
+                        ['id' => 'qr_7Hc2Lp9Wd4', 'name' => 'Table cards', 'url' => 'https://kasibites.co.za/menu', 'short_url' => 'https://www.seageek.co.za/q/K7d2Pq', 'dynamic' => true, 'scans' => 0, 'amount' => 20, 'currency' => 'ZAR', 'image_png' => 'https://www.seageek.co.za/qr/i/K7d2Pq.png?s=...', 'image_svg' => 'https://www.seageek.co.za/qr/i/K7d2Pq.svg?s=...']],
+                    ['GET', '/v1/qr/codes', 'List QR codes', 'Newest first, up to 100.', [], null,
+                        ['data' => [['id' => 'qr_7Hc2Lp9Wd4', 'name' => 'Table cards', 'scans' => 412, 'status' => 'active']]]],
+                    ['GET', '/v1/qr/codes/{id}', 'Get a QR code', 'The code, its destination and scan count.', [], null,
+                        ['id' => 'qr_7Hc2Lp9Wd4', 'url' => 'https://kasibites.co.za/menu', 'scans' => 412, 'last_scan_at' => '2026-11-18T19:02:11+00:00']],
+                    ['POST', '/v1/qr/codes/{id}', 'Update a QR code', 'Change the destination of a dynamic code, rename it, or pause it. Free.',
+                        [$p('url', 'string', false, 'New destination (dynamic codes only).'), $p('name', 'string', false, 'New label.'), $p('status', 'string', false, 'active or paused. Paused codes show a short notice instead of redirecting.')],
+                        ['url' => 'https://kasibites.co.za/summer-menu'],
+                        ['id' => 'qr_7Hc2Lp9Wd4', 'url' => 'https://kasibites.co.za/summer-menu', 'status' => 'active']],
+                ],
+                'events' => [],
+                'sandbox' => 'Sandbox codes work and redirect like live ones but are free and say "sandbox" in their name. Use them to test your print workflow.',
+            ],
+            'stores' => [
+                'name' => 'Store SMS', 'icon' => 'store', 'status' => 'live', 'units' => ['store_sms'],
+                'summary' => 'Order updates by SMS for Shopify, WooCommerce and any online store, with no code. Connect your store and pick which messages to send.',
+                'intro' => 'You connect a store once by pasting a SeaGeek link into your store settings. From then on your customers get an SMS when they order, when payment clears, when the parcel ships and if they leave items in their cart. Each SMS costs R0.50. Customers who agree to marketing are added to a contact list you can send campaigns to.',
+                'endpoints' => [
+                    ['POST', '/hooks/store/{token}', 'Send a store event (any platform)', 'For platforms other than Shopify and WooCommerce. Your store calls this link when something happens to an order. The link is shown when you connect the store and already identifies your account, so no API key is needed. Sign the body with your store secret if your platform can.',
+                        [$p('event', 'string', true, 'order.created, order.paid, order.shipped, order.cancelled, order.refunded or checkout.abandoned.'),
+                         $p('order', 'object', true, 'number (shown to the customer), total and currency. tracking_url for order.shipped. refund_amount for order.refunded.'),
+                         $p('customer', 'object', true, 'first_name and phone. accepts_marketing true adds them to your marketing list.'),
+                         $p('checkout_url', 'string', false, 'For checkout.abandoned: where the customer finishes their order.')],
+                        ['event' => 'order.shipped', 'order' => ['number' => '1042', 'total' => '899.00', 'currency' => 'ZAR', 'tracking_url' => 'https://track.example.co.za/1042'], 'customer' => ['first_name' => 'Thandi', 'phone' => '0821234567', 'accepts_marketing' => true]],
+                        ['received' => true, 'status' => 'sent', 'message_id' => 'msg_2Rf7Kd1Lm9']],
+                ],
+                'events' => [],
+                'sandbox' => 'Use "Send a test order" on the store page. It runs your templates against a sample order and shows the SMS without sending or charging.',
             ],
             'notify' => [
                 'name' => 'Notify', 'icon' => 'notify', 'status' => 'planned', 'units' => [],

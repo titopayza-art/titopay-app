@@ -28,6 +28,18 @@ final class Router
     }
 }
 
+/** What the credit balance buys at this account's prices, e.g. ['sms' => 54275, 'store_sms' => 31480, 'qr' => 787, 'email' => ...]. */
+function balance_units(array $org): array
+{
+    $bal = max(0.0, (float) $org['balance']);
+    $out = [];
+    foreach (['sms' => 'sms', 'store_sms' => 'store_sms', 'qr' => 'qr_code', 'email' => 'email', 'verify' => 'verify_id'] as $k => $unit) {
+        $p = Billing::price($org, $unit)['price'];
+        $out[$k] = $p > 0 ? (int) floor($bal / $p + 1e-9) : 0;
+    }
+    return $out;
+}
+
 function service_names(): array
 {
     return array_map(fn($s) => $s['name'], Catalog::services());
@@ -285,7 +297,7 @@ $r->add('GET|POST', '/reset/{token}', function ($token) {
         DB::run('DELETE FROM sessions WHERE data LIKE ?', ['%"uid";i:' . $uid . ';%']);
         Auth::login($uid);
         flash('ok', 'Password changed.');
-        redirect('/dashboard');
+        redirect(DB::value('SELECT is_admin FROM users WHERE id = ?', [$uid]) ? '/admin' : '/dashboard');
     }
     render('auth/reset', ['title' => 'Choose a new password', 'token' => $token], 'auth');
 });
@@ -606,7 +618,7 @@ $r->add('GET', '/admin', function () {
         'signups' => DB::all('SELECT o.*, (SELECT email FROM users WHERE org_id = o.id ORDER BY id LIMIT 1) email FROM orgs o WHERE is_house = 0 ORDER BY id DESC LIMIT 6')], 'app');
 });
 $r->add('GET', '/admin/orgs', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('customers');
     $q = trim((string) ($_GET['q'] ?? ''));
     $st = (string) ($_GET['status'] ?? '');
     $where = 'o.is_house = 0';
@@ -616,12 +628,13 @@ $r->add('GET', '/admin/orgs', function () {
     render('admin/orgs', ['title' => 'Customers', 'q' => $q, 'st' => $st, 'orgs' => DB::all("SELECT o.*, (SELECT email FROM users WHERE org_id = o.id ORDER BY id LIMIT 1) email, (SELECT COALESCE(SUM(amount),0) FROM messages m WHERE m.org_id = o.id AND m.env = 'live' AND m.created_at >= ?) month_usage FROM orgs o WHERE $where ORDER BY o.id DESC LIMIT 300", array_merge([gmdate('Y-m-01 00:00:00')], $args))], 'app');
 });
 $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
-    Auth::requireAdmin();
+    Auth::requireAdmin('customers');
     $org = DB::one('SELECT * FROM orgs WHERE id = ?', [(int) $id]);
     if (!$org) redirect('/admin/orgs');
     if (is_post()) {
         csrf_check();
         $a = (string) input('action');
+        if (in_array($a, ['adjust', 'eft', 'limits'], true) && !Auth::can('billing')) { flash('error', 'Changing balances, limits and payments needs the Money permission.'); redirect('/admin/orgs/' . $org['id']); }
         $set = fn(array $d, string $msg) => [DB::update('orgs', $d, 'id = ?', [$org['id']]), audit('admin.' . $a, (int) $org['id'], json_encode($d)), flash('ok', $msg)];
         match ($a) {
             'lock' => $set(['status' => 'locked', 'locked_reason' => mb_substr((string) input('reason'), 0, 200) ?: 'Paused by SeaGeek'], 'Account locked.'),
@@ -671,11 +684,11 @@ $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
 });
 $r->add('POST', '/admin/stop-acting', function () { csrf_check(); unset($_SESSION['act_as_org']); redirect('/admin'); });
 $r->add('GET', '/admin/partners', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('partners');
     render('admin/partners', ['title' => 'Partners', 'partners' => DB::all("SELECT p.*, (SELECT COUNT(*) FROM messages m WHERE m.partner_id = p.id AND m.created_at >= ?) month_count, (SELECT COALESCE(SUM(cost),0) FROM messages m WHERE m.partner_id = p.id AND m.created_at >= ?) month_cost FROM partners p ORDER BY service, priority", [gmdate('Y-m-01 00:00:00'), gmdate('Y-m-01 00:00:00')])], 'app');
 });
 $r->add('GET|POST', '/admin/partners/{id}', function ($id) {
-    Auth::requireAdmin();
+    Auth::requireAdmin('partners');
     $p = $id === 'new' ? ['id' => 0, 'name' => '', 'service' => 'sms', 'driver' => 'http', 'priority' => 10, 'active' => 0, 'config_enc' => null, 'last_error' => null, 'last_ok_at' => null, 'fail_count' => 0] : DB::one('SELECT * FROM partners WHERE id = ?', [(int) $id]);
     if (!$p) redirect('/admin/partners');
     if (is_post()) {
@@ -702,7 +715,7 @@ $r->add('GET|POST', '/admin/partners/{id}', function ($id) {
     render('admin/partner', ['title' => $p['name'] ?: 'New partner', 'p' => $p, 'cfg' => $p['id'] ? Partners::config($p) : []], 'app');
 });
 $r->add('GET|POST', '/admin/pricing', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('pricing');
     if (is_post()) {
         csrf_check();
         foreach ((array) ($_POST['rate'] ?? []) as $unit => $v) DB::update('rates', ['price' => max(0, (float) $v['price']), 'cost' => max(0, (float) $v['cost'])], 'unit = ?', [$unit]);
@@ -720,19 +733,26 @@ $r->add('GET|POST', '/admin/pricing', function () {
     render('admin/pricing', ['title' => 'Plans and pricing', 'plans' => DB::all('SELECT * FROM plans ORDER BY sort'), 'rates' => DB::all('SELECT * FROM rates ORDER BY service, unit'), 'models' => Catalog::aiModels(), 'packages' => DB::all('SELECT * FROM packages ORDER BY service, sort')], 'app');
 });
 $r->add('GET', '/admin/billing', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('billing');
     $st = (string) ($_GET['status'] ?? 'unpaid');
     render('admin/billing', ['title' => 'Invoices and payments', 'st' => $st,
         'invoices' => DB::all('SELECT i.*, o.name org FROM invoices i JOIN orgs o ON o.id = i.org_id' . ($st !== 'all' ? ' WHERE i.status = ?' : '') . ' ORDER BY i.id DESC LIMIT 200', $st !== 'all' ? [$st] : []),
         'payments' => DB::all('SELECT p.*, o.name org FROM payments p JOIN orgs o ON o.id = p.org_id ORDER BY p.id DESC LIMIT 50')], 'app');
 });
-$r->add('GET', '/admin/desk', function () { Auth::requireAdmin(); desk_inbox(Desk::house(), '/admin/desk'); });
-$r->add('GET|POST', '/admin/desk/{n}', function ($n) { Auth::requireAdmin(); desk_ticket(Desk::house(), '/admin/desk', (int) $n); });
-$r->add('GET|POST', '/admin/help-centre', function () { Auth::requireAdmin(); help_admin(Desk::house(), '/admin/help-centre'); });
+$r->add('GET', '/admin/desk', function () { Auth::requireAdmin('desk'); desk_inbox(Desk::house(), '/admin/desk'); });
+$r->add('GET|POST', '/admin/desk/{n}', function ($n) { Auth::requireAdmin('desk'); desk_ticket(Desk::house(), '/admin/desk', (int) $n); });
+$r->add('GET|POST', '/admin/help-centre', function () { Auth::requireAdmin('desk'); help_admin(Desk::house(), '/admin/help-centre'); });
 $r->add('GET|POST', '/admin/settings', function () {
-    Auth::requireAdmin();
+    $me = Auth::requireAdmin('settings');
     if (is_post()) {
         csrf_check();
+        if (input('action') === 'test_email') {
+            $to = filter_var(input('to'), FILTER_VALIDATE_EMAIL) ? (string) input('to') : $me['email'];
+            $html = view('emails/test', ['subject' => 'SeaGeek test email'], 'email');
+            [$ok, $err] = Mail::send($to, 'SeaGeek test email', $html, Mail::text($html));
+            $ok ? flash('ok', 'Test email sent to ' . $to . ' using ' . strtoupper(Mail::driver()) . '. Check the inbox and spam folder.') : flash('error', 'Sending failed (' . strtoupper(Mail::driver()) . '): ' . $err);
+            redirect('/admin/settings#email');
+        }
         foreach (array_keys(Settings::DEFAULTS) as $k) {
             if (!array_key_exists($k, $_POST) || $k === 'last_cron_at') continue;
             if (in_array($k, Settings::SECRET_KEYS, true) && $_POST[$k] === '') continue;
@@ -750,7 +770,7 @@ $r->add('GET|POST', '/admin/settings', function () {
     render('admin/settings', ['title' => 'Settings'], 'app');
 });
 $r->add('GET', '/admin/system', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('system');
     render('admin/system', ['title' => 'System', 'jobs' => DB::all('SELECT * FROM jobs ORDER BY name'), 'outbox' => DB::all('SELECT id, to_addr, subject, status, attempts, last_error, created_at FROM email_outbox ORDER BY id DESC LIMIT 25'),
         'audit' => DB::all('SELECT a.*, u.email FROM audit_log a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 40'),
         'webhooks' => DB::all("SELECT d.*, o.name org FROM webhook_deliveries d JOIN orgs o ON o.id = d.org_id WHERE d.status <> 'delivered' ORDER BY d.id DESC LIMIT 20"),
@@ -851,5 +871,6 @@ $r->add('GET', '/health', function () {
 });
 
 require APP_DIR . '/routes_commerce.php';
+require APP_DIR . '/routes_growth.php';
 
 return $r;

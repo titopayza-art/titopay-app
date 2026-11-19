@@ -1,2 +1,5 @@
-<p>Hi <?= e($user['name']) ?>,</p><p>Invoice <b><?= e($invoice['number']) ?></b> for <b><?= zar($invoice['total']) ?></b> is ready: <?= e($invoice['description']) ?>. It's due on <?= e(date('j F Y', strtotime($invoice['due_at']))) ?>.</p>
-<p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/dashboard/pay/' . $invoice['number'])) ?>">Pay now</a></p><p style="color:#5c7178;font-size:13px">Pay by card, Instant EFT or bank transfer. For bank transfers, use your customer number <b><?= e($org['customer_no']) ?></b> as the reference and we match it automatically.</p>
+<p style="margin:0 0 16px">Hi <?= e($user['name']) ?>,</p>
+<p style="margin:0 0 16px">Invoice <b><?= e($invoice['number']) ?></b> is ready. <?= e($invoice['description']) ?>.</p>
+<?= mail_details(['Invoice' => $invoice['number'], 'Amount' => zar($invoice['total']), 'Due' => date('j F Y', strtotime($invoice['due_at'])), 'EFT reference' => $org['customer_no']]) ?>
+<?= mail_button(app_url('/dashboard/pay/' . $invoice['number']), 'Pay ' . zar($invoice['total'])) ?>
+<?= mail_note('Pay by card, Instant EFT or bank transfer. For a bank transfer use your customer number <b>' . e($org['customer_no']) . '</b> as the reference and we match it automatically.') ?>

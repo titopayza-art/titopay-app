@@ -14,6 +14,8 @@ require __DIR__ . '/commerce.php';
 require __DIR__ . '/ai.php';
 require __DIR__ . '/desk.php';
 require __DIR__ . '/gateway.php';
+require __DIR__ . '/growth.php';
+require __DIR__ . '/docs.php';
 
 date_default_timezone_set('UTC');
 mb_internal_encoding('UTF-8');

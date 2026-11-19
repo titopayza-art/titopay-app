@@ -59,4 +59,18 @@
     svcForm.addEventListener("change", sync);
     sync();
   }
+
+  // Live SMS length counter: characters and how many SMS a message uses
+  var gsm = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-.\/0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà^{}\\\[~\]|€]*$/;
+  var countSms = function (t) {
+    var isGsm = gsm.test(t), len = t.length + (isGsm ? (t.match(/[\^{}\\\[~\]|€]/g) || []).length : 0);
+    var parts = isGsm ? (len <= 160 ? 1 : Math.ceil(len / 153)) : (len <= 70 ? 1 : Math.ceil(len / 67));
+    return len + " characters, " + parts + " SMS" + (isGsm ? "" : " (emoji or special characters use shorter SMS)");
+  };
+  document.querySelectorAll("textarea[data-sms-count='1']").forEach(function (ta) {
+    var out = ta.parentNode.querySelector("[data-sms-out]");
+    if (!out) return;
+    var upd = function () { out.textContent = countSms(ta.value); };
+    ta.addEventListener("input", upd); upd();
+  });
 })();

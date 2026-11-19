@@ -1,1 +1,4 @@
-<p style="white-space:pre-wrap"><?= e($body) ?></p><p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e(app_url('/t/' . $ticket['token'])) ?>">Reply or view the conversation</a></p><p style="color:#5c7178;font-size:13px">Request #<?= (int) $ticket['number'] ?> · <?= e($org['is_house'] ? 'SeaGeek' : $org['name']) ?></p>
+<?php $brand = $org['is_house'] ? null : $org['name']; ?>
+<div style="white-space:pre-wrap;margin:0 0 8px"><?= e($body) ?></div>
+<?= mail_button(app_url('/t/' . $ticket['token']), 'Reply or view the conversation') ?>
+<?= mail_note('Request #' . (int) $ticket['number'] . ' with ' . e($org['is_house'] ? 'SeaGeek' : $org['name']) . '.') ?>

@@ -34,7 +34,7 @@ final class Auth
         if (!self::$loaded) {
             self::$loaded = true;
             $id = $_SESSION['uid'] ?? null;
-            self::$user = $id ? DB::one('SELECT * FROM users WHERE id = ?', [$id]) : null;
+            self::$user = $id ? DB::one('SELECT * FROM users WHERE id = ? AND disabled_at IS NULL', [$id]) : null;
         }
         return self::$user;
     }
@@ -57,6 +57,7 @@ final class Auth
         if ($u && $u['locked_until'] && $u['locked_until'] > now()) {
             return 'Too many failed attempts. Try again in 15 minutes or reset your password.';
         }
+        if ($u && $u['disabled_at']) return 'This account has been switched off. Ask your administrator to turn it back on.';
         if (!$u || !password_verify($password, $u['password_hash'])) {
             if ($u) {
                 $fails = (int) $u['failed_logins'] + 1;
@@ -98,11 +99,20 @@ final class Auth
         return $u;
     }
 
-    public static function requireAdmin(): array
+    /** Staff only. With $perm, the staff member also needs that permission (see Staff::PERMISSIONS). */
+    public static function requireAdmin(?string $perm = null): array
     {
         $u = self::requireUser();
-        if (empty($u['is_admin'])) { http_response_code(403); exit('Not allowed.'); }
+        if (empty($u['is_admin']) || ($perm !== null && !Staff::can($u, $perm))) {
+            http_response_code(403);
+            render('admin/denied', ['title' => 'No access', 'perm' => $perm], empty($u['is_admin']) ? 'auth' : 'app');
+        }
         return $u;
+    }
+
+    public static function can(string $perm): bool
+    {
+        return Staff::can(self::user(), $perm);
     }
 
     /** One-time tokens for email verification and password reset. Only the hash is stored. */

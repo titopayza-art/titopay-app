@@ -157,7 +157,7 @@ $statementView = function (array $org) {
 };
 $r->add('GET', '/dashboard/statement', fn() => $statementView(require_org()));
 $r->add('GET', '/admin/orgs/{id}/statement', function ($id) use ($statementView) {
-    Auth::requireAdmin();
+    Auth::requireAdmin('customers');
     $org = DB::one('SELECT * FROM orgs WHERE id = ?', [(int) $id]) ?? redirect('/admin/orgs');
     $statementView($org);
 });
@@ -228,7 +228,7 @@ $r->add('GET|POST', '/dashboard/quotes/{number}', function ($number) {
 // ---------------------------------------------------------------------------
 
 $r->add('GET|POST', '/admin/eft', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('billing');
     $results = [];
     if (is_post()) {
         csrf_check();
@@ -267,12 +267,12 @@ $r->add('GET|POST', '/admin/eft', function () {
 });
 
 $r->add('GET', '/admin/quotes', function () {
-    Auth::requireAdmin();
+    Auth::requireAdmin('billing');
     render('admin/quotes', ['title' => 'Quotes', 'quotes' => DB::all('SELECT q.*, o.name org, o.customer_no FROM quotes q LEFT JOIN orgs o ON o.id = q.org_id ORDER BY q.id DESC LIMIT 200')], 'app');
 });
 
 $r->add('GET', '/admin/quotes/{number}', function ($number) {
-    Auth::requireAdmin();
+    Auth::requireAdmin('billing');
     $q = DB::one('SELECT * FROM quotes WHERE number = ?', [$number]) ?? redirect('/admin/quotes');
     $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$q['org_id']]) ?? redirect('/admin/quotes');
     render('dash/quote', ['title' => 'Quote ' . $q['number'], 'org' => $org, 'q' => $q, 'items' => json_decode($q['items'], true) ?: [],
@@ -280,7 +280,7 @@ $r->add('GET', '/admin/quotes/{number}', function ($number) {
 });
 
 $r->add('GET', '/admin/invoices/{number}', function ($number) {
-    Auth::requireAdmin();
+    Auth::requireAdmin('billing');
     $inv = DB::one('SELECT * FROM invoices WHERE number = ?', [$number]) ?? redirect('/admin/billing');
     $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$inv['org_id']]);
     render('dash/invoice', ['title' => 'Invoice ' . $inv['number'], 'inv' => $inv, 'org' => $org, 'items' => Billing::items((int) $inv['id']),

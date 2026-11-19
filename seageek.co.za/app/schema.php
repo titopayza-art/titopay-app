@@ -110,6 +110,32 @@ final class Schema
                 "CREATE INDEX quotes_org ON quotes (org_id, id)",
                 "CREATE TABLE bank_lines (id {PK}, hash VARCHAR(64) NOT NULL UNIQUE, posted_on VARCHAR(10), reference VARCHAR(160), amount {MONEY} NOT NULL, org_id {ID}, invoice_id {ID}, status VARCHAR(20) NOT NULL, note VARCHAR(255), created_at {TS} NOT NULL){ENGINE}",
             ],
+            3 => [
+                "ALTER TABLE email_outbox ADD COLUMN headers {TEXT}",
+                "ALTER TABLE users ADD COLUMN admin_role VARCHAR(30)",
+                "ALTER TABLE users ADD COLUMN permissions {TEXT}",
+                "ALTER TABLE users ADD COLUMN disabled_at {TS}",
+                "UPDATE users SET admin_role = 'owner' WHERE is_admin = 1",
+                "CREATE TABLE qr_codes (id {PK}, public_id VARCHAR(30) NOT NULL UNIQUE, org_id {ID} NOT NULL, code VARCHAR(16) NOT NULL UNIQUE, name VARCHAR(120), target_url VARCHAR(2000) NOT NULL, dynamic INTEGER NOT NULL DEFAULT 1, color VARCHAR(7) NOT NULL DEFAULT '#0b1f27', env VARCHAR(10) NOT NULL DEFAULT 'live', amount {MONEY} NOT NULL DEFAULT 0, status VARCHAR(20) NOT NULL DEFAULT 'active', scans INTEGER NOT NULL DEFAULT 0, last_scan_at {TS}, created_at {TS} NOT NULL, updated_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX qr_codes_org ON qr_codes (org_id, id)",
+                "CREATE TABLE qr_scans (id {PK}, qr_id {ID} NOT NULL, device VARCHAR(20), created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX qr_scans_qr ON qr_scans (qr_id, created_at)",
+                "CREATE TABLE stores (id {PK}, public_id VARCHAR(30) NOT NULL UNIQUE, org_id {ID} NOT NULL, platform VARCHAR(20) NOT NULL, name VARCHAR(120) NOT NULL, domain VARCHAR(190), token VARCHAR(48) NOT NULL UNIQUE, secret_enc {TEXT}, status VARCHAR(20) NOT NULL DEFAULT 'active', settings {TEXT}, list_id {ID}, events_received INTEGER NOT NULL DEFAULT 0, sms_sent INTEGER NOT NULL DEFAULT 0, last_event_at {TS}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX stores_org ON stores (org_id)",
+                "CREATE TABLE store_events (id {PK}, store_id {ID} NOT NULL, topic VARCHAR(40) NOT NULL, dedupe VARCHAR(160) NOT NULL, order_ref VARCHAR(60), phone VARCHAR(30), status VARCHAR(20) NOT NULL, note VARCHAR(255), message_id VARCHAR(30), send_at {TS}, payload {TEXT}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE UNIQUE INDEX store_events_dedupe ON store_events (store_id, dedupe)",
+                "CREATE INDEX store_events_store ON store_events (store_id, id)",
+                "CREATE TABLE contact_lists (id {PK}, org_id {ID} NOT NULL, name VARCHAR(120) NOT NULL, kind VARCHAR(20) NOT NULL DEFAULT 'static', created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX contact_lists_org ON contact_lists (org_id)",
+                "CREATE TABLE contacts (id {PK}, org_id {ID} NOT NULL, list_id {ID} NOT NULL, name VARCHAR(160), phone VARCHAR(30), email VARCHAR(190), source VARCHAR(30), created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX contacts_list ON contacts (list_id, id)",
+                "CREATE TABLE opt_outs (org_id {ID} NOT NULL, channel VARCHAR(10) NOT NULL, address VARCHAR(190) NOT NULL, reason VARCHAR(60), created_at {TS} NOT NULL, PRIMARY KEY (org_id, channel, address)){ENGINE}",
+                "CREATE TABLE message_templates (id {PK}, org_id {ID} NOT NULL, channel VARCHAR(10) NOT NULL, name VARCHAR(120) NOT NULL, subject VARCHAR(255), body {TEXT} NOT NULL, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE campaigns (id {PK}, public_id VARCHAR(30) NOT NULL UNIQUE, org_id {ID} NOT NULL, name VARCHAR(160) NOT NULL, channel VARCHAR(10) NOT NULL, list_id {ID}, audience VARCHAR(30), subject VARCHAR(255), body {TEXT} NOT NULL, button_label VARCHAR(60), button_url VARCHAR(500), status VARCHAR(20) NOT NULL DEFAULT 'draft', scheduled_at {TS}, started_at {TS}, finished_at {TS}, total INTEGER NOT NULL DEFAULT 0, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, cost {MONEY} NOT NULL DEFAULT 0, created_by {ID}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX campaigns_org ON campaigns (org_id, id)",
+                "CREATE TABLE campaign_recipients (id {PK}, campaign_id {ID} NOT NULL, name VARCHAR(160), address VARCHAR(190) NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', message_id VARCHAR(30), error VARCHAR(255), updated_at {TS}){ENGINE}",
+                "CREATE INDEX campaign_recipients_c ON campaign_recipients (campaign_id, status, id)",
+            ],
         ];
     }
 
@@ -146,6 +172,9 @@ final class Schema
         // Accounts that already used a service keep it switched on
         foreach (DB::all("SELECT DISTINCT org_id, service FROM messages WHERE env = 'live'") as $u) {
             Services::activate((int) $u['org_id'], (string) $u['service']);
+        }
+        if ($house = DB::one('SELECT id FROM orgs WHERE is_house = 1')) {
+            foreach (array_keys(Services::sellable()) as $svc) if (Services::status((int) $house['id'], $svc) !== 'active') Services::activate((int) $house['id'], $svc, true);
         }
         foreach (Catalog::plans() as $p) {
             if (!DB::one('SELECT code FROM plans WHERE code = ?', [$p['code']])) {

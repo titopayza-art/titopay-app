@@ -198,7 +198,7 @@ final class Settings
 {
     private static ?array $cache = null;
 
-    public const SECRET_KEYS = ['payfast_merchant_key', 'payfast_passphrase', 'anthropic_api_key', 'openai_api_key'];
+    public const SECRET_KEYS = ['payfast_merchant_key', 'payfast_passphrase', 'anthropic_api_key', 'openai_api_key', 'smtp_password'];
 
     public const DEFAULTS = [
         'company_name' => 'SeaGeek Technologies (Pty) Ltd',
@@ -207,6 +207,12 @@ final class Settings
         'support_email' => 'hello@seageek.co.za',
         'mail_from_name' => 'SeaGeek',
         'mail_from_address' => 'hello@seageek.co.za',
+        'mail_driver' => 'auto',
+        'smtp_host' => '',
+        'smtp_port' => '587',
+        'smtp_encryption' => 'tls',
+        'smtp_username' => '',
+        'smtp_password' => '',
         'vat_registered' => '0',
         'vat_number' => '',
         'vat_rate' => '15',
@@ -439,47 +445,121 @@ final class Http
 // Email: everything goes through a queue; cron delivers it.
 // ---------------------------------------------------------------------------
 
+/** Email building blocks. Inline styles only, because most email clients ignore stylesheets. */
+function mail_button(string $url, string $label): string
+{
+    return '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 8px"><tr><td style="background:#0f8f80;border-radius:8px">'
+        . '<a href="' . e($url) . '" style="display:inline-block;padding:13px 24px;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px">' . e($label) . '</a></td></tr></table>';
+}
+
+/** Label and value rows, e.g. Reference, Amount. */
+function mail_details(array $rows): string
+{
+    $h = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 4px;border-top:1px solid #e3e9eb">';
+    foreach ($rows as $label => $value) {
+        $h .= '<tr><td style="padding:11px 0;border-bottom:1px solid #e3e9eb;color:#5b6f76;font-size:15px;width:42%">' . e($label) . '</td>'
+            . '<td style="padding:11px 0;border-bottom:1px solid #e3e9eb;color:#14262d;font-size:15px;font-weight:600;text-align:right">' . e((string) $value) . '</td></tr>';
+    }
+    return $h . '</table>';
+}
+
+function mail_note(string $html): string
+{
+    return '<p style="margin:18px 0 0;font-size:14px;line-height:1.6;color:#5b6f76">' . $html . '</p>';
+}
+
 final class Mail
 {
-    public static function queue(string $to, string $subject, string $template, array $data = []): void
+    public static function queue(string $to, string $subject, string $template, array $data = [], array $headers = []): void
     {
         $data['subject'] = $subject;
         $html = view('emails/' . $template, $data, 'email');
         DB::insert('email_outbox', [
-            'to_addr' => $to, 'subject' => $subject, 'html' => $html,
-            'text_body' => trim(html_entity_decode(strip_tags(preg_replace('/<(br|\/p|\/h\d|\/li|\/tr)>/i', "\n", $html)))),
+            'to_addr' => $to, 'subject' => $subject, 'html' => $html, 'text_body' => self::text($html),
+            'headers' => $headers ? json_encode($headers) : null,
             'status' => 'queued', 'attempts' => 0, 'created_at' => now(),
         ]);
     }
 
-    /** Send queued mail. Uses the active Amazon SES partner if configured, otherwise PHP mail(). */
+    /** Plain-text version of an HTML email. */
+    public static function text(string $html): string
+    {
+        $html = preg_replace('/<(style|title)[^>]*>.*?<\/\1>/is', '', $html);
+        $html = preg_replace('/<a [^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/is', '$2 ($1)', $html);
+        $t = html_entity_decode(strip_tags(preg_replace('/<(br|\/p|\/h\d|\/li|\/tr|\/div)>/i', "\n", $html)), ENT_QUOTES, 'UTF-8');
+        return trim(preg_replace("/\n{3,}/", "\n\n", preg_replace('/[ \t]+/', ' ', $t)));
+    }
+
+    /** Which way mail leaves: smtp, ses (the active Amazon SES partner), mail (PHP mail()) or log (kept in the outbox only). */
+    public static function driver(): string
+    {
+        $d = Settings::get('mail_driver');
+        if ($d === 'auto' || $d === '') {
+            if (Settings::get('smtp_host') !== '') return 'smtp';
+            return Partners::firstActive('mail', 'ses') ? 'ses' : 'mail';
+        }
+        return $d;
+    }
+
+    /** Send one message now. Returns [ok, error]. */
+    public static function send(string $to, string $subject, string $html, string $text = '', array $headers = []): array
+    {
+        $fromName = Settings::get('mail_from_name');
+        $fromAddr = Settings::get('mail_from_address');
+        $replyTo = Settings::get('support_email');
+        try {
+            switch (self::driver()) {
+                case 'log':
+                    return [true, ''];
+                case 'smtp':
+                    $m = new \PHPMailer\PHPMailer\PHPMailer(true);
+                    $m->isSMTP();
+                    $m->Host = Settings::get('smtp_host');
+                    $m->Port = (int) (Settings::get('smtp_port') ?: 587);
+                    $enc = Settings::get('smtp_encryption');
+                    $m->SMTPSecure = $enc === 'ssl' ? \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS : ($enc === 'tls' ? \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS : '');
+                    $m->SMTPAutoTLS = $enc !== 'none';
+                    if (Settings::get('smtp_username') !== '') {
+                        $m->SMTPAuth = true;
+                        $m->Username = Settings::get('smtp_username');
+                        $m->Password = Settings::get('smtp_password');
+                    }
+                    $m->Timeout = 15;
+                    $m->CharSet = 'UTF-8';
+                    $m->setFrom($fromAddr, $fromName);
+                    $m->addReplyTo($replyTo);
+                    $m->addAddress($to);
+                    foreach ($headers as $k => $v) $m->addCustomHeader($k, $v);
+                    $m->isHTML(true);
+                    $m->Subject = $subject;
+                    $m->Body = $html;
+                    $m->AltBody = $text ?: self::text($html);
+                    $m->send();
+                    return [true, ''];
+                case 'ses':
+                    $ses = Partners::firstActive('mail', 'ses');
+                    if (!$ses) return [false, 'No active Amazon SES partner'];
+                    $res = Adapters::sesSend($ses, ['from' => sprintf('%s <%s>', $fromName, $fromAddr), 'to' => [$to], 'subject' => $subject, 'html' => $html, 'text' => $text]);
+                    return [(bool) $res['ok'], (string) ($res['error'] ?? '')];
+                default:
+                    $h = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: " . mb_encode_mimeheader($fromName) . " <$fromAddr>\r\nReply-To: $replyTo";
+                    foreach ($headers as $k => $v) $h .= "\r\n$k: $v";
+                    $ok = @mail($to, mb_encode_mimeheader($subject), $html, $h);
+                    return [$ok, $ok ? '' : 'mail() returned false. Set up SMTP under Admin, Settings, Email delivery.'];
+            }
+        } catch (Throwable $e) {
+            return [false, $e->getMessage()];
+        }
+    }
+
+    /** Send queued mail, retrying up to five times. */
     public static function deliver(int $limit = 50): int
     {
         $sent = 0;
         $rows = DB::all("SELECT * FROM email_outbox WHERE status = 'queued' AND attempts < 5 ORDER BY id LIMIT " . (int) $limit);
         foreach ($rows as $m) {
-            $fromName = Settings::get('mail_from_name');
-            $fromAddr = Settings::get('mail_from_address');
-            $ok = false;
-            $error = '';
-            $ses = Partners::firstActive('mail', 'ses');
-            try {
-                if ($ses) {
-                    $res = Adapters::sesSend($ses, [
-                        'from' => sprintf('%s <%s>', $fromName, $fromAddr), 'to' => [$m['to_addr']],
-                        'subject' => $m['subject'], 'html' => $m['html'], 'text' => $m['text_body'],
-                    ]);
-                    $ok = $res['ok'];
-                    $error = $res['error'] ?? '';
-                } else {
-                    $headers = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: " .
-                        mb_encode_mimeheader($fromName) . " <$fromAddr>\r\nReply-To: " . Settings::get('support_email');
-                    $ok = @mail($m['to_addr'], mb_encode_mimeheader($m['subject']), $m['html'], $headers);
-                    if (!$ok) $error = 'mail() returned false';
-                }
-            } catch (Throwable $e) {
-                $error = $e->getMessage();
-            }
+            $headers = json_decode((string) ($m['headers'] ?? ''), true) ?: [];
+            [$ok, $error] = self::send($m['to_addr'], $m['subject'], $m['html'], (string) $m['text_body'], $headers);
             DB::update('email_outbox', [
                 'status' => $ok ? 'sent' : ((int) $m['attempts'] + 1 >= 5 ? 'failed' : 'queued'),
                 'attempts' => (int) $m['attempts'] + 1, 'last_error' => mb_substr($error, 0, 500),

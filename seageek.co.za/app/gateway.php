@@ -74,11 +74,25 @@ final class Gateway
     /** Run an API request on behalf of a signed-in customer (dashboard "Try it" console). Sandbox only. */
     public static function internal(array $org, string $method, string $path, array $body): array
     {
-        self::$ctx = ['org' => $org, 'env' => 'test', 'key' => ['id' => 0], 'body' => $body, 'plan' => Billing::plan($org)];
+        return self::run($org, 'test', $method, $path, $body);
+    }
+
+    /**
+     * Run an API call from inside the platform (store SMS, campaigns): same validation, billing,
+     * partner routing and records as the public API. $extra can set sms_unit for store SMS pricing.
+     */
+    public static function run(array $org, string $env, string $method, string $path, array $body, array $extra = []): array
+    {
+        $saved = self::$ctx;
+        self::$ctx = ['org' => $org, 'env' => $env === 'live' ? 'live' : 'test', 'key' => ['id' => 0], 'body' => $body, 'plan' => Billing::plan($org)] + $extra;
         try {
             return self::route($method, $path);
         } catch (ApiError | AiError $e) {
             return [$e->status, ['error' => ['type' => $e->type, 'message' => $e->getMessage()]]];
+        } catch (InsufficientFunds) {
+            return [402, ['error' => ['type' => 'insufficient_balance', 'message' => 'Your balance is too low for this request.']]];
+        } finally {
+            self::$ctx = $saved;
         }
     }
 
@@ -95,6 +109,7 @@ final class Gateway
             ['POST', '#^voice/calls$#', 'voiceCall'], ['GET', '#^voice/calls/([\w-]+)$#', 'getMessage'],
             ['POST', '#^ai/chat$#', 'aiChat'], ['GET', '#^ai/models$#', 'aiModels'], ['POST', '#^ai/agents/([\w-]+)/messages$#', 'aiAgent'],
             ['POST', '#^desk/tickets$#', 'deskCreate'], ['GET', '#^desk/tickets$#', 'deskList'], ['POST', '#^desk/tickets/(\d+)/replies$#', 'deskReply'],
+            ['POST', '#^qr/codes$#', 'qrCreate'], ['GET', '#^qr/codes$#', 'qrList'], ['GET', '#^qr/codes/([\w-]+)$#', 'qrGet'], ['POST', '#^qr/codes/([\w-]+)$#', 'qrUpdate'],
         ];
         $matchedPath = false;
         foreach ($routes as [$m, $re, $fn]) {
@@ -165,7 +180,8 @@ final class Gateway
 
     private static function charge(float $amount, string $ref, string $desc): void
     {
-        if (self::$ctx['env'] === 'live' && $amount > 0) Billing::charge((int) self::$ctx['org']['id'], $amount, 'usage', $ref, $desc);
+        // SeaGeek's own account (newsletters, support SMS) is internal use and is not charged.
+        if (self::$ctx['env'] === 'live' && $amount > 0 && empty(self::$ctx['org']['is_house'])) Billing::charge((int) self::$ctx['org']['id'], $amount, 'usage', $ref, $desc);
     }
 
     public static function present(array $m): array
@@ -321,20 +337,22 @@ final class Gateway
             $numbers[$norm] = true;
         }
         $seg = self::segments($body);
-        $rate = Billing::price($org, 'sms');
+        $unit = (self::$ctx['sms_unit'] ?? 'sms') === 'store_sms' ? 'store_sms' : 'sms';
+        $rate = Billing::price($org, $unit);
         $each = round($rate['price'] * $seg, 4);
         $total = round($each * count($numbers), 4);
         $batch = public_id('bat');
-        self::charge($total, $batch, 'SMS to ' . count($numbers) . ' recipient(s), ' . $seg . ' segment(s) each');
+        $charged = self::$ctx['env'] === 'live' && empty($org['is_house']);
+        self::charge($total, $batch, ($unit === 'store_sms' ? 'Store SMS' : 'SMS') . ' to ' . count($numbers) . ' recipient(s), ' . $seg . ' segment(s) each');
         $out = [];
         $sync = count($numbers) <= 10 && !$sendAt;
         foreach (array_keys($numbers) as $n) {
-            $m = self::record('sms', 'sms', $seg, self::$ctx['env'] === 'live' ? $each : 0, $rate['cost'] * $seg, $n, 'queued',
+            $m = self::record('sms', $unit, $seg, $charged ? $each : 0, $rate['cost'] * $seg, $n, 'queued',
                 ['segments' => $seg, 'batch' => $batch, 'send_at' => $sendAt, 'payload' => ['to' => $n, 'body' => $body, 'from' => (string) $from]], self::p('reference'));
             if ($sync) $m = self::dispatch($m);
             $out[] = ['id' => $m['public_id'], 'to' => $n, 'status' => $m['status'], 'segments' => $seg, 'amount' => (float) $m['amount']] + ($m['error'] ? ['error' => $m['error']] : []);
         }
-        return [202, ['data' => $out, 'total_amount' => self::$ctx['env'] === 'live' ? $total : 0, 'currency' => 'ZAR']];
+        return [202, ['data' => $out, 'total_amount' => $charged ? $total : 0, 'currency' => 'ZAR']];
     }
 
     // ---------------------------------------------------------------
@@ -629,5 +647,41 @@ final class Gateway
         $owner = DB::value("SELECT id FROM users WHERE org_id = ? ORDER BY id LIMIT 1", [self::$ctx['org']['id']]);
         Desk::agentReply($t, (int) $owner, (string) self::p('body', true), (bool) self::p('internal'), self::p('status'));
         return [200, Desk::publicTicket(Desk::ticket((int) $t['id']))];
+    }
+    // ---------------------------------------------------------------
+    // QR codes
+    // ---------------------------------------------------------------
+
+    private static function qrCreate(): array
+    {
+        $url = trim((string) self::p('url', true));
+        $color = (string) (self::p('color') ?: '#0b1f27');
+        if ($p = Qr::problem($url, $color)) throw new ApiError(422, 'invalid_parameter', $p);
+        $dynamic = self::p('dynamic') === null ? true : (bool) self::p('dynamic');
+        $qr = Qr::create(self::$ctx['org'], self::$ctx['env'], $url, (string) (self::p('name') ?? ''), $dynamic, $color, self::p('reference'));
+        return [201, Qr::present($qr)];
+    }
+
+    private static function qrList(): array
+    {
+        $rows = DB::all('SELECT * FROM qr_codes WHERE org_id = ? ORDER BY id DESC LIMIT 100', [self::$ctx['org']['id']]);
+        return [200, ['data' => array_map([Qr::class, 'present'], $rows)]];
+    }
+
+    private static function qrFind(string $id): array
+    {
+        $qr = DB::one('SELECT * FROM qr_codes WHERE public_id = ? AND org_id = ?', [$id, self::$ctx['org']['id']]);
+        if (!$qr) throw new ApiError(404, 'not_found', 'No QR code with that ID on your account.');
+        return $qr;
+    }
+
+    private static function qrGet(string $id): array
+    {
+        return [200, Qr::present(self::qrFind($id))];
+    }
+
+    private static function qrUpdate(string $id): array
+    {
+        return [200, Qr::present(Qr::update(self::qrFind($id), self::$ctx['body']))];
     }
 }

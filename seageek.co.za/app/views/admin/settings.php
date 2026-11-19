@@ -14,6 +14,14 @@
     <p class="muted small">Customers pay by EFT with their 6-digit customer number as the reference. Import your bank statement under Bank payments (EFT) and payments are matched to the right account automatically.</p>
   </div>
   <div class="stack">
+    <div class="panel form" id="email">
+      <h2>Email delivery</h2>
+      <p class="muted small">How the platform sends invoices, receipts, reminders, Desk replies and newsletters. Most hosts and Microsoft 365 or Google Workspace give you SMTP details. Amazon SES works too once the SES partner is active.</p>
+      <div class="row"><div class="field"><label>Send with</label><select name="mail_driver"><?php foreach (['auto' => 'Automatic (SMTP if set, else SES, else PHP mail)', 'smtp' => 'SMTP server', 'ses' => 'Amazon SES partner', 'mail' => 'PHP mail() on this server', 'log' => 'Do not send (keep in outbox, for testing)'] as $k => $label): ?><option value="<?= $k ?>" <?= Settings::get('mail_driver') === $k ? 'selected' : '' ?>><?= e($label) ?></option><?php endforeach; ?></select></div></div>
+      <div class="row"><div class="field"><label>SMTP host</label><input name="smtp_host" value="<?= $v('smtp_host') ?>" placeholder="smtp.example.co.za"></div><div class="field"><label>Port</label><input name="smtp_port" value="<?= $v('smtp_port') ?>" inputmode="numeric"></div><div class="field"><label>Security</label><select name="smtp_encryption"><?php foreach (['tls' => 'STARTTLS (587)', 'ssl' => 'SSL/TLS (465)', 'none' => 'None'] as $k => $label): ?><option value="<?= $k ?>" <?= Settings::get('smtp_encryption') === $k ? 'selected' : '' ?>><?= e($label) ?></option><?php endforeach; ?></select></div></div>
+      <div class="row"><div class="field"><label>Username</label><input name="smtp_username" value="<?= $v('smtp_username') ?>" autocomplete="off"></div><div class="field"><label>Password</label><input name="smtp_password" type="password" placeholder="<?= $saved('smtp_password') ?>" autocomplete="new-password"></div></div>
+      <p class="muted small">Now sending with: <b><?= e(strtoupper(Mail::driver())) ?></b>. Queued: <?= (int) DB::value("SELECT COUNT(*) FROM email_outbox WHERE status = 'queued'") ?>, failed: <?= (int) DB::value("SELECT COUNT(*) FROM email_outbox WHERE status = 'failed'") ?>.</p>
+    </div>
     <div class="panel form">
       <h2>PayFast</h2>
       <div class="row"><div class="field"><label>Mode</label><select name="payfast_mode"><option value="sandbox">Sandbox</option><option value="live" <?= Settings::get('payfast_mode') === 'live' ? 'selected' : '' ?>>Live</option></select></div><div class="field"><label>Merchant ID</label><input name="payfast_merchant_id" value="<?= $v('payfast_merchant_id') ?>"></div></div>
@@ -35,4 +43,9 @@
     </div>
     <button class="btn btn-primary">Save settings</button>
   </div>
+</form>
+
+<form method="post" class="panel" style="margin-top:14px" id="test-email"><?= csrf_field() ?><input type="hidden" name="action" value="test_email">
+  <div class="panel-head"><h2>Send a test email</h2><span class="muted">Save your settings first</span></div>
+  <div class="toolbar" style="margin:0"><input name="to" type="email" placeholder="<?= e(Auth::user()['email']) ?>" style="min-width:260px"><button class="btn btn-ghost btn-sm">Send test email</button></div>
 </form>

@@ -1,1 +1,4 @@
-<p>Hi <?= e($name) ?>,</p><p>Use this link to choose a new password. It works for one hour.</p><p><a style="display:inline-block;background:#5fe3cf;color:#031512;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none" href="<?= e($link) ?>">Reset password</a></p><p style="color:#5c7178;font-size:13px">If you didn't ask for this, ignore this email. Your password stays the same.</p>
+<p style="margin:0 0 16px">Hi <?= e($name) ?>,</p>
+<p style="margin:0 0 16px">Use the button below to choose a new password. The link works for one hour.</p>
+<?= mail_button($link, 'Reset password') ?>
+<?= mail_note('If you did not ask for this, ignore this email. Your password stays the same.') ?>

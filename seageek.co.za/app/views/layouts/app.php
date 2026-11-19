@@ -19,28 +19,48 @@ $openTickets = $isAdmin
 <div class="app">
   <aside class="side" id="side">
     <a class="brand" href="<?= $isAdmin ? '/admin' : '/dashboard' ?>"><?php require APP_DIR . '/views/partials/logo.php'; ?><span>SeaGeek<?= $isAdmin ? ' <small class="muted" style="font-weight:500;font-size:13px">Admin</small>' : '' ?></span></a>
-    <?php if ($isAdmin): ?>
+    <?php if ($isAdmin): $can = fn(string $p) => Staff::can($u, $p); ?>
       <a class="nav<?= $on('/admin', true) ?>" href="/admin"><?= icon('grid') ?>Overview</a>
-      <a class="nav<?= $on('/admin/orgs') ?>" href="/admin/orgs"><?= icon('users') ?>Customers</a>
+      <?php if ($can('customers')): ?><a class="nav<?= $on('/admin/orgs') ?>" href="/admin/orgs"><?= icon('users') ?>Customers</a><?php endif; ?>
+      <?php if ($can('desk')): ?>
       <a class="nav<?= $on('/admin/desk') ?>" href="/admin/desk"><?= icon('desk') ?>Support desk<?= $openTickets ? '<span class="badge">' . $openTickets . '</span>' : '' ?></a>
       <a class="nav<?= $on('/admin/help-centre') ?>" href="/admin/help-centre"><?= icon('book') ?>Help centre</a>
+      <?php endif; ?>
+      <?php if ($can('billing')): ?>
       <h6>Money</h6>
       <a class="nav<?= $on('/admin/billing') ?><?= $on('/admin/invoices') ?>" href="/admin/billing"><?= icon('card') ?>Invoices &amp; payments</a>
       <a class="nav<?= $on('/admin/eft') ?>" href="/admin/eft"><?= icon('bank') ?>Bank payments (EFT)<?= $eftWaiting ? '<span class="badge">' . $eftWaiting . '</span>' : '' ?></a>
       <a class="nav<?= $on('/admin/quotes') ?>" href="/admin/quotes"><?= icon('calc') ?>Quotes</a>
+      <?php endif; ?>
+      <?php if ($can('marketing')): ?>
+      <h6>Marketing</h6>
+      <a class="nav<?= $on('/admin/marketing', true) ?><?= $on('/admin/marketing/campaigns') ?>" href="/admin/marketing"><?= icon('megaphone') ?>Campaigns</a>
+      <a class="nav<?= $on('/admin/marketing/contacts') ?>" href="/admin/marketing/contacts"><?= icon('contacts') ?>Contacts</a>
+      <a class="nav<?= $on('/admin/marketing/qr') ?>" href="/admin/marketing/qr"><?= icon('qr') ?>QR codes</a>
+      <?php endif; ?>
+      <?php if ($can('partners') || $can('pricing')): ?>
       <h6>Reseller</h6>
-      <a class="nav<?= $on('/admin/partners') ?>" href="/admin/partners"><?= icon('plug') ?>Wholesale partners</a>
-      <a class="nav<?= $on('/admin/pricing') ?>" href="/admin/pricing"><?= icon('tag') ?>Plans, packages &amp; rates</a>
+      <?php if ($can('partners')): ?><a class="nav<?= $on('/admin/partners') ?>" href="/admin/partners"><?= icon('plug') ?>Wholesale partners</a><?php endif; ?>
+      <?php if ($can('pricing')): ?><a class="nav<?= $on('/admin/pricing') ?>" href="/admin/pricing"><?= icon('tag') ?>Plans, packages &amp; rates</a><?php endif; ?>
+      <?php endif; ?>
+      <?php if ($can('staff') || $can('settings') || $can('system')): ?>
       <h6>System</h6>
-      <a class="nav<?= $on('/admin/settings') ?>" href="/admin/settings"><?= icon('cog') ?>Settings</a>
-      <a class="nav<?= $on('/admin/system') ?>" href="/admin/system"><?= icon('server') ?>Jobs &amp; logs</a>
+      <?php if ($can('staff')): ?><a class="nav<?= $on('/admin/staff') ?>" href="/admin/staff"><?= icon('staff') ?>Staff &amp; permissions</a><?php endif; ?>
+      <?php if ($can('settings')): ?><a class="nav<?= $on('/admin/settings') ?>" href="/admin/settings"><?= icon('cog') ?>Settings</a><?php endif; ?>
+      <?php if ($can('system')): ?><a class="nav<?= $on('/admin/system') ?>" href="/admin/system"><?= icon('server') ?>Jobs &amp; logs</a><?php endif; ?>
+      <?php endif; ?>
     <?php else: ?>
       <a class="nav<?= $on('/dashboard', true) ?>" href="/dashboard"><?= icon('grid') ?>Overview</a>
       <a class="nav<?= $on('/dashboard/services') ?><?= $on('/dashboard/cart') ?>" href="/dashboard/services"><?= icon('box') ?>Services</a>
       <a class="nav<?= $on('/dashboard/keys') ?>" href="/dashboard/keys"><?= icon('key') ?>API keys</a>
       <a class="nav<?= $on('/dashboard/usage') ?>" href="/dashboard/usage"><?= icon('chart') ?>Usage &amp; logs</a>
-      <h6>Environments</h6>
-      <?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned' || $k === 'desk') continue; $act = ($svcStatus[$k] ?? 'inactive') === 'active'; ?>
+      <h6>No-code tools</h6>
+      <a class="nav<?= $on('/dashboard/stores') ?>" href="/dashboard/stores"><?= icon('store') ?>Store SMS</a>
+      <a class="nav<?= $on('/dashboard/campaigns') ?>" href="/dashboard/campaigns"><?= icon('megaphone') ?>Campaigns</a>
+      <a class="nav<?= $on('/dashboard/contacts') ?>" href="/dashboard/contacts"><?= icon('contacts') ?>Contacts</a>
+      <a class="nav<?= $on('/dashboard/qr') ?>" href="/dashboard/qr"><?= icon('qr') ?>QR codes</a>
+      <h6>API environments</h6>
+      <?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned' || in_array($k, ['desk', 'qr', 'stores'], true)) continue; $act = ($svcStatus[$k] ?? 'inactive') === 'active'; ?>
         <a class="nav<?= $on('/dashboard/service/' . $k) ?><?= $act ? '' : ' dim' ?>" href="/dashboard/service/<?= $k ?>"<?= $act ? '' : ' title="Not switched on: sandbox only"' ?>><?= icon($s['icon']) ?><?= e($s['name']) ?></a>
       <?php endforeach; ?>
       <h6>Desk</h6>
@@ -74,7 +94,7 @@ $openTickets = $isAdmin
       <div class="right-tools">
         <?php if ($o): ?>
           <span class="custno hide-sm" title="Your customer number. Use it as the reference for EFT payments.">Customer no. <b><?= e($o['customer_no']) ?></b></span>
-          <span class="muted small nowrap">Balance <b class="mono" style="color:var(--text)"><?= zar($o['balance']) ?></b></span>
+          <span class="bal nowrap" title="Your credit works for every service"><span class="muted">Credit</span> <b class="mono"><?= zar($o['balance']) ?></b><span class="muted hide-sm"> &middot; about <?= number_format(balance_units($o)['sms']) ?> SMS</span></span>
           <?php if ($cartCount): ?><a class="btn btn-ghost btn-sm cart-btn" href="/dashboard/cart" aria-label="Your order, <?= $cartCount ?> item(s)"><?= icon('cart') ?>Order<span class="n"><?= $cartCount ?></span></a><?php endif; ?>
           <a class="btn btn-primary btn-sm" href="/dashboard/billing#topup">Add credit</a>
         <?php elseif ($isAdmin): ?>
@@ -96,7 +116,7 @@ $openTickets = $isAdmin
     </div>
   </div>
 </div>
-<script src="/assets/js/dashboard.js?v=4" defer></script>
+<script src="/assets/js/dashboard.js?v=5" defer></script>
 <?php if (!$isAdmin): ?><script src="/assets/js/chat-widget.js?v=3" defer></script><?php endif; ?>
 </body>
 </html>
