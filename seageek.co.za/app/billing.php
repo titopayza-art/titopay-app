@@ -68,19 +68,42 @@ final class Billing
     }
 
     // ---------------------------------------------------------------
-    // Invoices
+    // Customer numbers, invoices, payments
     // ---------------------------------------------------------------
 
-    public static function createInvoice(array $org, string $kind, float $subtotal, string $description, ?string $planCode = null): array
+    /** A unique 6-digit customer number. It is also the account's EFT payment reference. */
+    public static function newCustomerNo(): string
     {
+        do {
+            $n = (string) random_int(100000, 999999);
+        } while (DB::one('SELECT id FROM orgs WHERE customer_no = ?', [$n]));
+        return $n;
+    }
+
+    /**
+     * Create an invoice. $items: list of [kind, ref, description, quantity, unit_price].
+     * kind: plan | package | topup | service. Without items, one line is made from the description.
+     */
+    public static function createInvoice(array $org, string $kind, float $subtotal, string $description, ?string $planCode = null, array $items = []): array
+    {
+        if (!$items) $items = [[$kind === 'plan' ? 'plan' : 'topup', $planCode, $description, 1, $subtotal]];
+        $subtotal = round(array_sum(array_map(fn($i) => (float) $i[3] * (float) $i[4], $items)), 2);
         $vat = Settings::get('vat_registered') === '1' ? round($subtotal * (float) Settings::get('vat_rate') / 100, 2) : 0.0;
         $seq = (int) DB::value('SELECT COUNT(*) FROM invoices') + 1001;
         $id = DB::insert('invoices', [
             'number' => 'SG-' . gmdate('Y') . '-' . str_pad((string) $seq, 6, '0', STR_PAD_LEFT), 'org_id' => $org['id'], 'kind' => $kind,
-            'description' => $description, 'subtotal' => $subtotal, 'vat' => $vat, 'total' => round($subtotal + $vat, 2), 'status' => 'unpaid',
-            'plan_code' => $planCode, 'due_at' => $kind === 'topup' ? now() : ts('+' . (int) Settings::get('invoice_due_days') . ' days'), 'created_at' => now(),
+            'description' => mb_substr($description, 0, 255), 'subtotal' => $subtotal, 'vat' => $vat, 'total' => round($subtotal + $vat, 2), 'status' => 'unpaid',
+            'plan_code' => $planCode, 'due_at' => $kind === 'plan' ? ts('+' . (int) Settings::get('invoice_due_days') . ' days') : now(), 'created_at' => now(),
         ]);
+        foreach ($items as [$k, $ref, $desc, $qty, $unit]) {
+            DB::insert('invoice_items', ['invoice_id' => $id, 'kind' => $k, 'ref' => $ref, 'description' => mb_substr((string) $desc, 0, 255), 'quantity' => (float) $qty, 'unit_price' => (float) $unit, 'amount' => round((float) $qty * (float) $unit, 2)]);
+        }
         return DB::one('SELECT * FROM invoices WHERE id = ?', [$id]);
+    }
+
+    public static function items(int $invoiceId): array
+    {
+        return DB::all('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id', [$invoiceId]);
     }
 
     /** Apply a payment. Idempotent: a paid invoice is never applied twice. */
@@ -91,28 +114,108 @@ final class Billing
             if (!$inv || $inv['status'] === 'paid') return false;
             DB::insert('payments', ['org_id' => $inv['org_id'], 'invoice_id' => $inv['id'], 'gateway' => $gateway, 'amount' => $amount, 'status' => 'complete', 'gateway_ref' => $gatewayRef, 'raw' => json_encode($raw), 'created_at' => now()]);
             DB::update('invoices', ['status' => 'paid', 'paid_at' => now()], 'id = ?', [$inv['id']]);
-            $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$inv['org_id']]);
-            if ($inv['kind'] === 'topup') {
-                self::credit((int) $org['id'], (float) $inv['subtotal'], 'topup', $inv['number'], 'Credit purchase');
-            } elseif ($inv['kind'] === 'plan') {
-                $plan = DB::one('SELECT * FROM plans WHERE code = ?', [$inv['plan_code']]);
-                $base = ($org['plan_code'] === $inv['plan_code'] && $org['plan_renews_at'] && $org['plan_renews_at'] > now()) ? $org['plan_renews_at'] : now();
-                DB::update('orgs', ['plan_code' => $inv['plan_code'], 'plan_renews_at' => gmdate('Y-m-d H:i:s', strtotime($base . ' +1 month'))], 'id = ?', [$org['id']]);
-                if ($plan && (float) $plan['included_credit'] > 0) {
-                    self::credit((int) $org['id'], (float) $plan['included_credit'], 'included', $inv['number'], $plan['name'] . ' plan usage credit');
+            $orgId = (int) $inv['org_id'];
+            foreach (self::items((int) $inv['id']) as $it) {
+                if ($it['kind'] === 'topup') {
+                    self::credit($orgId, (float) $it['amount'], 'topup', $inv['number'], $it['description']);
+                } elseif ($it['kind'] === 'package') {
+                    $pkg = DB::one('SELECT * FROM packages WHERE code = ?', [$it['ref']]);
+                    $credit = $pkg ? (float) $pkg['credit'] * (float) $it['quantity'] : (float) $it['amount'];
+                    self::credit($orgId, $credit, 'topup', $inv['number'], 'Credit from ' . $it['description'] . ($it['quantity'] > 1 ? ' x' . (float) $it['quantity'] : ''));
+                    if ($pkg) Services::activate($orgId, $pkg['service']);
+                } elseif ($it['kind'] === 'plan') {
+                    $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$orgId]);
+                    $plan = DB::one('SELECT * FROM plans WHERE code = ?', [$it['ref']]);
+                    if (!$plan) continue;
+                    $base = ($org['plan_code'] === $plan['code'] && $org['plan_renews_at'] && $org['plan_renews_at'] > now()) ? $org['plan_renews_at'] : now();
+                    DB::update('orgs', ['plan_code' => $plan['code'], 'plan_renews_at' => gmdate('Y-m-d H:i:s', strtotime($base . ' +1 month'))], 'id = ?', [$orgId]);
+                    if ((float) $plan['included_credit'] > 0) self::credit($orgId, (float) $plan['included_credit'], 'included', $inv['number'], $plan['name'] . ' plan usage credit');
                 }
             }
+            $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$orgId]);
             if ($org['status'] === 'locked' && str_starts_with((string) $org['locked_reason'], 'Unpaid')) {
-                $stillOverdue = DB::value("SELECT COUNT(*) FROM invoices WHERE org_id = ? AND status = 'unpaid' AND kind = 'plan' AND due_at < ?", [$org['id'], ts('-' . (int) Settings::get('lock_after_days') . ' days')]);
+                $stillOverdue = DB::value("SELECT COUNT(*) FROM invoices WHERE org_id = ? AND status = 'unpaid' AND kind = 'plan' AND due_at < ?", [$orgId, ts('-' . (int) Settings::get('lock_after_days') . ' days')]);
                 if (!$stillOverdue) {
-                    DB::update('orgs', ['status' => 'active', 'locked_reason' => null], 'id = ?', [$org['id']]);
-                    self::notifyOwners((int) $org['id'], 'Your SeaGeek account is active again', 'unlocked', []);
+                    DB::update('orgs', ['status' => 'active', 'locked_reason' => null], 'id = ?', [$orgId]);
+                    self::notifyOwners($orgId, 'Your SeaGeek account is active again', 'unlocked', []);
                 }
             }
-            self::maybeEnableLive((int) $org['id']);
-            self::notifyOwners((int) $org['id'], 'Payment received: ' . $inv['number'], 'receipt', ['invoice' => DB::one('SELECT * FROM invoices WHERE id = ?', [$inv['id']])]);
+            self::maybeEnableLive($orgId);
+            self::notifyOwners($orgId, 'Payment received: ' . $inv['number'], 'receipt', ['invoice' => DB::one('SELECT * FROM invoices WHERE id = ?', [$inv['id']])]);
             return true;
         });
+    }
+
+    /** Pay unpaid invoices, oldest first, from the credit balance where it covers them. */
+    public static function settleFromCredit(int $orgId): int
+    {
+        $n = 0;
+        foreach (DB::all("SELECT * FROM invoices WHERE org_id = ? AND status = 'unpaid' AND kind <> 'topup' ORDER BY due_at, id", [$orgId]) as $inv) {
+            $bal = (float) DB::value('SELECT balance FROM orgs WHERE id = ?', [$orgId]);
+            if ($bal < (float) $inv['total']) break;
+            self::charge($orgId, (float) $inv['total'], 'invoice', $inv['number'], 'Invoice ' . $inv['number'] . ' paid from credit');
+            self::markPaid((int) $inv['id'], 'credit', 'balance', (float) $inv['total']);
+            $n++;
+        }
+        return $n;
+    }
+
+    /**
+     * Apply one bank statement line. The 6-digit customer number in the reference identifies the account.
+     * Exact invoice amounts settle that invoice; anything else becomes credit on a paid top-up invoice,
+     * which then settles open invoices it covers. Every payment ends up on an invoice.
+     */
+    public static function applyBankLine(string $postedOn, string $reference, float $amount, int $lineNo = 0, ?int $forceOrgId = null): array
+    {
+        $hash = hash('sha256', $postedOn . '|' . strtoupper(trim($reference)) . '|' . number_format($amount, 2, '.', '') . '|' . $lineNo);
+        if ($existing = DB::one('SELECT * FROM bank_lines WHERE hash = ?', [$hash])) return $existing + ['duplicate' => true];
+        $org = null;
+        if ($forceOrgId) {
+            $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$forceOrgId]);
+        } elseif (preg_match_all('/(?<!\d)(\d{6})(?!\d)/', $reference, $m)) {
+            foreach ($m[1] as $candidate) {
+                if ($org = DB::one('SELECT * FROM orgs WHERE customer_no = ?', [$candidate])) break;
+            }
+        }
+        $line = ['hash' => $hash, 'posted_on' => mb_substr($postedOn, 0, 10), 'reference' => mb_substr($reference, 0, 160), 'amount' => $amount, 'org_id' => $org['id'] ?? null, 'invoice_id' => null, 'status' => 'unmatched', 'note' => null, 'created_at' => now()];
+        if (!$org || $amount <= 0) {
+            $line['note'] = $amount <= 0 ? 'Not a deposit' : 'No customer number found in the reference';
+            $line['id'] = DB::insert('bank_lines', $line);
+            return $line;
+        }
+        $ref = 'EFT ' . $postedOn . ' ' . mb_substr($reference, 0, 40);
+        $exact = DB::one("SELECT * FROM invoices WHERE org_id = ? AND status = 'unpaid' AND ABS(total - ?) < 0.01 ORDER BY due_at, id LIMIT 1", [$org['id'], $amount]);
+        if ($exact) {
+            self::markPaid((int) $exact['id'], 'eft', $ref, $amount);
+            $line['invoice_id'] = $exact['id'];
+            $line['note'] = 'Paid invoice ' . $exact['number'];
+        } else {
+            $vatRate = Settings::get('vat_registered') === '1' ? (float) Settings::get('vat_rate') : 0.0;
+            $net = round($amount / (1 + $vatRate / 100), 2);
+            $inv = self::createInvoice($org, 'topup', $net, 'Prepaid credit received by EFT', null, [['topup', null, 'Prepaid credit received by EFT', 1, $net]]);
+            self::markPaid((int) $inv['id'], 'eft', $ref, $amount);
+            $settled = self::settleFromCredit((int) $org['id']);
+            $line['invoice_id'] = $inv['id'];
+            $line['note'] = 'Credit ' . zar($net) . ' on ' . $inv['number'] . ($settled ? ", settled $settled open invoice(s)" : '');
+        }
+        $line['status'] = 'matched';
+        $line['id'] = DB::insert('bank_lines', $line);
+        return $line;
+    }
+
+    /** Statement for one calendar month: opening balance, every ledger entry, closing balance. */
+    public static function statement(int $orgId, string $month): array
+    {
+        $start = $month . '-01 00:00:00';
+        $end = gmdate('Y-m-d H:i:s', strtotime($start . ' +1 month'));
+        $opening = DB::one('SELECT balance_after FROM ledger WHERE org_id = ? AND created_at < ? ORDER BY id DESC LIMIT 1', [$orgId, $start]);
+        $rows = DB::all('SELECT * FROM ledger WHERE org_id = ? AND created_at >= ? AND created_at < ? ORDER BY id', [$orgId, $start, $end]);
+        $open = $opening ? (float) $opening['balance_after'] : 0.0;
+        $in = array_sum(array_map(fn($r) => max(0, (float) $r['amount']), $rows));
+        $out = array_sum(array_map(fn($r) => min(0, (float) $r['amount']), $rows));
+        $invoices = DB::all("SELECT * FROM invoices WHERE org_id = ? AND created_at >= ? AND created_at < ? AND status <> 'void' ORDER BY id", [$orgId, $start, $end]);
+        $due = (float) DB::value("SELECT COALESCE(SUM(total), 0) FROM invoices WHERE org_id = ? AND status = 'unpaid'", [$orgId]);
+        return ['opening' => $open, 'rows' => $rows, 'credits' => $in, 'debits' => $out, 'closing' => $rows ? (float) end($rows)['balance_after'] : $open, 'start' => $start, 'end' => $end, 'invoices' => $invoices, 'due' => $due];
     }
 
     /** Live keys switch on automatically once the email is verified, the profile is complete and a payment has cleared. */
@@ -166,8 +269,8 @@ final class Billing
         $fields = [
             'merchant_id' => Settings::get('payfast_merchant_id'),
             'merchant_key' => Settings::get('payfast_merchant_key'),
-            'return_url' => app_url('/dashboard/billing?paid=' . $invoice['number']),
-            'cancel_url' => app_url('/dashboard/billing?cancelled=1'),
+            'return_url' => app_url('/dashboard/pay/' . $invoice['number'] . '?paid=1'),
+            'cancel_url' => app_url('/dashboard/pay/' . $invoice['number'] . '?cancelled=1'),
             'notify_url' => app_url('/webhooks/payfast'),
             'name_first' => $names[0] ?? '',
             'name_last' => $names[1] ?? '',
@@ -367,6 +470,8 @@ final class Cron
                 DB::run('DELETE FROM rate_limits WHERE window_start < ?', [(int) floor(time() / 60) - 120]);
                 DB::run('DELETE FROM sessions WHERE updated_at < ?', [time() - 86400 * 2]);
                 DB::run("DELETE FROM otp_codes WHERE expires_at < ?", [ts('-30 days')]);
+                DB::run("UPDATE invoices SET status = 'void' WHERE status = 'unpaid' AND kind IN ('topup','order') AND created_at < ?", [ts('-30 days')]);
+                DB::run("UPDATE quotes SET status = 'expired' WHERE status = 'open' AND valid_until < ?", [now()]);
                 return 'ok';
             },
         ];

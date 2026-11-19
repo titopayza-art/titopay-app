@@ -1,14 +1,8 @@
-<?php if ($pay): ?>
-<div class="panel" style="margin-bottom:14px;border-color:rgba(95,227,207,.45)">
-  <div class="panel-head"><h2>Pay invoice <?= e($pay['invoice']['number']) ?></h2><span class="mono"><?= zar($pay['invoice']['total']) ?></span></div>
-  <p class="muted small"><?= e($pay['invoice']['description']) ?>. You'll go to PayFast to pay by card, Instant EFT, SnapScan or Zapper. Your account updates automatically when the payment clears.</p>
-  <form action="<?= e($pay['form']['action']) ?>" method="post" style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap" id="pf-form">
-    <?php foreach ($pay['form']['fields'] as $k => $v): ?><input type="hidden" name="<?= e($k) ?>" value="<?= e($v) ?>"><?php endforeach; ?>
-    <button class="btn btn-primary">Pay <?= zar($pay['invoice']['total']) ?> with PayFast</button>
-    <a class="btn btn-ghost" href="#eft">Pay by bank transfer instead</a>
-  </form>
+<div class="refbox" style="margin-bottom:14px">
+  <div><span>Customer number and EFT reference</span><b><?= e($org['customer_no']) ?></b></div>
+  <div><span>One balance for every service</span><b><?= zar($org['balance']) ?></b></div>
+  <div><span>Active services</span><b><?= count(array_filter(Services::all((int) $org['id']), fn($x) => $x === 'active')) ?> <a class="link small" style="font-family:var(--font-sans);font-size:13px;letter-spacing:0" href="/dashboard/services">Manage</a></b></div>
 </div>
-<?php endif; ?>
 
 <div class="grid cols-3">
   <div class="panel stat"><div class="k">Credit balance</div><div class="v"><?= zar($org['balance']) ?></div><div class="d"><?= (float) $org['credit_limit'] > 0 ? 'Plus ' . zar($org['credit_limit'], 0) . ' credit limit' : 'Prepaid' ?></div></div>
@@ -42,22 +36,22 @@
 
 <div class="grid cols-2" style="margin-top:14px">
   <div class="panel flush">
-    <div class="panel-head"><h2>Invoices</h2></div>
+    <div class="panel-head"><h2>Latest invoices</h2><a class="link small" href="/dashboard/invoices">All invoices and statements</a></div>
     <?php if (!$invoices): ?><div class="empty">No invoices yet.</div><?php else: ?>
     <div class="tbl-wrap"><table class="tbl"><tbody><?php foreach ($invoices as $i): ?><tr>
       <td><a class="link mono small" href="/dashboard/invoice/<?= e($i['number']) ?>"><?= e($i['number']) ?></a><div class="muted small"><?= e($i['description']) ?></div></td>
       <td class="right mono small"><?= zar($i['total']) ?></td><td><?php $status = $i['status'] === 'unpaid' && $i['due_at'] < now() ? 'overdue' : $i['status']; require APP_DIR . '/views/partials/status.php'; ?></td>
-      <td class="right"><?php if ($i['status'] === 'unpaid'): ?><form method="post" class="inline-form"><?= csrf_field() ?><input type="hidden" name="action" value="pay"><input type="hidden" name="invoice" value="<?= (int) $i['id'] ?>"><button class="btn btn-primary btn-xs">Pay</button></form><?php endif; ?></td></tr><?php endforeach; ?></tbody></table></div><?php endif; ?>
+      <td class="right"><?php if ($i['status'] === 'unpaid'): ?><a class="btn btn-primary btn-xs" href="/dashboard/pay/<?= e($i['number']) ?>">Pay</a><?php endif; ?></td></tr><?php endforeach; ?></tbody></table></div><?php endif; ?>
   </div>
   <div class="panel flush">
-    <div class="panel-head"><h2>Statement</h2><span class="muted">Latest 30 entries</span></div>
+    <div class="panel-head"><h2>Recent transactions</h2><a class="link small" href="/dashboard/statement">This month's statement</a></div>
     <?php if (!$ledger): ?><div class="empty">No transactions yet.</div><?php else: ?>
     <div class="tbl-wrap"><table class="tbl"><tbody><?php foreach ($ledger as $l): ?><tr><td class="small"><?= e($l['description']) ?><div class="muted small"><?= e(date('j M H:i', strtotime($l['created_at'] . ' UTC'))) ?></div></td><td class="right mono small" style="color:<?= (float) $l['amount'] < 0 ? 'var(--text-soft)' : 'var(--accent)' ?>"><?= ((float) $l['amount'] > 0 ? '+' : '') . zar($l['amount'], 4) ?></td><td class="right mono small muted"><?= zar($l['balance_after']) ?></td></tr><?php endforeach; ?></tbody></table></div><?php endif; ?>
   </div>
 </div>
 
 <div class="panel" id="eft" style="margin-top:14px">
-  <h2>Bank transfer (EFT)</h2>
-  <p class="muted small" style="margin-top:6px">Use the invoice number as your reference. Transfers are matched within one working day.</p>
-  <dl class="kv" style="margin-top:12px"><dt>Bank</dt><dd><?= e(Settings::get('bank_name') ?: 'Shared on request') ?></dd><dt>Account name</dt><dd><?= e(Settings::get('bank_account_name')) ?></dd><dt>Account number</dt><dd class="mono"><?= e(Settings::get('bank_account_number') ?: 'Shared on request') ?></dd><dt>Branch code</dt><dd class="mono"><?= e(Settings::get('bank_branch_code') ?: '') ?></dd></dl>
+  <div class="panel-head"><h2>Bank transfer (EFT)</h2><a class="link small" href="/dashboard/quotes">Need a quote first?</a></div>
+  <p class="muted small">Pay any amount from any South African bank with your customer number <b class="mono" style="color:var(--text)"><?= e($org['customer_no']) ?></b> as the reference. If it matches an unpaid invoice, that invoice is paid. Anything else becomes credit. Payments are matched within one working day.</p>
+  <dl class="kv" style="margin-top:12px"><dt>Bank</dt><dd><?= e(Settings::get('bank_name') ?: 'Shared on request') ?></dd><dt>Account name</dt><dd><?= e(Settings::get('bank_account_name')) ?></dd><dt>Account number</dt><dd class="mono"><?= e(Settings::get('bank_account_number') ?: 'Shared on request') ?></dd><dt>Branch code</dt><dd class="mono"><?= e(Settings::get('bank_branch_code') ?: 'Universal') ?></dd><dt>Reference</dt><dd class="mono"><?= e($org['customer_no']) ?></dd></dl>
 </div>

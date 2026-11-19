@@ -210,7 +210,7 @@ $r->add('GET|POST', '/register', function () {
         DB::tx(function () use ($email, $pw) {
             $slug = slugify((string) input('company'));
             if (DB::one('SELECT id FROM orgs WHERE slug = ?', [$slug])) $slug .= '-' . strtolower(Crypto::token(3));
-            $orgId = DB::insert('orgs', ['name' => mb_substr((string) input('company'), 0, 160), 'slug' => $slug, 'phone' => mb_substr((string) input('phone'), 0, 40), 'industry' => mb_substr((string) input('industry'), 0, 60), 'low_balance' => (float) Settings::get('low_balance_default'), 'webhook_secret' => 'whsec_' . Crypto::token(24), 'created_at' => now()]);
+            $orgId = DB::insert('orgs', ['name' => mb_substr((string) input('company'), 0, 160), 'slug' => $slug, 'customer_no' => Billing::newCustomerNo(), 'phone' => mb_substr((string) input('phone'), 0, 40), 'industry' => mb_substr((string) input('industry'), 0, 60), 'low_balance' => (float) Settings::get('low_balance_default'), 'webhook_secret' => 'whsec_' . Crypto::token(24), 'created_at' => now()]);
             $uid = DB::insert('users', ['org_id' => $orgId, 'name' => mb_substr((string) input('name'), 0, 120), 'email' => $email, 'password_hash' => password_hash($pw, PASSWORD_DEFAULT), 'role' => 'owner', 'created_at' => now()]);
             DB::insert('articles', ['org_id' => $orgId, 'category' => 'General', 'title' => 'How to contact us', 'slug' => 'how-to-contact-us', 'body' => 'Use the chat button or reply to any of our emails and our team will help.', 'published' => 1, 'views' => 0, 'updated_at' => now()]);
             $token = Auth::issueToken($uid, 'verify', '+3 days');
@@ -410,7 +410,7 @@ $r->add('GET|POST', '/dashboard/billing', function () {
             $amt = round((float) input('amount'), 2);
             if ($amt < (float) Settings::get('min_topup') || $amt > 200000) { flash('error', 'Top up between ' . zar(Settings::get('min_topup'), 0) . ' and R200,000.'); redirect('/dashboard/billing'); }
             $inv = Billing::createInvoice($org, 'topup', $amt, 'Prepaid credit ' . zar($amt));
-            $_SESSION['pay_invoice'] = $inv['id'];
+            redirect('/dashboard/pay/' . $inv['number']);
         } elseif ($a === 'plan') {
             $plan = DB::one('SELECT * FROM plans WHERE code = ? AND active = 1', [(string) input('plan')]);
             if (!$plan) redirect('/dashboard/billing');
@@ -426,34 +426,28 @@ $r->add('GET|POST', '/dashboard/billing', function () {
                     Billing::markPaid((int) $inv['id'], 'credit', 'balance', (float) $inv['total']);
                     flash('ok', 'Plan changed to ' . $plan['name'] . '. Included credit has been added.');
                 } else {
-                    $_SESSION['pay_invoice'] = $inv['id'];
+                    redirect('/dashboard/pay/' . $inv['number']);
                 }
             }
         } elseif ($a === 'pay') {
-            $_SESSION['pay_invoice'] = (int) input('invoice');
+            $inv = DB::one('SELECT number FROM invoices WHERE id = ? AND org_id = ?', [(int) input('invoice'), $org['id']]);
+            if ($inv) redirect('/dashboard/pay/' . $inv['number']);
         } elseif ($a === 'auto_pay') {
             DB::update('orgs', ['auto_pay' => input('auto_pay') ? 1 : 0], 'id = ?', [$org['id']]);
             flash('ok', 'Saved.');
         }
         redirect('/dashboard/billing');
     }
-    $pay = null;
-    if (!empty($_SESSION['pay_invoice'])) {
-        $inv = DB::one("SELECT * FROM invoices WHERE id = ? AND org_id = ? AND status = 'unpaid'", [$_SESSION['pay_invoice'], $org['id']]);
-        unset($_SESSION['pay_invoice']);
-        if ($inv) $pay = ['invoice' => $inv, 'form' => Billing::payfastForm($inv, $user)];
-    }
-    if (isset($_GET['paid'])) flash('ok', 'Thanks. Your payment is being confirmed. Your balance updates as soon as PayFast confirms it, usually within a minute.');
-    render('dash/billing', ['title' => 'Billing', 'org' => $org, 'pay' => $pay, 'plan' => Billing::plan($org),
+    render('dash/billing', ['title' => 'Billing and credit', 'org' => $org, 'plan' => Billing::plan($org),
         'plans' => DB::all('SELECT * FROM plans WHERE active = 1 ORDER BY sort'),
-        'invoices' => DB::all('SELECT * FROM invoices WHERE org_id = ? ORDER BY id DESC LIMIT 50', [$org['id']]),
+        'invoices' => DB::all("SELECT * FROM invoices WHERE org_id = ? AND status <> 'void' ORDER BY id DESC LIMIT 8", [$org['id']]),
         'ledger' => DB::all('SELECT * FROM ledger WHERE org_id = ? ORDER BY id DESC LIMIT 30', [$org['id']])], 'app');
 });
 $r->add('GET', '/dashboard/invoice/{number}', function ($number) {
     $org = require_org();
     $inv = DB::one('SELECT * FROM invoices WHERE number = ? AND org_id = ?', [$number, $org['id']]);
     if (!$inv) redirect('/dashboard/billing');
-    render('dash/invoice', ['title' => 'Invoice ' . $inv['number'], 'inv' => $inv, 'org' => $org, 'payments' => DB::all('SELECT * FROM payments WHERE invoice_id = ?', [$inv['id']])], 'print');
+    render('dash/invoice', ['title' => 'Invoice ' . $inv['number'], 'inv' => $inv, 'org' => $org, 'items' => Billing::items((int) $inv['id']), 'payments' => DB::all('SELECT * FROM payments WHERE invoice_id = ?', [$inv['id']])], 'print');
 });
 $r->add('GET|POST', '/dashboard/webhooks', function () {
     $org = require_org();
@@ -617,7 +611,7 @@ $r->add('GET', '/admin/orgs', function () {
     $st = (string) ($_GET['status'] ?? '');
     $where = 'o.is_house = 0';
     $args = [];
-    if ($q !== '') { $where .= ' AND (o.name LIKE ? OR o.slug LIKE ? OR EXISTS (SELECT 1 FROM users u WHERE u.org_id = o.id AND u.email LIKE ?))'; array_push($args, "%$q%", "%$q%", "%$q%"); }
+    if ($q !== '') { $where .= ' AND (o.name LIKE ? OR o.slug LIKE ? OR o.customer_no = ? OR EXISTS (SELECT 1 FROM users u WHERE u.org_id = o.id AND u.email LIKE ?))'; array_push($args, "%$q%", "%$q%", $q, "%$q%"); }
     if ($st !== '') { $where .= ' AND o.status = ?'; $args[] = $st; }
     render('admin/orgs', ['title' => 'Customers', 'q' => $q, 'st' => $st, 'orgs' => DB::all("SELECT o.*, (SELECT email FROM users WHERE org_id = o.id ORDER BY id LIMIT 1) email, (SELECT COALESCE(SUM(amount),0) FROM messages m WHERE m.org_id = o.id AND m.env = 'live' AND m.created_at >= ?) month_usage FROM orgs o WHERE $where ORDER BY o.id DESC LIMIT 300", array_merge([gmdate('Y-m-01 00:00:00')], $args))], 'app');
 });
@@ -635,7 +629,7 @@ $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
             'close' => $set(['status' => 'closed'], 'Account closed.'),
             'live_on' => $set(['live_enabled' => 1], 'Live access on.'),
             'live_off' => $set(['live_enabled' => 0], 'Live access off.'),
-            'kyb' => $set(['kyb_status' => input('value') === 'approved' ? 'approved' : 'rejected'], 'KYB updated.'),
+            'kyb' => [$set(['kyb_status' => input('value') === 'approved' ? 'approved' : 'rejected'], input('value') === 'approved' ? 'KYB approved. Services waiting for it are now active.' : 'KYB rejected.'), Services::refreshPending((int) $org['id'])],
             'sender' => $set(['sms_sender_status' => input('value') === 'approved' ? 'approved' : 'rejected'], 'Sender ID updated.'),
             'domain' => $set(['mail_domain_status' => input('value') === 'verified' ? 'verified' : 'rejected'], 'Mail domain updated.'),
             'limits' => $set(['credit_limit' => max(0, (float) input('credit_limit')), 'ai_monthly_cap' => input('ai_monthly_cap') === '' ? null : (float) input('ai_monthly_cap'), 'plan_code' => (string) input('plan_code')], 'Limits saved.'),
@@ -659,6 +653,8 @@ $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
                 }
             })(),
             'act_as' => (function () use ($org) { $_SESSION['act_as_org'] = (int) $org['id']; audit('admin.act_as', (int) $org['id']); redirect('/dashboard'); })(),
+            'service_on' => [Services::activate((int) $org['id'], (string) input('service'), true), audit('admin.service_on', (int) $org['id'], (string) input('service')), flash('ok', 'Service switched on.')],
+            'service_off' => [Services::deactivate((int) $org['id'], (string) input('service')), audit('admin.service_off', (int) $org['id'], (string) input('service')), flash('ok', 'Service switched off.')],
             default => null,
         };
         redirect('/admin/orgs/' . $org['id']);
@@ -670,7 +666,8 @@ $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
         'numbers' => DB::all('SELECT * FROM wa_numbers WHERE org_id = ?', [$org['id']]),
         'waPartners' => DB::all("SELECT id, name FROM partners WHERE service = 'whatsapp'"),
         'usage' => DB::all("SELECT service, COUNT(*) c, SUM(amount) a, SUM(cost) k FROM messages WHERE org_id = ? AND env = 'live' AND created_at >= ? GROUP BY service", [$org['id'], gmdate('Y-m-01 00:00:00')]),
-        'audit' => DB::all('SELECT * FROM audit_log WHERE org_id = ? ORDER BY id DESC LIMIT 15', [$org['id']])], 'app');
+        'audit' => DB::all('SELECT * FROM audit_log WHERE org_id = ? ORDER BY id DESC LIMIT 15', [$org['id']]),
+        'services' => Services::all((int) $org['id'])], 'app');
 });
 $r->add('POST', '/admin/stop-acting', function () { csrf_check(); unset($_SESSION['act_as_org']); redirect('/admin'); });
 $r->add('GET', '/admin/partners', function () {
@@ -712,12 +709,15 @@ $r->add('GET|POST', '/admin/pricing', function () {
         foreach ((array) ($_POST['plan'] ?? []) as $code => $v) {
             DB::update('plans', ['price' => (float) $v['price'], 'included_credit' => (float) $v['included_credit'], 'discount_pct' => (int) $v['discount_pct'], 'ai_monthly_cap' => (float) $v['ai_monthly_cap'], 'ai_max_tokens' => (int) $v['ai_max_tokens'], 'ai_rpm' => (int) $v['ai_rpm'], 'api_rps' => (int) $v['api_rps'], 'desk_agents' => (int) $v['desk_agents'], 'wa_numbers' => (int) $v['wa_numbers'], 'active' => !empty($v['active']) ? 1 : 0], 'code = ?', [$code]);
         }
+        foreach ((array) ($_POST['pkg'] ?? []) as $code => $v) {
+            DB::update('packages', ['price' => max(0, (float) $v['price']), 'credit' => max(0, (float) $v['credit']), 'active' => !empty($v['active']) ? 1 : 0], 'code = ?', [$code]);
+        }
         foreach (['usd_zar', 'ai_markup_pct'] as $k) if (input($k) !== null) Settings::set($k, (string) (float) input($k));
         audit('admin.pricing_saved');
         flash('ok', 'Pricing saved. New prices apply to the next request.');
         redirect('/admin/pricing');
     }
-    render('admin/pricing', ['title' => 'Plans and pricing', 'plans' => DB::all('SELECT * FROM plans ORDER BY sort'), 'rates' => DB::all('SELECT * FROM rates ORDER BY service, unit'), 'models' => Catalog::aiModels()], 'app');
+    render('admin/pricing', ['title' => 'Plans and pricing', 'plans' => DB::all('SELECT * FROM plans ORDER BY sort'), 'rates' => DB::all('SELECT * FROM rates ORDER BY service, unit'), 'models' => Catalog::aiModels(), 'packages' => DB::all('SELECT * FROM packages ORDER BY service, sort')], 'app');
 });
 $r->add('GET', '/admin/billing', function () {
     Auth::requireAdmin();
@@ -849,5 +849,7 @@ $r->add('GET', '/health', function () {
     $cronOk = $cron !== '' && strtotime($cron . ' UTC') > time() - 600;
     json_out(['status' => $db === 'ok' && $cronOk ? 'ok' : 'degraded', 'database' => $db, 'cron_last_run' => $cron ?: null, 'time' => gmdate('c')], $db === 'ok' ? 200 : 503);
 });
+
+require APP_DIR . '/routes_commerce.php';
 
 return $r;

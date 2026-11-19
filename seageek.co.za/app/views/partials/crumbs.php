@@ -1,0 +1,1 @@
+<?php if (!empty($crumbs)): ?><nav class="crumbs" aria-label="Breadcrumb"><?php foreach ($crumbs as $i => [$label, $href]): ?><?= $i ? '<span class="sep">/</span>' : '' ?><?php if ($href): ?><a href="<?= e($href) ?>"><?= e($label) ?></a><?php else: ?><span><?= e($label) ?></span><?php endif; ?><?php endforeach; ?></nav><?php endif; ?>

@@ -202,6 +202,8 @@ final class Settings
 
     public const DEFAULTS = [
         'company_name' => 'SeaGeek Technologies (Pty) Ltd',
+        'company_reg' => '',
+        'company_address' => 'Johannesburg, Gauteng, South Africa',
         'support_email' => 'hello@seageek.co.za',
         'mail_from_name' => 'SeaGeek',
         'mail_from_address' => 'hello@seageek.co.za',
@@ -212,6 +214,7 @@ final class Settings
         'bank_account_name' => 'SeaGeek Technologies (Pty) Ltd',
         'bank_account_number' => '',
         'bank_branch_code' => '',
+        'bank_account_type' => 'Business current account',
         'payfast_mode' => 'sandbox',
         'payfast_merchant_id' => '10000100',
         'payfast_merchant_key' => '46f0cd694581a',

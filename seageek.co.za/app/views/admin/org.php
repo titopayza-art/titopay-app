@@ -1,5 +1,5 @@
 <?php $btn = function (string $action, string $label, string $cls = 'btn-ghost', array $extra = []) { $h = '<form method="post" class="inline-form">' . csrf_field() . '<input type="hidden" name="action" value="' . e($action) . '">'; foreach ($extra as $k => $v) $h .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">'; return $h . '<button class="btn ' . $cls . ' btn-xs">' . e($label) . '</button></form> '; }; ?>
-<div class="toolbar"><a class="btn btn-ghost btn-sm" href="/admin/orgs">All customers</a><?= $btn('act_as', 'Open their dashboard') ?><?php $status = $org['status']; require APP_DIR . '/views/partials/status.php'; ?><span class="pill <?= $org['live_enabled'] ? 'green' : 'violet' ?>"><?= $org['live_enabled'] ? 'Live' : 'Sandbox only' ?></span></div>
+<div class="toolbar"><a class="btn btn-ghost btn-sm" href="/admin/orgs">All customers</a><span class="custno">Customer no. <b><?= e($org['customer_no']) ?></b></span><?= $btn('act_as', 'Open their dashboard') ?><a class="btn btn-ghost btn-xs" href="/admin/orgs/<?= (int) $org['id'] ?>/statement">Statement</a><?php $status = $org['status']; require APP_DIR . '/views/partials/status.php'; ?><span class="pill <?= $org['live_enabled'] ? 'green' : 'violet' ?>"><?= $org['live_enabled'] ? 'Live' : 'Sandbox only' ?></span></div>
 <div class="grid cols-3">
   <div class="panel">
     <h2>Account</h2>
@@ -23,6 +23,15 @@
       <button class="btn btn-ghost btn-sm">Save limits</button></form>
   </div>
 </div>
+<div class="panel flush" style="margin-top:14px">
+  <div class="panel-head"><h2>Services</h2><span class="muted">Live requests are only accepted for active services. Sandbox works for all.</span></div>
+  <div class="tbl-wrap"><table class="tbl"><tbody>
+  <?php foreach ($services as $svc => $sst): $def = Catalog::services()[$svc]; ?>
+    <tr><td><?= icon($def['icon'], 'ic-inline') ?> <?= e($def['name']) ?></td><td><?php $status = $sst === 'inactive' ? 'not active' : $sst; require APP_DIR . '/views/partials/status.php'; ?></td><td class="small muted"><?= e(Services::nextStep($org, $svc) ?? '') ?></td>
+      <td class="right"><?= $sst === 'active' ? $btn('service_off', 'Switch off', 'btn-danger', ['service' => $svc]) : $btn('service_on', $sst === 'pending' ? 'Approve' : 'Switch on', 'btn-primary', ['service' => $svc]) ?></td></tr>
+  <?php endforeach; ?>
+  </tbody></table></div>
+</div>
 <div class="grid cols-2" style="margin-top:14px">
   <div class="panel">
     <h2>Adjust balance</h2>
@@ -32,7 +41,7 @@
   </div>
   <div class="panel flush">
     <div class="panel-head"><h2>Invoices</h2></div>
-    <table class="tbl"><tbody><?php foreach ($invoices as $i): ?><tr><td class="mono small"><?= e($i['number']) ?><div class="muted small"><?= e($i['description']) ?></div></td><td class="right mono small"><?= zar($i['total']) ?></td><td><?php $status = $i['status']; require APP_DIR . '/views/partials/status.php'; ?></td><td class="right"><?php if ($i['status'] === 'unpaid'): ?><form method="post" class="inline-form"><?= csrf_field() ?><input type="hidden" name="action" value="eft"><input type="hidden" name="invoice" value="<?= (int) $i['id'] ?>"><input name="ref" placeholder="Bank ref" style="width:90px;height:30px;border-radius:6px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text);padding:0 8px"> <button class="btn btn-primary btn-xs">Mark EFT paid</button></form><?php endif; ?></td></tr><?php endforeach; ?><?php if (!$invoices): ?><tr><td class="empty">No invoices.</td></tr><?php endif; ?></tbody></table>
+    <table class="tbl"><tbody><?php foreach ($invoices as $i): ?><tr><td class="small"><a class="link mono" href="/admin/invoices/<?= e($i['number']) ?>"><?= e($i['number']) ?></a><div class="muted small clip"><?= e($i['description']) ?></div></td><td class="right mono small"><?= zar($i['total']) ?></td><td><?php $status = $i['status']; require APP_DIR . '/views/partials/status.php'; ?></td><td class="right"><?php if ($i['status'] === 'unpaid'): ?><form method="post" class="inline-form"><?= csrf_field() ?><input type="hidden" name="action" value="eft"><input type="hidden" name="invoice" value="<?= (int) $i['id'] ?>"><input name="ref" placeholder="Bank ref" style="width:90px;height:30px;border-radius:6px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text);padding:0 8px"> <button class="btn btn-primary btn-xs">Mark EFT paid</button></form><?php endif; ?></td></tr><?php endforeach; ?><?php if (!$invoices): ?><tr><td class="empty">No invoices.</td></tr><?php endif; ?></tbody></table>
   </div>
 </div>
 <?php if ($numbers): ?>

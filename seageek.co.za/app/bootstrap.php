@@ -10,6 +10,7 @@ require __DIR__ . '/schema.php';
 require __DIR__ . '/catalog.php';
 require __DIR__ . '/partners.php';
 require __DIR__ . '/billing.php';
+require __DIR__ . '/commerce.php';
 require __DIR__ . '/ai.php';
 require __DIR__ . '/desk.php';
 require __DIR__ . '/gateway.php';

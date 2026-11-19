@@ -24,6 +24,31 @@ final class Catalog
         ];
     }
 
+    /**
+     * Prepaid packages per service. Price is what the customer pays; credit is what lands in their one balance.
+     * Larger packages carry bonus credit, which is how volume discounts work on a shared wallet.
+     */
+    public static function packages(): array
+    {
+        $p = fn($code, $service, $name, $description, $price, $credit, $sort) => compact('code', 'service', 'name', 'description', 'price', 'credit', 'sort') + ['active' => 1];
+        return [
+            $p('sms_1k', 'sms', 'SMS 1,000', 'About 1,000 single-part SMS at R0.29', 290, 290, 1),
+            $p('sms_10k', 'sms', 'SMS 10,000', 'R2,900 of credit for R2,700 (R0.27 an SMS)', 2700, 2900, 2),
+            $p('sms_50k', 'sms', 'SMS 50,000', 'R14,500 of credit for R12,750 (R0.255 an SMS)', 12750, 14500, 3),
+            $p('mail_10k', 'mail', 'Email 10,000', 'About 10,000 emails at R0.015', 150, 150, 1),
+            $p('mail_100k', 'mail', 'Email 100,000', 'R1,500 of credit for R1,300', 1300, 1500, 2),
+            $p('otp_1k', 'auth', 'OTP 1,000', 'About 1,000 SMS one-time passwords', 350, 350, 1),
+            $p('otp_10k', 'auth', 'OTP 10,000', 'R3,500 of credit for R3,250', 3250, 3500, 2),
+            $p('wa_500', 'whatsapp', 'WhatsApp R500', 'Credit for templates and replies', 500, 500, 1),
+            $p('wa_2500', 'whatsapp', 'WhatsApp R2,500', 'R2,500 of credit for R2,375', 2375, 2500, 2),
+            $p('verify_100', 'verify', '100 ID checks', 'About 100 SA ID number checks', 950, 950, 1),
+            $p('verify_500', 'verify', '500 ID checks', 'R4,750 of credit for R4,500', 4500, 4750, 2),
+            $p('voice_500', 'voice', 'Voice 500 minutes', 'About 500 call minutes to SA numbers', 445, 445, 1),
+            $p('ai_500', 'ai', 'AI R500', 'Credit for Claude and GPT usage', 500, 500, 1),
+            $p('ai_2500', 'ai', 'AI R2,500', 'R2,500 of credit for R2,375', 2375, 2500, 2),
+        ];
+    }
+
     /** Selling price and estimated wholesale cost in ZAR, excl. VAT. Costs must be confirmed against partner contracts. */
     public static function rates(): array
     {

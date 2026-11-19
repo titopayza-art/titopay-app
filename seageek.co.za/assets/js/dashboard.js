@@ -31,4 +31,32 @@
       win.querySelectorAll("pre[data-lang]").forEach(function (pre) { pre.hidden = pre.getAttribute("data-lang") !== tab.getAttribute("data-lang"); });
     }); });
   });
+
+  // Services: pick several, see packages for each, one order at the end
+  var svcForm = document.getElementById("svc-form");
+  if (svcForm) {
+    var bar = svcForm.querySelector("[data-bar]"), sum = svcForm.querySelector("[data-sum]"), go = svcForm.querySelector("[data-go]");
+    var sync = function () {
+      var picked = 0, newOnes = 0, pkgs = 0;
+      svcForm.querySelectorAll("[data-svc]").forEach(function (card) {
+        var pick = card.querySelector("[data-pick]"), list = card.querySelector("[data-pkgs]");
+        var on = !!(pick && pick.checked);
+        card.classList.toggle("picked", on);
+        if (list) list.hidden = !on;
+        if (!on) return;
+        picked++;
+        if (/^Select /.test(pick.parentNode.textContent.trim())) newOnes++;
+        var r = card.querySelector("[data-pkgs] input[type=radio]:checked");
+        if (r && r.value) pkgs++;
+      });
+      bar.hidden = picked === 0;
+      var parts = [];
+      if (newOnes) parts.push(newOnes + (newOnes === 1 ? " service to switch on" : " services to switch on"));
+      if (pkgs) parts.push(pkgs + (pkgs === 1 ? " package" : " packages"));
+      sum.textContent = parts.length ? parts.join(" and ") : "Choose a package or untick";
+      go.textContent = pkgs ? "Continue to order" : "Switch on";
+    };
+    svcForm.addEventListener("change", sync);
+    sync();
+  }
 })();

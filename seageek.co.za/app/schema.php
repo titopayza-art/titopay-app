@@ -98,6 +98,18 @@ final class Schema
                 "CREATE TABLE idempotency (org_id {ID} NOT NULL, idem_key VARCHAR(120) NOT NULL, status INTEGER NOT NULL, response {TEXT} NOT NULL, created_at {TS} NOT NULL, PRIMARY KEY (org_id, idem_key)){ENGINE}",
                 "CREATE TABLE jobs (id {PK}, name VARCHAR(60) NOT NULL UNIQUE, last_run_at {TS}, last_result VARCHAR(255)){ENGINE}",
             ],
+            // Customer numbers, invoice line items, per-account services, packages, quotes, bank statement import
+            2 => [
+                "ALTER TABLE orgs ADD COLUMN customer_no VARCHAR(6)",
+                "CREATE UNIQUE INDEX orgs_customer_no ON orgs (customer_no)",
+                "CREATE TABLE invoice_items (id {PK}, invoice_id {ID} NOT NULL, kind VARCHAR(20) NOT NULL, ref VARCHAR(60), description VARCHAR(255) NOT NULL, quantity {MONEY} NOT NULL DEFAULT 1, unit_price {MONEY} NOT NULL, amount {MONEY} NOT NULL){ENGINE}",
+                "CREATE INDEX invoice_items_inv ON invoice_items (invoice_id)",
+                "CREATE TABLE org_services (org_id {ID} NOT NULL, service VARCHAR(20) NOT NULL, status VARCHAR(20) NOT NULL, activated_at {TS}, PRIMARY KEY (org_id, service)){ENGINE}",
+                "CREATE TABLE packages (code VARCHAR(40) PRIMARY KEY, service VARCHAR(20) NOT NULL, name VARCHAR(80) NOT NULL, description VARCHAR(255), price {MONEY} NOT NULL, credit {MONEY} NOT NULL, sort INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1){ENGINE}",
+                "CREATE TABLE quotes (id {PK}, number VARCHAR(30) NOT NULL UNIQUE, org_id {ID}, inputs {TEXT} NOT NULL, items {TEXT} NOT NULL, plan_code VARCHAR(30), subtotal {MONEY} NOT NULL, vat {MONEY} NOT NULL DEFAULT 0, total {MONEY} NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'open', valid_until {TS} NOT NULL, invoice_id {ID}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX quotes_org ON quotes (org_id, id)",
+                "CREATE TABLE bank_lines (id {PK}, hash VARCHAR(64) NOT NULL UNIQUE, posted_on VARCHAR(10), reference VARCHAR(160), amount {MONEY} NOT NULL, org_id {ID}, invoice_id {ID}, status VARCHAR(20) NOT NULL, note VARCHAR(255), created_at {TS} NOT NULL){ENGINE}",
+            ],
         ];
     }
 
@@ -120,6 +132,21 @@ final class Schema
     /** Reference data. Safe to run more than once. */
     public static function seed(): void
     {
+        foreach (Catalog::packages() as $p) {
+            if (!DB::one('SELECT code FROM packages WHERE code = ?', [$p['code']])) DB::insert('packages', $p);
+        }
+        // Every account has a 6-digit customer number (also its EFT payment reference)
+        foreach (DB::all('SELECT id FROM orgs WHERE customer_no IS NULL') as $o) {
+            DB::update('orgs', ['customer_no' => Billing::newCustomerNo()], 'id = ?', [$o['id']]);
+        }
+        // Invoices from before line items existed get one line
+        foreach (DB::all('SELECT * FROM invoices i WHERE NOT EXISTS (SELECT 1 FROM invoice_items x WHERE x.invoice_id = i.id)') as $inv) {
+            DB::insert('invoice_items', ['invoice_id' => $inv['id'], 'kind' => $inv['kind'] === 'plan' ? 'plan' : 'topup', 'ref' => $inv['plan_code'], 'description' => (string) $inv['description'], 'quantity' => 1, 'unit_price' => $inv['subtotal'], 'amount' => $inv['subtotal']]);
+        }
+        // Accounts that already used a service keep it switched on
+        foreach (DB::all("SELECT DISTINCT org_id, service FROM messages WHERE env = 'live'") as $u) {
+            Services::activate((int) $u['org_id'], (string) $u['service']);
+        }
         foreach (Catalog::plans() as $p) {
             if (!DB::one('SELECT code FROM plans WHERE code = ?', [$p['code']])) {
                 DB::insert('plans', $p);
@@ -134,7 +161,8 @@ final class Schema
             }
         }
         if (!DB::one('SELECT id FROM orgs WHERE is_house = 1')) {
-            $orgId = DB::insert('orgs', ['name' => 'SeaGeek Support', 'slug' => 'seageek', 'plan_code' => 'enterprise', 'is_house' => 1, 'live_enabled' => 1, 'kyb_status' => 'approved', 'created_at' => now()]);
+            $orgId = DB::insert('orgs', ['name' => 'SeaGeek Support', 'slug' => 'seageek', 'customer_no' => Billing::newCustomerNo(), 'plan_code' => 'enterprise', 'is_house' => 1, 'live_enabled' => 1, 'kyb_status' => 'approved', 'created_at' => now()]);
+            foreach (array_keys(Services::sellable()) as $svc) Services::activate($orgId, $svc);
             foreach (Catalog::helpArticles() as $a) {
                 DB::insert('articles', $a + ['org_id' => $orgId, 'published' => 1, 'views' => 0, 'updated_at' => now()]);
             }

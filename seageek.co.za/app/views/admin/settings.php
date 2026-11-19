@@ -2,14 +2,16 @@
 <form method="post" class="grid cols-2"><?= csrf_field() ?>
   <div class="panel form">
     <h2>Company and email</h2>
-    <div class="field"><label>Company name</label><input name="company_name" value="<?= $v('company_name') ?>"></div>
+    <div class="row"><div class="field"><label>Company name</label><input name="company_name" value="<?= $v('company_name') ?>"></div><div class="field"><label>Registration number</label><input name="company_reg" value="<?= $v('company_reg') ?>" placeholder="2027/123456/07"></div></div>
+    <div class="field"><label>Address on invoices and statements</label><input name="company_address" value="<?= $v('company_address') ?>"></div>
     <div class="row"><div class="field"><label>Support email</label><input name="support_email" value="<?= $v('support_email') ?>"></div><div class="field"><label>Support hours</label><input name="support_hours" value="<?= $v('support_hours') ?>"></div></div>
     <div class="row"><div class="field"><label>Emails from (name)</label><input name="mail_from_name" value="<?= $v('mail_from_name') ?>"></div><div class="field"><label>Emails from (address)</label><input name="mail_from_address" value="<?= $v('mail_from_address') ?>"></div></div>
     <h2 style="margin-top:8px">VAT</h2>
     <div class="row"><div class="field"><label>VAT registered</label><select name="vat_registered"><option value="0">No</option><option value="1" <?= Settings::get('vat_registered') === '1' ? 'selected' : '' ?>>Yes</option></select></div><div class="field"><label>VAT number</label><input name="vat_number" value="<?= $v('vat_number') ?>"></div><div class="field"><label>Rate %</label><input name="vat_rate" value="<?= $v('vat_rate') ?>"></div></div>
     <h2 style="margin-top:8px">Bank details for EFT</h2>
     <div class="row"><div class="field"><label>Bank</label><input name="bank_name" value="<?= $v('bank_name') ?>"></div><div class="field"><label>Account name</label><input name="bank_account_name" value="<?= $v('bank_account_name') ?>"></div></div>
-    <div class="row"><div class="field"><label>Account number</label><input name="bank_account_number" value="<?= $v('bank_account_number') ?>"></div><div class="field"><label>Branch code</label><input name="bank_branch_code" value="<?= $v('bank_branch_code') ?>"></div></div>
+    <div class="row"><div class="field"><label>Account number</label><input name="bank_account_number" value="<?= $v('bank_account_number') ?>"></div><div class="field"><label>Branch code</label><input name="bank_branch_code" value="<?= $v('bank_branch_code') ?>"></div><div class="field"><label>Account type</label><input name="bank_account_type" value="<?= $v('bank_account_type') ?>"></div></div>
+    <p class="muted small">Customers pay by EFT with their 6-digit customer number as the reference. Import your bank statement under Bank payments (EFT) and payments are matched to the right account automatically.</p>
   </div>
   <div class="stack">
     <div class="panel form">

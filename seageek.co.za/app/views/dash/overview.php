@@ -1,10 +1,12 @@
 <?php
 $u = Auth::user();
+$svcStatus = Services::all((int) $org['id']);
 $steps = [
-    ['Confirm your email', (bool) $u['email_verified_at']],
-    ['Get a sandbox key and send a test request', (bool) DB::value("SELECT COUNT(*) FROM messages WHERE org_id = ? AND env = 'test'", [$org['id']])],
-    ['Add your company phone number', (bool) $org['phone']],
-    ['Add credit to switch on live keys', (bool) $org['live_enabled']],
+    ['Confirm your email', (bool) $u['email_verified_at'], null],
+    ['Choose your services', in_array('active', $svcStatus, true), '/dashboard/services'],
+    ['Get a sandbox key and send a test request', (bool) DB::value("SELECT COUNT(*) FROM messages WHERE org_id = ? AND env = 'test'", [$org['id']]), '/dashboard/keys'],
+    ['Add your company phone number', (bool) $org['phone'], '/dashboard/settings'],
+    ['Pay for credit or a package to switch on live keys', (bool) $org['live_enabled'], '/dashboard/billing#topup'],
 ];
 $done = count(array_filter(array_column($steps, 1)));
 $monthTotal = array_sum(array_map(fn($r) => (float) $r['a'], $byService));
@@ -12,7 +14,7 @@ $monthCount = array_sum(array_map(fn($r) => (int) $r['c'], $byService));
 $aiPct = $aiCap > 0 ? min(100, round($aiSpent / $aiCap * 100)) : 0;
 ?>
 <?php foreach ($unpaid as $inv): ?>
-  <div class="alert alert-warn">Invoice <b><?= e($inv['number']) ?></b> for <?= zar($inv['total']) ?> is due <?= e(date('j M Y', strtotime($inv['due_at']))) ?>. <a class="link" href="/dashboard/billing">Pay now</a></div>
+  <div class="alert alert-warn">Invoice <b><?= e($inv['number']) ?></b> for <?= zar($inv['total']) ?> is due <?= e(date('j M Y', strtotime($inv['due_at']))) ?>. <a class="link" href="/dashboard/pay/<?= e($inv['number']) ?>">Pay now</a></div>
 <?php endforeach; ?>
 
 <div class="toolbar" style="justify-content:space-between">
@@ -36,9 +38,9 @@ $aiPct = $aiCap > 0 ? min(100, round($aiSpent / $aiCap * 100)) : 0;
     <?php if ($done < count($steps)): ?>
       <div class="panel-head"><h2>Get started</h2><span class="muted"><?= $done ?> of <?= count($steps) ?></span></div>
       <ul class="checklist">
-        <?php foreach ($steps as [$label, $ok]): ?><li class="<?= $ok ? 'done' : '' ?>"><span class="tick"><?= $ok ? '✓' : '' ?></span><span><?= e($label) ?></span></li><?php endforeach; ?>
+        <?php foreach ($steps as [$label, $ok, $href]): ?><li class="<?= $ok ? 'done' : '' ?>"><span class="tick"><?= $ok ? '✓' : '' ?></span><span><?= !$ok && $href ? '<a class="link" href="' . e($href) . '">' . e($label) . '</a>' : e($label) ?></span></li><?php endforeach; ?>
       </ul>
-      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="/dashboard/keys">API keys</a><a class="btn btn-ghost btn-sm" href="/docs">Quickstart</a></div>
+      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="/dashboard/services">Choose services</a><a class="btn btn-ghost btn-sm" href="/docs/quickstart">Quickstart</a></div>
     <?php else: ?>
       <div class="panel-head"><h2>Plan limits</h2><a class="link small" href="/dashboard/billing">Change plan</a></div>
       <dl class="kv">
@@ -53,7 +55,7 @@ $aiPct = $aiCap > 0 ? min(100, round($aiSpent / $aiCap * 100)) : 0;
 </div>
 
 <div class="panel" style="margin-top:14px">
-  <div class="panel-head"><h2>Your environments</h2><span class="muted">Every product, sandbox and live, on one account</span></div>
+  <div class="panel-head"><h2>Your services</h2><a class="link small" href="/dashboard/services">Manage services</a></div>
   <div class="svc-grid">
     <?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned') continue;
       $c = (int) ($byService[$k]['c'] ?? 0);
@@ -67,7 +69,14 @@ $aiPct = $aiCap > 0 ? min(100, round($aiSpent / $aiCap * 100)) : 0;
           default => 'Ready',
       }; ?>
       <a class="svc" href="<?= $k === 'desk' ? '/dashboard/desk' : '/dashboard/service/' . $k ?>">
-        <span class="top"><?= icon($s['icon']) ?><?php $status = $org['live_enabled'] && $org['status'] === 'active' ? 'live' : 'sandbox'; ?><span class="pill <?= $status === 'live' ? 'green' : 'violet' ?>"><?= $status === 'live' ? 'Live' : 'Sandbox' ?></span></span>
+        <?php $sst = $k === 'desk' ? 'active' : ($svcStatus[$k] ?? 'inactive');
+          [$pcls, $plabel] = match (true) {
+              $sst === 'active' && $org['live_enabled'] && $org['status'] === 'active' => ['green', 'Live'],
+              $sst === 'active' => ['violet', 'Sandbox'],
+              $sst === 'pending' => ['amber', 'Pending'],
+              default => ['', 'Not active'],
+          }; ?>
+        <span class="top"><?= icon($s['icon']) ?><span class="pill <?= $pcls ?>"><?= $plabel ?></span></span>
         <b><?= e($s['name']) ?></b>
         <span class="n"><?= number_format($c) ?> this month · <?= e($ready) ?></span>
       </a>

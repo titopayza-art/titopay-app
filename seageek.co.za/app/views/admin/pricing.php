@@ -16,6 +16,16 @@
     <td class="right mono small" data-out><?= $m ?>%</td></tr><?php endforeach; ?>
   </tbody></table></div>
 </div>
+<div class="panel flush" style="margin-top:14px">
+  <div class="panel-head"><h2>Packages</h2><span class="muted">Prepaid bundles customers can add to an order. Credit above the price is the bonus.</span></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Package</th><th>Product</th><th>Price (R)</th><th>Credit given (R)</th><th class="right">Bonus</th><th>Active</th></tr></thead><tbody>
+  <?php foreach ($packages as $p): $n = 'pkg[' . e($p['code']) . ']'; $bonus = (float) $p['price'] > 0 ? round(((float) $p['credit'] - (float) $p['price']) / (float) $p['price'] * 100, 1) : 0; ?><tr><td><?= e($p['name']) ?><div class="muted small"><?= e($p['description']) ?></div></td><td class="small"><?= e(service_names()[$p['service']] ?? $p['service']) ?></td>
+    <td><input class="mini-input" name="<?= $n ?>[price]" type="number" step="0.01" value="<?= (float) $p['price'] ?>"></td>
+    <td><input class="mini-input" name="<?= $n ?>[credit]" type="number" step="0.01" value="<?= (float) $p['credit'] ?>"></td>
+    <td class="right mono small"><?= $bonus > 0 ? '+' . $bonus . '%' : '–' ?></td>
+    <td><input type="hidden" name="<?= $n ?>[active]" value="0"><input type="checkbox" name="<?= $n ?>[active]" value="1" <?= $p['active'] ? 'checked' : '' ?> aria-label="Active"></td></tr><?php endforeach; ?>
+  </tbody></table></div>
+</div>
 <div class="panel" style="margin-top:14px">
   <div class="panel-head"><h2>AI pricing</h2><span class="muted">Customer price = provider USD price × exchange rate × (1 + markup)</span></div>
   <div class="toolbar"><label class="small muted">USD/ZAR <input name="usd_zar" type="number" step="0.01" value="<?= e(Settings::get('usd_zar')) ?>" style="width:100px"></label><label class="small muted">Markup % <input name="ai_markup_pct" type="number" step="1" value="<?= e(Settings::get('ai_markup_pct')) ?>" style="width:80px"></label></div>

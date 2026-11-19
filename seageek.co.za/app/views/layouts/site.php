@@ -37,7 +37,7 @@
       </div>
       <div><h4>Products</h4><ul><?php foreach (Catalog::services() as $k => $s) if ($s['status'] !== 'planned'): ?><li><a href="/docs/<?= $k ?>"><?= e($s['name']) ?></a></li><?php endif; ?></ul></div>
       <div><h4>Developers</h4><ul><li><a href="/docs">API reference</a></li><li><a href="/developers">How it connects</a></li><li><a href="/docs/openapi.json">OpenAPI spec</a></li><li><a href="/status">Status</a></li></ul></div>
-      <div><h4>Company</h4><ul><li><a href="/about">About</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Contact</a></li></ul></div>
+      <div><h4>Company</h4><ul><li><a href="/about">About</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/quote">Get a quote</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Contact</a></li></ul></div>
       <div><h4>Legal</h4><ul><li><a href="/privacy">Privacy</a></li><li><a href="/terms">Terms</a></li><li><a href="/privacy#paia">PAIA</a></li></ul></div>
     </div>
     <div class="footer-bottom"><span>© <?= gmdate('Y') ?> SeaGeek Technologies (Pty) Ltd. Registration pending.</span><span>Johannesburg, South Africa</span></div>

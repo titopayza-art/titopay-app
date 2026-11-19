@@ -16,6 +16,10 @@
       </div>
       <?php endforeach; ?>
     </div>
+    <div class="quote-cta">
+      <div><b>Not sure which plan fits?</b><span>Enter your monthly volumes and we price them on every plan, pick the cheapest one that fits and give you a numbered quote.</span></div>
+      <a class="btn btn-ghost" href="/quote"><?= icon('calc') ?>Get a quote</a>
+    </div>
     <p class="pricing-note">Prices exclude VAT. Usage rates per message, check and minute are on the <a class="link" href="/pricing">pricing page</a>.</p>
   </div>
 </section>

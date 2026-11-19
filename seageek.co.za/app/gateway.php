@@ -36,6 +36,16 @@ final class Gateway
                 if ($org['status'] === 'locked') throw new ApiError(402, 'account_locked', 'Live access is paused: ' . ($org['locked_reason'] ?: 'contact support') . '. Pay in the dashboard to restore it.');
                 if (!$org['live_enabled']) throw new ApiError(403, 'live_not_enabled', 'Live access turns on after your first payment. Use a sandbox key until then.');
             }
+            $svc = explode('/', $path)[0];
+            if ($env === 'live' && isset(Services::sellable()[$svc])) {
+                $st = Services::status((int) $org['id'], $svc);
+                if ($st !== 'active') {
+                    $name = Services::sellable()[$svc]['name'];
+                    throw new ApiError(403, 'service_not_active', $st === 'pending'
+                        ? "$name is waiting for approval on your account (see Services in the dashboard)."
+                        : "$name is not switched on for your account. Activate it under Services in the dashboard. Sandbox keys work without activation.");
+                }
+            }
             $raw = file_get_contents('php://input') ?: '';
             $body = $raw !== '' ? json_decode($raw, true) : [];
             if ($raw !== '' && !is_array($body)) throw new ApiError(400, 'invalid_json', 'The request body must be JSON.');
@@ -249,7 +259,8 @@ final class Gateway
     {
         $o = self::$ctx['org'];
         $p = self::$ctx['plan'];
-        return [200, ['id' => (int) $o['id'], 'name' => $o['name'], 'environment' => self::$ctx['env'] === 'live' ? 'live' : 'sandbox', 'status' => $o['status'], 'plan' => $p['name'],
+        return [200, ['id' => (int) $o['id'], 'customer_no' => $o['customer_no'], 'name' => $o['name'], 'environment' => self::$ctx['env'] === 'live' ? 'live' : 'sandbox', 'status' => $o['status'], 'plan' => $p['name'],
+            'services' => Services::all((int) $o['id']),
             'limits' => ['requests_per_second' => (int) $p['api_rps'], 'ai_requests_per_minute' => (int) $p['ai_rpm'], 'ai_max_tokens' => (int) $p['ai_max_tokens'], 'ai_monthly_cap' => Billing::aiCap($o)]]];
     }
 
