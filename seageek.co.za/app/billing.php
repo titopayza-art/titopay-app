@@ -464,6 +464,8 @@ final class Cron
             'low_balance' => fn() => Billing::runLowBalance(),
             'wa_fees' => fn() => (int) gmdate('j') === 1 ? Billing::runNumberFees() : 0,
             'desk_sla' => fn() => Desk::runSla(),
+            'desk_mail' => fn() => DeskMailbox::runAll(),
+            'desk_autoclose' => fn() => DeskFlow::autoClose(),
             'campaigns' => fn() => Campaigns::process(500),
             'store_reminders' => fn() => Stores::runScheduled(),
             'monitors' => fn() => Monitors::run(),

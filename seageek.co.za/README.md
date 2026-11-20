@@ -85,3 +85,14 @@ Form and monitor SMS alerts are charged at the normal SMS rate; everything else 
 - **Morning email** (07:00 SAST by default) with the same list and yesterday's numbers. Settings, Team alerts sets who receives it, the time, and an optional SMS number.
 - **Urgent alerts** by email and SMS the moment scheduled jobs stop, a supplier fails or email stops sending; repeated every 6 hours until fixed. If the scheduled jobs themselves stop, ordinary website visits notice within 5 minutes and send the alert directly.
 - **Nightly backups** of every table to `storage/backups` (newest 14 kept, readable only by the server). Owners can download them from Jobs & logs; restore with `php cli.php restore FILE`.
+
+## Desk channels, rules and reports
+
+Under Support desk, **Channels and rules** (`/admin/desk-settings` for SeaGeek, `/dashboard/desk-settings` for each customer):
+
+- **Email**: connect an existing mailbox over POP3 (SSL, port 995). New emails become tickets within a minute; mail already in the box on first connection is left alone. Replies are threaded with Message-ID/References and a "reply above this line" marker, quoted text is removed, attachments are kept, and auto-replies, bounces and mailing lists are ignored. Alternatively, have SES, Postmark, Mailgun, SendGrid or Cloudflare forward mail to the signed address shown there (raw MIME or the service's JSON).
+- **Replies go back on the customer's channel**: email, or WhatsApp for WhatsApp tickets. The AI's answers to email and form tickets are emailed too.
+- **Rules**: when a ticket arrives or the customer replies, match words in the subject, message or sender, then set priority, assign, tag, skip the AI, or send a saved reply.
+- **Tidy up**: pending tickets are solved after the chosen quiet period (customer told), and solved tickets close 7 days later; a reply after that starts a follow-up.
+- **Tickets**: attachments both ways (10 MB, common document, image, audio and video types; stored in `storage/uploads/desk`, served by unguessable link), merge duplicates, colleague viewing/typing indicator, a warning before sending a reply that clashes with a newer message, AI draft and AI summary, and the requester's SeaGeek account beside SeaGeek's own tickets.
+- **Reports** (`/admin/desk-reports`): tickets per day and channel, share answered by AI alone, median first-reply and solve time, share within target, ratings and team workload.

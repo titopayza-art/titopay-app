@@ -15,13 +15,16 @@
       </div>
     </div>
   </div>
-  <ul class="why" style="margin-top:48px;grid-template-columns:repeat(3,1fr)">
-    <li><h3>Omnichannel inbox</h3><p>Website chat widget, WhatsApp, email forwarding, help centre form and API, threaded per customer.</p></li>
-    <li><h3>AI agent with handover</h3><p>Answers from your help centre using Claude or GPT. Billing disputes, complaints, legal and security issues always go to people.</p></li>
-    <li><h3>Help centre</h3><p>Your own public knowledge base at seageek.co.za/h/your-company, searchable and used to train the AI agent.</p></li>
-    <li><h3>Views, priorities and targets</h3><p>Open, mine, pending, AI handling and overdue views. First-reply targets by priority with alerts.</p></li>
-    <li><h3>Macros and AI drafts</h3><p>Saved replies that also set status, and one-click AI drafts your agents can edit.</p></li>
-    <li><h3>Ratings and reporting</h3><p>Customers rate solved requests. See volume, AI-handled share and satisfaction for the last 30 days.</p></li>
+  <ul class="why why-3" style="margin-top:48px">
+    <li><h3>Every channel, one inbox</h3><p>Website chat, your existing support mailbox, WhatsApp, website forms, the help centre and the API. Replies go back on the channel the customer used.</p></li>
+    <li><h3>AI answers first</h3><p>SeaGeek AI answers from your help centre in the customer's language, any time of day, and hands over to a person when it should. You set a monthly spending cap.</p></li>
+    <li><h3>Real email conversations</h3><p>Connect help@yourbusiness.co.za in minutes. Replies stay in one thread, quoted text is trimmed, attachments come through, and auto-replies are ignored.</p></li>
+    <li><h3>Rules that do the sorting</h3><p>"If it mentions refund, make it urgent, assign it to me and skip the AI." Quiet tickets are solved for you, and customers are told.</p></li>
+    <li><h3>Built for small teams</h3><p>See when a colleague is viewing or typing, get warned before you send a reply that clashes, merge duplicates, and attach files both ways.</p></li>
+    <li><h3>AI drafts and summaries</h3><p>One click writes a reply for you to check, or sums up a long conversation as an internal note.</p></li>
+    <li><h3>Help centre</h3><p>Your own public knowledge base at seageek.co.za/h/your-company, searchable, and the source the AI answers from.</p></li>
+    <li><h3>Reports</h3><p>Tickets by day and channel, share answered by AI alone, median first-reply and solve times, ratings, and each person's workload.</p></li>
+    <li><h3>Included in every plan</h3><p>Desk seats come with your SeaGeek plan, billed in rand with everything else. No separate help desk subscription in dollars.</p></li>
   </ul>
   <div style="margin-top:28px;display:flex;gap:10px;flex-wrap:wrap"><a class="btn btn-primary" href="/register">Start free</a><a class="btn btn-ghost" href="/docs/desk">Desk API</a></div>
 </div></section>

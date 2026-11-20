@@ -537,6 +537,12 @@ final class Mail
         $fromName = Settings::get('mail_from_name');
         $fromAddr = Settings::get('mail_from_address');
         $replyTo = Settings::get('support_email');
+        // A few headers are settings for this message, not headers to copy: who replies go to,
+        // the name the email comes from, and the Message-ID that keeps a conversation together.
+        if (!empty($headers['Reply-To'])) $replyTo = (string) $headers['Reply-To'];
+        if (!empty($headers['X-From-Name'])) $fromName = (string) $headers['X-From-Name'];
+        $messageId = !empty($headers['Message-ID']) ? (string) $headers['Message-ID'] : null;
+        unset($headers['Reply-To'], $headers['X-From-Name'], $headers['Message-ID']);
         try {
             switch (self::driver()) {
                 case 'log':
@@ -559,6 +565,7 @@ final class Mail
                     $m->setFrom($fromAddr, $fromName);
                     $m->addReplyTo($replyTo);
                     $m->addAddress($to);
+                    if ($messageId) $m->MessageID = $messageId;
                     foreach ($headers as $k => $v) $m->addCustomHeader($k, $v);
                     $m->isHTML(true);
                     $m->Subject = $subject;
@@ -572,7 +579,7 @@ final class Mail
                     $res = Adapters::sesSend($ses, ['from' => sprintf('%s <%s>', $fromName, $fromAddr), 'to' => [$to], 'subject' => $subject, 'html' => $html, 'text' => $text]);
                     return [(bool) $res['ok'], (string) ($res['error'] ?? '')];
                 default:
-                    $h = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: " . mb_encode_mimeheader($fromName) . " <$fromAddr>\r\nReply-To: $replyTo";
+                    $h = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: " . mb_encode_mimeheader($fromName) . " <$fromAddr>\r\nReply-To: $replyTo" . ($messageId ? "\r\nMessage-ID: $messageId" : '');
                     foreach ($headers as $k => $v) $h .= "\r\n$k: $v";
                     $ok = @mail($to, mb_encode_mimeheader($subject), $html, $h);
                     return [$ok, $ok ? '' : 'mail() returned false. Set up SMTP under Admin, Settings, Email delivery.'];

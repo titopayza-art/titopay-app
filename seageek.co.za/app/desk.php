@@ -30,9 +30,11 @@ final class Desk
             'tags' => mb_substr(implode(',', array_unique(array_filter(array_map('trim', $tags)))), 0, 255), 'created_at' => now(), 'updated_at' => now(),
         ]);
         self::addMessage($id, 'customer', $body);
+        DeskRules::apply(self::ticket($id), 'created', $body);
         $t = self::ticket($id);
         if (!$sandbox && $t['requester_email'] && $channel !== 'chat') {
-            Mail::queue($t['requester_email'], "[#{$t['number']}] We've received your request", 'ticket_received', ['ticket' => $t, 'org' => DB::one('SELECT * FROM orgs WHERE id = ?', [$orgId])]);
+            $org = DB::one('SELECT * FROM orgs WHERE id = ?', [$orgId]);
+            Mail::queue($t['requester_email'], "[#{$t['number']}] We've received your request", 'ticket_received', ['ticket' => $t, 'org' => $org], DeskFlow::threadHeaders($t, $org));
         }
         Webhooks::queue($orgId, 'desk.ticket_created', self::publicTicket($t));
         return $t;
@@ -48,23 +50,22 @@ final class Desk
     public static function addMessage(int $ticketId, string $author, string $body, bool $internal = false, ?int $authorId = null): int
     {
         $id = DB::insert('ticket_messages', ['ticket_id' => $ticketId, 'author' => $author, 'author_id' => $authorId, 'body' => mb_substr($body, 0, 20000), 'internal' => $internal ? 1 : 0, 'created_at' => now()]);
-        DB::update('tickets', ['updated_at' => now()], 'id = ?', [$ticketId]);
+        DB::update('tickets', ['updated_at' => now()] + ($author === 'customer' ? ['last_customer_at' => now()] : []), 'id = ?', [$ticketId]);
         return $id;
     }
 
     /** An agent's reply. Public replies are emailed to the requester with a link to the conversation. */
-    public static function agentReply(array $ticket, int $userId, string $body, bool $internal, ?string $status): void
+    public static function agentReply(array $ticket, int $userId, string $body, bool $internal, ?string $status, ?callable $attach = null): void
     {
-        self::addMessage((int) $ticket['id'], 'agent', $body, $internal, $userId);
+        $msgId = self::addMessage((int) $ticket['id'], 'agent', $body, $internal, $userId);
+        $files = $attach ? $attach($msgId) : [];
         $upd = ['ai_active' => 0, 'assignee_id' => $ticket['assignee_id'] ?: $userId];
         if (!$internal && !$ticket['first_reply_at']) $upd['first_reply_at'] = now();
         $status = in_array($status, self::STATUSES, true) ? $status : ($ticket['status'] === 'new' ? 'open' : $ticket['status']);
         $upd['status'] = $status;
         if ($status === 'solved' && !$ticket['solved_at']) $upd['solved_at'] = now();
         DB::update('tickets', $upd, 'id = ?', [$ticket['id']]);
-        if (!$internal && $ticket['requester_email'] && !str_contains((string) $ticket['tags'], 'sandbox')) {
-            Mail::queue($ticket['requester_email'], "[#{$ticket['number']}] " . $ticket['subject'], 'ticket_reply', ['ticket' => self::ticket((int) $ticket['id']), 'body' => $body, 'org' => DB::one('SELECT * FROM orgs WHERE id = ?', [$ticket['org_id']])]);
-        }
+        if (!$internal) DeskFlow::deliver(self::ticket((int) $ticket['id']), $body, 'agent', $files);
     }
 
     /** A follow-up from the customer re-opens solved tickets and lets the AI answer again if it still owns the ticket. */
@@ -72,6 +73,7 @@ final class Desk
     {
         self::addMessage((int) $ticket['id'], 'customer', $body);
         if (in_array($ticket['status'], ['solved', 'pending'], true)) DB::update('tickets', ['status' => 'open', 'solved_at' => null], 'id = ?', [$ticket['id']]);
+        DeskRules::apply(self::ticket((int) $ticket['id']), 'replied', $body);
         $ticket = self::ticket((int) $ticket['id']);
         return $ticket['ai_active'] ? self::aiRespond($ticket) : ['reply' => null, 'handover' => true];
     }
@@ -128,6 +130,7 @@ final class Desk
         }
         $reply = $res['text'] !== '' ? $res['text'] : "Thanks, I'm passing this to a member of the team who will reply shortly.";
         self::addMessage((int) $ticket['id'], 'ai', $reply);
+        if ($ticket['channel'] !== 'chat') DeskFlow::deliver(self::ticket((int) $ticket['id']), $reply, 'ai');
         if ($ticket['status'] === 'new') DB::update('tickets', ['status' => 'open'], 'id = ?', [$ticket['id']]);
         if ($res['handover']) return ['reply' => $reply] + self::handover(self::ticket((int) $ticket['id']), $res['handover'], false);
         return ['reply' => $reply, 'handover' => false];
@@ -141,6 +144,7 @@ final class Desk
         if ($postNotice) {
             $reply = 'Thanks, a member of our team will pick this up. ' . (Settings::get('support_hours') ? 'We reply during ' . Settings::get('support_hours') . '.' : '');
             self::addMessage((int) $ticket['id'], 'system', $reply);
+            if ($ticket['channel'] === 'whatsapp') DeskFlow::deliver(self::ticket((int) $ticket['id']), $reply, 'system');
         }
         foreach (DB::all("SELECT email FROM users WHERE org_id = ? AND role IN ('owner','agent')", [$ticket['org_id']]) as $u) {
             Mail::queue($u['email'], "Handover: #{$ticket['number']} {$ticket['subject']}", 'handover', ['ticket' => $ticket, 'reason' => $reason]);

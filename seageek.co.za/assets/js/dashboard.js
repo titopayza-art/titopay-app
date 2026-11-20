@@ -74,3 +74,35 @@
     ta.addEventListener("input", upd); upd();
   });
 })();
+
+/* Desk: show who else has this ticket open, warn when a new message arrives, list chosen files. */
+(function () {
+  "use strict";
+  var form = document.getElementById("reply");
+  if (form && form.dataset.ticket) {
+    var badge = document.getElementById("presence"), note = document.getElementById("newer-note");
+    var box = document.getElementById("reply-body"), csrf = form.querySelector('input[name="_csrf"]');
+    var last = parseInt(form.dataset.last || "0", 10), typingUntil = 0;
+    if (box) box.addEventListener("input", function () { typingUntil = Date.now() + 8000; });
+    var tick = function () {
+      if (document.hidden) return;
+      var body = new URLSearchParams({ ticket: form.dataset.ticket, typing: Date.now() < typingUntil ? "1" : "", _csrf: csrf ? csrf.value : "" });
+      fetch("/desk/presence", { method: "POST", body: body, credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (!d) return;
+        if (d.others && d.others.length) {
+          var typing = d.others.filter(function (o) { return o.typing; });
+          badge.textContent = typing.length ? typing.map(function (o) { return o.name; }).join(", ") + " is typing a reply" : d.others.map(function (o) { return o.name; }).join(", ") + " is also viewing";
+          badge.hidden = false;
+        } else badge.hidden = true;
+        if (d.last > last && note) note.hidden = false;
+      }).catch(function () {});
+    };
+    tick(); setInterval(tick, 15000);
+  }
+  document.querySelectorAll("[data-file-list]").forEach(function (input) {
+    input.addEventListener("change", function () {
+      var out = input.closest("form").querySelector("[data-file-names]");
+      if (out) out.textContent = Array.prototype.map.call(input.files, function (f) { return f.name; }).join(", ");
+    });
+  });
+})();

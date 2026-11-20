@@ -123,7 +123,7 @@ $openTickets = $isAdmin
     </div>
   </div>
 </div>
-<script src="/assets/js/dashboard.js?v=5" defer></script>
+<script src="/assets/js/dashboard.js?v=6" defer></script>
 <?php if (!$isAdmin): ?><script src="/assets/js/chat-widget.js?v=4" defer></script><?php endif; ?>
 </body>
 </html>

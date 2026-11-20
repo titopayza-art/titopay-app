@@ -168,6 +168,19 @@ final class Schema
                 "CREATE INDEX monitor_events_m ON monitor_events (monitor_id, id)",
                 "ALTER TABLE orgs ADD COLUMN chat_settings {TEXT}",
             ],
+            6 => [
+                // Desk: attachments, rules, email mailbox import, who is viewing a ticket, merging, per-account settings
+                "CREATE TABLE ticket_attachments (id {PK}, ticket_id {ID} NOT NULL, message_id {ID}, name VARCHAR(200) NOT NULL, mime VARCHAR(120) NOT NULL, size INTEGER NOT NULL, path VARCHAR(255) NOT NULL, token VARCHAR(48) NOT NULL UNIQUE, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX ticket_attachments_t ON ticket_attachments (ticket_id)",
+                "CREATE TABLE desk_rules (id {PK}, org_id {ID} NOT NULL, name VARCHAR(120) NOT NULL, event VARCHAR(20) NOT NULL DEFAULT 'created', field VARCHAR(20) NOT NULL DEFAULT 'any', words VARCHAR(500), channel VARCHAR(20), set_priority VARCHAR(10), set_status VARCHAR(10), assign_to {ID}, add_tag VARCHAR(60), reply_macro {ID}, active INTEGER NOT NULL DEFAULT 1, hits INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE desk_mail_seen (id {PK}, org_id {ID} NOT NULL, uid VARCHAR(190) NOT NULL, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE UNIQUE INDEX desk_mail_seen_u ON desk_mail_seen (org_id, uid)",
+                "CREATE TABLE desk_presence (id {PK}, ticket_id {ID} NOT NULL, user_id {ID} NOT NULL, typing INTEGER NOT NULL DEFAULT 0, seen_at {TS} NOT NULL){ENGINE}",
+                "CREATE UNIQUE INDEX desk_presence_u ON desk_presence (ticket_id, user_id)",
+                "ALTER TABLE tickets ADD COLUMN merged_into {ID}",
+                "ALTER TABLE tickets ADD COLUMN last_customer_at {TS}",
+                "ALTER TABLE orgs ADD COLUMN desk_settings {TEXT}",
+            ],
         ];
     }
 

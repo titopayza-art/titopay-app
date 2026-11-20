@@ -9,3 +9,4 @@ docker/.env
 vendor/*
 !vendor/.htaccess
 storage/backups/*
+storage/uploads/desk/*

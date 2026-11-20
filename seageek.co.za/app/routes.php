@@ -165,13 +165,17 @@ $r->add('GET|POST', '/t/{token}', function ($token) {
         if (input('csat')) {
             DB::update('tickets', ['csat' => max(1, min(5, (int) input('csat')))], 'id = ?', [$t['id']]);
             flash('ok', 'Thanks for rating our help.');
-        } elseif (trim((string) input('body')) !== '') {
-            Desk::customerReply($t, (string) input('body'));
-            flash('ok', 'Your reply was added.');
+        } elseif ((trim((string) input('body')) !== '' || !empty($_FILES['files']['name'][0])) && $t['status'] !== 'closed') {
+            if (rate_limited('t-reply:' . $t['id'], 20, 3600)) { flash('error', 'Too many replies. Try again later.'); redirect('/t/' . $token); }
+            Desk::customerReply($t, trim((string) input('body')) ?: '(see attached)');
+            $msgId = (int) DB::value("SELECT MAX(id) FROM ticket_messages WHERE ticket_id = ? AND author = 'customer'", [$t['id']]);
+            [, $refused] = DeskFiles::fromUpload((int) $t['id'], $msgId);
+            flash($refused ? 'error' : 'ok', 'Your reply was added.' . ($refused ? ' These files were not added (type or size not allowed): ' . implode(', ', $refused) . '.' : ''));
         }
         redirect('/t/' . $token);
     }
-    render('site/ticket', ['title' => 'Request #' . $t['number'], 't' => $t, 'org' => DB::one('SELECT * FROM orgs WHERE id = ?', [$t['org_id']]), 'messages' => Desk::messages((int) $t['id'], false)]);
+    if ($t['merged_into']) redirect('/t/' . Desk::ticket((int) $t['merged_into'])['token']);
+    render('site/ticket', ['title' => 'Request #' . $t['number'], 't' => $t, 'org' => DB::one('SELECT * FROM orgs WHERE id = ?', [$t['org_id']]), 'messages' => Desk::messages((int) $t['id'], false), 'files' => DeskFiles::forMessages((int) $t['id'])]);
 });
 
 // ---------------------------------------------------------------------------
@@ -600,15 +604,36 @@ function desk_ticket(array $org, string $base, int $number): never
 {
     $t = DB::one('SELECT * FROM tickets WHERE org_id = ? AND number = ?', [$org['id'], $number]);
     if (!$t) redirect($base);
+    if ($t['merged_into'] && !is_post()) { $to = Desk::ticket((int) $t['merged_into']); flash('ok', "#{$t['number']} was merged into #{$to['number']}."); redirect("$base/{$to['number']}"); }
     if (is_post()) {
         csrf_check();
         $a = (string) input('action');
-        if ($a === 'reply' && trim((string) input('body')) !== '') {
-            Desk::agentReply($t, (int) Auth::id(), (string) input('body'), (bool) input('internal'), (string) input('status'));
-            flash('ok', input('internal') ? 'Note added.' : 'Reply sent.');
+        if ($a === 'reply' && (trim((string) input('body')) !== '' || !empty($_FILES['files']['name'][0]))) {
+            // Someone else answered while this agent was typing: show them first instead of sending a clashing reply.
+            $newer = DB::one("SELECT m.*, u.name FROM ticket_messages m LEFT JOIN users u ON u.id = m.author_id WHERE m.ticket_id = ? AND m.id > ? AND m.internal = 0 AND m.author IN ('agent','ai','customer') AND (m.author_id IS NULL OR m.author_id <> ?) ORDER BY m.id DESC LIMIT 1", [$t['id'], (int) input('seen_last'), (int) Auth::id()]);
+            if ($newer && !input('send_anyway')) {
+                $_SESSION['draft'][$t['id']] = (string) input('body');
+                flash('error', ($newer['author'] === 'customer' ? 'The customer wrote again' : (($newer['name'] ?: 'The AI') . ' replied')) . ' while you were writing. Read it below, then send your reply.');
+                redirect("$base/$number#reply");
+            }
+            $refused = [];
+            Desk::agentReply($t, (int) Auth::id(), trim((string) input('body')) ?: '(see attached)', (bool) input('internal'), (string) input('status'), function (int $msgId) use ($t, &$refused) {
+                [$stored, $refused] = DeskFiles::fromUpload((int) $t['id'], $msgId);
+                return $stored;
+            });
+            flash($refused ? 'error' : 'ok', (input('internal') ? 'Note added.' : 'Reply sent.') . ($refused ? ' Not attached (type or size not allowed): ' . implode(', ', $refused) . '.' : ''));
         } elseif ($a === 'update') {
             DB::update('tickets', ['priority' => in_array(input('priority'), Desk::PRIORITIES, true) ? input('priority') : $t['priority'], 'assignee_id' => (int) input('assignee_id') ?: null, 'tags' => mb_substr((string) input('tags'), 0, 255), 'status' => in_array(input('status'), Desk::STATUSES, true) ? input('status') : $t['status']], 'id = ?', [$t['id']]);
             flash('ok', 'Ticket updated.');
+        } elseif ($a === 'merge') {
+            $dst = DB::one('SELECT * FROM tickets WHERE org_id = ? AND number = ?', [$org['id'], (int) ltrim((string) input('into'), '#')]);
+            if (!$dst || (int) $dst['id'] === (int) $t['id'] || $dst['merged_into']) { flash('error', 'Enter the number of another open ticket to merge into.'); redirect("$base/$number"); }
+            DeskFlow::merge($t, $dst, (int) Auth::id());
+            flash('ok', "Merged #{$t['number']} into #{$dst['number']}.");
+            redirect("$base/{$dst['number']}");
+        } elseif ($a === 'summarise') {
+            try { Desk::addMessage((int) $t['id'], 'system', "Summary\n" . DeskFlow::summarise($org, $t), true, (int) Auth::id()); flash('ok', 'Summary added as an internal note.'); }
+            catch (Throwable $e) { flash('error', 'The AI could not summarise this: ' . $e->getMessage()); }
         } elseif ($a === 'ai_draft') {
             $agent = Desk::agentFor((int) $org['id']);
             if ($agent) {
@@ -625,10 +650,12 @@ function desk_ticket(array $org, string $base, int $number): never
     }
     $draft = $_SESSION['draft'][$t['id']] ?? '';
     unset($_SESSION['draft'][$t['id']]);
-    render('dash/ticket', ['title' => '#' . $t['number'] . ' ' . $t['subject'], 'org' => $org, 'base' => $base, 't' => $t, 'messages' => Desk::messages((int) $t['id']), 'draft' => $draft,
-        'agents' => DB::all("SELECT id, name FROM users WHERE org_id = ? OR (is_admin = 1 AND ? = 1)", [$org['id'], (int) $org['is_house']]),
+    $messages = Desk::messages((int) $t['id']);
+    render('dash/ticket', ['title' => '#' . $t['number'] . ' ' . $t['subject'], 'org' => $org, 'base' => $base, 't' => $t, 'messages' => $messages, 'draft' => $draft,
+        'files' => DeskFiles::forMessages((int) $t['id']), 'seenLast' => $messages ? (int) end($messages)['id'] : 0, 'context' => DeskFlow::context($org, $t),
+        'agents' => DB::all("SELECT id, name FROM users WHERE (org_id = ? OR (is_admin = 1 AND ? = 1)) AND disabled_at IS NULL", [$org['id'], (int) $org['is_house']]),
         'macros' => DB::all('SELECT * FROM macros WHERE org_id = ?', [$org['id']]),
-        'history' => $t['requester_email'] ? DB::all('SELECT number, subject, status FROM tickets WHERE org_id = ? AND requester_email = ? AND id <> ? ORDER BY id DESC LIMIT 5', [$org['id'], $t['requester_email'], $t['id']]) : []], 'app');
+        'history' => $t['requester_email'] ? DB::all('SELECT number, subject, status FROM tickets WHERE org_id = ? AND requester_email = ? AND id <> ? AND merged_into IS NULL ORDER BY id DESC LIMIT 5', [$org['id'], $t['requester_email'], $t['id']]) : []], 'app');
 }
 function help_admin(array $org, string $base): never
 {
@@ -652,6 +679,8 @@ function help_admin(array $org, string $base): never
 $r->add('GET', '/dashboard/desk', fn() => desk_inbox(require_org(), '/dashboard/desk'));
 $r->add('GET|POST', '/dashboard/desk/{n}', fn($n) => desk_ticket(require_org(), '/dashboard/desk', (int) $n));
 $r->add('GET|POST', '/dashboard/help-centre', fn() => help_admin(require_org(), '/dashboard/help-centre'));
+$r->add('GET|POST', '/dashboard/desk-settings', fn() => desk_settings(require_org(), '/dashboard'));
+$r->add('GET', '/dashboard/desk-reports', fn() => desk_reports(require_org(), '/dashboard'));
 
 // ---------------------------------------------------------------------------
 // Admin
@@ -821,6 +850,8 @@ $r->add('GET', '/admin/billing', function () {
 });
 $r->add('GET', '/admin/desk', function () { Auth::requireAdmin('desk'); desk_inbox(Desk::house(), '/admin/desk'); });
 $r->add('GET|POST', '/admin/desk/{n}', function ($n) { Auth::requireAdmin('desk'); desk_ticket(Desk::house(), '/admin/desk', (int) $n); });
+$r->add('GET|POST', '/admin/desk-settings', function () { Auth::requireAdmin('desk'); desk_settings(Desk::house(), '/admin'); });
+$r->add('GET', '/admin/desk-reports', function () { Auth::requireAdmin('desk'); desk_reports(Desk::house(), '/admin'); });
 $r->add('GET|POST', '/admin/help-centre', function () { Auth::requireAdmin('desk'); help_admin(Desk::house(), '/admin/help-centre'); });
 $r->add('GET|POST', '/admin/settings', function () {
     $me = Auth::requireAdmin('settings');
@@ -937,22 +968,16 @@ $r->add('POST|GET', '/webhooks/partner/{id}/{token}', function ($id, $token) {
     }
     json_out(['ok' => true]);
 });
-// Inbound email to Desk (point an email-forwarding service or SES receipt rule here)
+// Inbound email to Desk: point an email service's forwarding (SES, Postmark, Mailgun, SendGrid, Cloudflare Email Workers) here
 $r->add('POST', '/webhooks/inbound-email/{slug}/{token}', function ($slug, $token) {
     $org = DB::one('SELECT * FROM orgs WHERE slug = ?', [$slug]);
     if (!$org || !hash_equals(substr(hash_hmac('sha256', 'mail' . $org['id'], (string) config('app_key')), 0, 32), $token)) { http_response_code(403); exit; }
-    $d = json_decode(file_get_contents('php://input') ?: '', true) ?: $_POST;
-    $from = strtolower((string) ($d['from'] ?? ''));
-    if (preg_match('/<([^>]+)>/', $from, $m)) $from = $m[1];
-    $subject = (string) ($d['subject'] ?? 'Email');
-    $body = trim((string) ($d['text'] ?? strip_tags((string) ($d['html'] ?? ''))));
-    if (preg_match('/\[#(\d+)\]/', $subject, $m) && ($t = DB::one('SELECT * FROM tickets WHERE org_id = ? AND number = ? AND requester_email = ?', [$org['id'], (int) $m[1], $from]))) {
-        Desk::customerReply($t, $body);
-    } else {
-        $t = Desk::createTicket((int) $org['id'], $subject, $body, 'email', ['name' => $d['from_name'] ?? null, 'email' => $from]);
-        if ($t['ai_active']) Desk::aiRespond($t);
-    }
-    json_out(['ok' => true]);
+    $raw = (string) file_get_contents('php://input');
+    $ct = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
+    $d = str_contains($ct, 'json') ? (json_decode($raw, true) ?: []) : $_POST;
+    $mail = DeskFlow::fromWebhook($d, $raw, $ct);
+    $t = $mail ? DeskFlow::ingestEmail($org, $mail) : null;
+    json_out(['ok' => true, 'ticket' => $t ? (int) $t['number'] : null]);
 });
 $r->add('GET|POST', '/cron/{token}', function ($token) {
     if (!hash_equals((string) config('cron_token'), $token)) { http_response_code(403); exit; }
@@ -983,5 +1008,6 @@ $r->add('GET', '/health', function () {
 require APP_DIR . '/routes_commerce.php';
 require APP_DIR . '/routes_growth.php';
 require APP_DIR . '/routes_tools.php';
+require APP_DIR . '/routes_desk.php';
 
 return $r;

@@ -16,6 +16,8 @@ final class Ops
         'low_balance' => 'Warn customers when their credit runs low',
         'wa_fees' => 'Bill monthly WhatsApp number fees',
         'desk_sla' => 'Flag support tickets that are waiting too long',
+        'desk_mail' => 'Turn new support emails into tickets',
+        'desk_autoclose' => 'Solve quiet tickets and close old ones',
         'campaigns' => 'Send scheduled campaigns',
         'store_reminders' => 'Send abandoned-cart reminders for stores',
         'monitors' => 'Check customer websites',
@@ -63,6 +65,9 @@ final class Ops
         $eft = DB::one("SELECT COUNT(*) n, COALESCE(SUM(amount),0) total FROM bank_lines WHERE status = 'unmatched' AND amount > 0");
         $add('today', 'eft', (int) $eft['n'], (int) $eft['n'] . ' bank payment' . ((int) $eft['n'] === 1 ? '' : 's') . ' could not be matched',
             zar((float) $eft['total']) . ' arrived without a valid customer number. Pick the right customer and it is credited at once.', '/admin/eft', 'Match');
+        $mb = DeskSettings::get(Desk::house())['mail'];
+        $add('today', 'mailbox', ($mb['mode'] === 'pop3' && $mb['last_error'] !== '') ? 1 : 0, 'Support emails are not being collected',
+            'The ' . $mb['address'] . ' mailbox said: ' . $mb['last_error'] . '. New support emails wait in the mailbox until this is fixed.', '/admin/desk-settings#email', 'Fix');
         $xero = (int) DB::value("SELECT COUNT(*) FROM xero_sync WHERE status = 'error' AND attempts >= 5");
         $add('today', 'xero', $xero, $xero . ' item' . ($xero === 1 ? '' : 's') . ' could not be copied to Xero', 'Usually an account code or tax setting. The reason is in the Xero log.', '/admin/xero', 'Fix');
 
