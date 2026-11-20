@@ -143,7 +143,7 @@
     this.mobile = r.width < 720;
     this.cols = Math.round((this.mobile ? 50 : 104) * this.density);
     this.rows = Math.round((this.mobile ? 28 : 44) * this.density);
-    if (this.reduced) this.draw();
+    if (this.reduced && this.sharks) this.draw(); // seed() has run, so there is something to draw
   };
 
   Ocean.prototype.seed = function () {

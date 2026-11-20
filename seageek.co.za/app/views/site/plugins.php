@@ -22,6 +22,7 @@ $steps = [
         <h3><?= e($name) ?></h3>
         <p><?= e($summary) ?></p>
         <ol class="mini-steps"><?php foreach ($steps[$k] ?? [] as $st): ?><li><?= e($st) ?></li><?php endforeach; ?></ol>
+        <a class="link small" href="/products#<?= $k ?>">See what it looks like</a>
       </article>
     <?php endforeach; ?>
   </div>

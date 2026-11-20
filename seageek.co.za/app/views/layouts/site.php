@@ -7,7 +7,7 @@
   <div class="bar">
     <a class="brand" href="/" aria-label="SeaGeek home"><?php require APP_DIR . '/views/partials/logo.php'; ?><span>SeaGeek</span></a>
     <nav class="nav-pill" aria-label="Primary">
-      <?php foreach (['/#products' => ['Products', 'products'], '/desk' => ['Desk', 'desk'], '/plugins' => ['Plug-ins', 'plugins'], '/pricing' => ['Pricing', 'pricing'], '/docs' => ['Developers', 'developers'], '/startups' => ['Startups', 'startups'], '/about' => ['About', 'about']] as $href => [$label, $key]): ?>
+      <?php foreach (['/products' => ['Products', 'products'], '/desk' => ['Desk', 'desk'], '/plugins' => ['Plug-ins', 'plugins'], '/pricing' => ['Pricing', 'pricing'], '/docs' => ['Developers', 'developers'], '/startups' => ['Startups', 'startups'], '/about' => ['About', 'about']] as $href => [$label, $key]): ?>
         <a href="<?= $href ?>"<?= ($nav ?? '') === $key ? ' class="active" aria-current="page"' : '' ?>><?= $label ?></a>
       <?php endforeach; ?>
     </nav>
@@ -23,7 +23,7 @@
   </div>
 </header>
 <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile">
-  <a href="/#products">Products</a><a href="/desk">Desk</a><a href="/plugins">Plug-ins</a><a href="/pricing">Pricing</a><a href="/docs">Developers</a><a href="/startups">Startups</a><a href="/about">About</a><a href="/help">Help centre</a><a href="/login">Sign in</a>
+  <a href="/products">Products</a><a href="/desk">Desk</a><a href="/plugins">Plug-ins</a><a href="/pricing">Pricing</a><a href="/docs">Developers</a><a href="/startups">Startups</a><a href="/about">About</a><a href="/help">Help centre</a><a href="/login">Sign in</a>
   <a class="btn btn-primary" href="/register">Start free</a>
 </nav>
 <main id="main"><?= $content ?></main>
@@ -50,7 +50,7 @@
   </div>
 </footer>
 <script src="/assets/js/main.js?v=3" defer></script>
-<?php if (!empty($ocean)): ?><script src="/assets/js/ocean.js?v=4" defer></script><?php endif; ?>
+<?php if (!empty($ocean)): ?><script src="/assets/js/ocean.js?v=5" defer></script><?php endif; ?>
 <script src="/assets/js/chat-widget.js?v=4" defer></script>
 </body>
 </html>

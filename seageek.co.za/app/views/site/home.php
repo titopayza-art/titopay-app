@@ -38,6 +38,7 @@
     <div class="section-head">
       <h2>Products</h2>
       <p class="lead">Each product has its own API. They share one account, one set of keys, one bill and one webhook system. We release them in stages as supplier agreements and readiness checks are completed.</p>
+      <p style="margin-top:14px"><a class="btn btn-ghost btn-sm" href="/products">See how each product works</a></p>
     </div>
 
     <div class="products">

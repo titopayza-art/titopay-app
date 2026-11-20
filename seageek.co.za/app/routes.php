@@ -84,6 +84,7 @@ $r = new Router();
 // ---------------------------------------------------------------------------
 
 $r->add('GET', '/', fn() => render('site/home', ['title' => 'SeaGeek | Intelligence. Connected.', 'nav' => 'home']));
+$r->add('GET', '/products', fn() => render('site/products', ['title' => 'Products: see how each one works', 'nav' => 'products', 'description' => 'See what your customers receive with SeaGeek SMS, WhatsApp, Mail, Voice, OTP codes, ID checks, AI, Desk and the no-code plug-ins, with prices in rand.']));
 $r->add('GET', '/pricing', fn() => render('site/pricing', ['title' => 'Pricing', 'nav' => 'pricing',
     'plans' => DB::all('SELECT * FROM plans WHERE active = 1 ORDER BY sort'), 'rates' => DB::all('SELECT * FROM rates ORDER BY service, price')]));
 $r->add('GET', '/desk', fn() => render('site/desk', ['title' => 'Desk', 'nav' => 'desk']));
@@ -953,6 +954,7 @@ $r->add('GET', '/sitemap.xml', function () {
     $urls[] = '/quote';
     $urls[] = '/startups';
     $urls[] = '/plugins';
+    $urls[] = '/products';
     foreach (DB::all('SELECT slug FROM articles WHERE org_id = ? AND published = 1', [Desk::house()['id']]) as $a) $urls[] = '/help/' . $a['slug'];
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
     foreach ($urls as $u) echo '<url><loc>' . e(app_url($u)) . '</loc></url>';
