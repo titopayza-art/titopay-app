@@ -1389,3 +1389,13 @@ tr.dim td { opacity: .55; }
 .access-row select { height: 36px; }
 @media (max-width: 560px) { .access-row { grid-template-columns: 1fr; } }
 #priv-grid .btn { max-width: 100%; white-space: normal; text-align: center; } #priv-grid > * { min-width: 0; }
+
+/* Floating chat launcher: keep it clear of page content. */
+@media (max-width: 720px) {
+  .sgw-fab { width: 56px; height: 56px; padding: 0 !important; justify-content: center; font-size: 0 !important; }
+  .sgw-fab svg { width: 22px !important; height: 22px !important; }
+  .sgw-panel { right: 12px; bottom: 80px; }
+}
+@media (min-width: 721px) {
+  .hero-content { padding-bottom: 96px; }
+}
