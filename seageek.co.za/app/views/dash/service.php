@@ -90,7 +90,7 @@ if ($svc === 'ai' && $first) $sample = json_encode(['provider' => 'anthropic', '
       <button class="btn btn-primary btn-sm">Save limits</button>
     </form>
   </div>
-  <div class="panel">
+  <div class="panel" id="agent">
     <?php $edit = $agents[0] ?? null; ?>
     <div class="panel-head"><h2>AI support agent</h2><?php if ($edit): ?><span class="mono small muted"><?= e($edit['public_id']) ?></span><?php endif; ?></div>
     <p class="muted small" style="margin-bottom:12px">Answers your customers in Desk, WhatsApp and the chat widget from your help centre and the notes below, and hands over to your team when it should.</p>

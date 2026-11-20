@@ -319,7 +319,15 @@ final class Billing
             $open = DB::one("SELECT * FROM invoices WHERE org_id = ? AND kind = 'plan' AND status = 'unpaid'", [$org['id']]);
             if ($open) continue;
             $plan = self::plan($org);
-            $inv = self::createInvoice($org, 'plan', (float) $plan['price'], $plan['name'] . ' plan, ' . gmdate('F Y'), $plan['code']);
+            $price = (float) $plan['price'];
+            $label = $plan['name'] . ' plan, ' . gmdate('F Y');
+            // Startup discount (or any agreed discount) while it lasts.
+            if ((int) $org['plan_discount_pct'] > 0 && $org['plan_discount_until'] && $org['plan_discount_until'] > now()) {
+                $price = round($price * (100 - min(100, (int) $org['plan_discount_pct'])) / 100, 2);
+                $label .= ' (' . (int) $org['plan_discount_pct'] . '% startup discount until ' . date('j M Y', strtotime($org['plan_discount_until'])) . ')';
+            }
+            if ($price <= 0) { DB::update('orgs', ['plan_renews_at' => gmdate('Y-m-d H:i:s', strtotime($org['plan_renews_at'] . ' +1 month'))], 'id = ?', [$org['id']]); continue; }
+            $inv = self::createInvoice($org, 'plan', $price, $label, $plan['code']);
             if ($org['auto_pay'] && (float) $org['balance'] >= (float) $inv['total']) {
                 try {
                     self::charge((int) $org['id'], (float) $inv['total'], 'plan', $inv['number'], 'Plan renewal paid from credit');
@@ -469,6 +477,7 @@ final class Cron
             'campaigns' => fn() => Campaigns::process(500),
             'store_reminders' => fn() => Stores::runScheduled(),
             'monitors' => fn() => Monitors::run(),
+            'assistants' => fn() => Assistants::runScheduled(),
             'xero' => fn() => Xero::sync(),
             'webhooks' => fn() => Webhooks::deliver(),
             'ops' => fn() => Ops::run(),

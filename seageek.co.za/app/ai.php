@@ -235,4 +235,111 @@ final class Ai
         foreach (DB::all('SELECT * FROM rates ORDER BY service, unit') as $r) $lines[] = "- {$r['label']}: " . zar($r['price'], $r['price'] < 1 ? 3 : 2) . " {$r['per']}";
         return implode("\n", $lines);
     }
+
+    /**
+     * One step of a tool-using conversation. $tools are provider-neutral: [name, description, schema].
+     * Returns the reply text, the tool calls to run, and 'assistant' (the provider's own reply, to send back unchanged).
+     * Anthropic: thinking and tool_use blocks are passed back exactly as received, which the API requires.
+     */
+    public static function toolTurn(string $provider, string $model, string $system, array $messages, array $tools, int $maxTokens, string $effort = 'medium'): array
+    {
+        $key = self::key($provider);
+        if ($key === '') throw new AiError(503, 'ai_not_configured', "The $provider provider is not configured.");
+        if ($provider === 'anthropic') {
+            $ap = DB::one("SELECT * FROM partners WHERE service = 'ai' AND driver = 'anthropic' ORDER BY active DESC, priority LIMIT 1");
+            $baseUrl = $ap ? trim((string) (Partners::config($ap)['base_url'] ?? '')) : '';
+            $client = $baseUrl !== '' ? new AnthropicClient(apiKey: $key, baseUrl: $baseUrl) : new AnthropicClient(apiKey: $key);
+            $defs = array_map(fn($t) => ['name' => $t[0], 'description' => $t[1], 'inputSchema' => $t[2]], $tools);
+            try {
+                $msg = $client->beta->messages->create(
+                    maxTokens: $maxTokens,
+                    messages: $messages,
+                    model: $model,
+                    system: $system,
+                    outputConfig: ['effort' => in_array($effort, ['low', 'medium', 'high'], true) ? $effort : 'medium'],
+                    tools: $defs ?: null,
+                    fallbacks: 'default',
+                    betas: ['server-side-fallback-2026-07-01'],
+                );
+            } catch (\Anthropic\Core\Exceptions\RateLimitException) {
+                throw new AiError(429, 'provider_rate_limited', 'The AI provider is busy. Try again shortly.');
+            } catch (\Anthropic\Core\Exceptions\AuthenticationException) {
+                throw new AiError(503, 'ai_not_configured', 'The AI provider key was rejected.');
+            } catch (\Anthropic\Core\Exceptions\BadRequestException $e) {
+                throw new AiError(400, 'invalid_request', 'The AI provider rejected the request: ' . mb_substr($e->getMessage(), 0, 200));
+            } catch (\Anthropic\Core\Exceptions\APIStatusException) {
+                throw new AiError(502, 'provider_error', 'The AI provider returned an error.');
+            } catch (\Anthropic\Core\Exceptions\APIConnectionException) {
+                throw new AiError(504, 'provider_unreachable', 'Could not reach the AI provider.');
+            }
+            $text = ''; $calls = [];
+            foreach ($msg->content as $block) {
+                if ($block->type === 'text') $text .= $block->text;
+                if ($block->type === 'tool_use') $calls[] = ['id' => (string) $block->id, 'name' => (string) $block->name, 'input' => is_array($block->input) ? $block->input : (array) json_decode((string) json_encode($block->input), true)];
+            }
+            return ['text' => trim($text), 'calls' => $msg->stopReason === 'tool_use' ? $calls : [], 'stop' => (string) $msg->stopReason,
+                'assistant' => ['role' => 'assistant', 'content' => $msg->content], 'input_tokens' => (int) $msg->usage->inputTokens, 'output_tokens' => (int) $msg->usage->outputTokens];
+        }
+        if ($provider === 'openai') {
+            $p = DB::one("SELECT * FROM partners WHERE service = 'ai' AND driver = 'openai' LIMIT 1");
+            $base = rtrim((string) (($p ? Partners::config($p)['base_url'] ?? '' : '') ?: 'https://api.openai.com/v1'), '/');
+            $body = ['model' => $model, 'max_completion_tokens' => $maxTokens, 'messages' => array_merge([['role' => 'system', 'content' => $system]], $messages)];
+            if ($tools) $body['tools'] = array_map(fn($t) => ['type' => 'function', 'function' => ['name' => $t[0], 'description' => $t[1], 'parameters' => $t[2]]], $tools);
+            $res = Http::request('POST', $base . '/chat/completions', ['Authorization' => 'Bearer ' . $key], $body, 90);
+            if ($res['error'] || $res['status'] === 429 || $res['status'] >= 500) { usleep(800000); $res = Http::request('POST', $base . '/chat/completions', ['Authorization' => 'Bearer ' . $key], $body, 90); }
+            if ($res['error']) throw new AiError(504, 'provider_unreachable', 'Could not reach the AI provider.');
+            if ($res['status'] === 429) throw new AiError(429, 'provider_rate_limited', 'The AI provider is busy. Try again shortly.');
+            if ($res['status'] === 401) throw new AiError(503, 'ai_not_configured', 'The AI provider key was rejected.');
+            if ($res['status'] !== 200) throw new AiError(502, 'provider_error', 'The AI provider returned an error: ' . mb_substr((string) ($res['json']['error']['message'] ?? $res['body']), 0, 200));
+            $m = $res['json']['choices'][0]['message'] ?? [];
+            $calls = [];
+            foreach ($m['tool_calls'] ?? [] as $c) $calls[] = ['id' => (string) $c['id'], 'name' => (string) ($c['function']['name'] ?? ''), 'input' => json_decode($c['function']['arguments'] ?? '{}', true) ?: []];
+            return ['text' => trim((string) ($m['content'] ?? '')), 'calls' => $calls, 'stop' => (string) ($res['json']['choices'][0]['finish_reason'] ?? ''),
+                'assistant' => array_filter(['role' => 'assistant', 'content' => $m['content'] ?? null, 'tool_calls' => $m['tool_calls'] ?? null], fn($v) => $v !== null),
+                'input_tokens' => (int) ($res['json']['usage']['prompt_tokens'] ?? 0), 'output_tokens' => (int) ($res['json']['usage']['completion_tokens'] ?? 0)];
+        }
+        throw new AiError(400, 'invalid_provider', 'provider must be anthropic or openai.');
+    }
+
+    /** The message that carries tool results back, in each provider's format. */
+    public static function toolResults(string $provider, array $results): array
+    {
+        if ($provider === 'anthropic') {
+            return [['role' => 'user', 'content' => array_map(fn($r) => ['type' => 'tool_result', 'toolUseID' => $r['id'], 'content' => $r['content']] + ($r['error'] ? ['isError' => true] : []), $results)]];
+        }
+        return array_map(fn($r) => ['role' => 'tool', 'tool_call_id' => $r['id'], 'content' => $r['content']], $results);
+    }
+
+    /** toolTurn with the customer's limits checked first and the cost charged in rand afterwards. */
+    public static function meteredToolTurn(array $org, string $provider, string $model, string $system, array $messages, array $tools, string $effort, string $reference): array
+    {
+        $m = Catalog::aiModel($provider, $model);
+        if (!$m) throw new AiError(400, 'invalid_model', 'Unknown model.');
+        $plan = Billing::plan($org);
+        $maxTokens = max(1024, min(16000, $org['ai_max_tokens'] ? min((int) $org['ai_max_tokens'], (int) $plan['ai_max_tokens']) : (int) $plan['ai_max_tokens']));
+        if (rate_limited('ai:' . $org['id'], max(20, (int) $plan['ai_rpm']), 60)) throw new AiError(429, 'ai_rate_limited', "Your plan allows {$plan['ai_rpm']} AI requests a minute.");
+        $price = Catalog::aiPrice($m);
+        $chars = mb_strlen($system) + mb_strlen((string) json_encode($messages, JSON_PARTIAL_OUTPUT_ON_ERROR));
+        $estimate = (($chars / 3) * $price['in'] + $maxTokens * $price['out']) / 1_000_000;
+        $house = !empty($org['is_house']);
+        if (!$house) {
+            $cap = Billing::aiCap($org);
+            $spent = Billing::aiSpentThisMonth((int) $org['id']);
+            if ($spent + $estimate > $cap) throw new AiError(429, 'ai_cap_reached', sprintf('This could take AI spending past your monthly cap of %s (spent so far %s). Raise the cap under AI, or wait for next month.', zar($cap), zar($spent)));
+            if (Billing::available($org) < $estimate) throw new AiError(402, 'insufficient_balance', 'Add credit to keep using your assistant.');
+        }
+        $res = self::toolTurn($provider, $model, $system, $messages, $tools, $maxTokens, $effort);
+        $amount = $house ? 0.0 : round(($res['input_tokens'] * $price['in'] + $res['output_tokens'] * $price['out']) / 1_000_000, 4);
+        $cost = round(($res['input_tokens'] * $price['cost_in'] + $res['output_tokens'] * $price['cost_out']) / 1_000_000, 4);
+        $id = public_id('ai');
+        if ($amount > 0) {
+            try { Billing::charge((int) $org['id'], $amount, 'usage', $id, "Assistant ($model), {$res['input_tokens']} in / {$res['output_tokens']} out tokens"); }
+            catch (InsufficientFunds) { DB::update('orgs', ['balance' => (float) DB::value('SELECT balance FROM orgs WHERE id = ?', [$org['id']]) - $amount], 'id = ?', [$org['id']]); }
+        }
+        $partner = DB::one("SELECT id FROM partners WHERE service = 'ai' AND driver = ? LIMIT 1", [$provider]);
+        DB::insert('messages', ['public_id' => $id, 'org_id' => $org['id'], 'env' => 'live', 'service' => 'ai', 'unit' => 'ai_tokens', 'quantity' => $res['input_tokens'] + $res['output_tokens'],
+            'amount' => $amount, 'cost' => $cost, 'partner_id' => $partner['id'] ?? null, 'status' => 'completed', 'reference' => mb_substr($reference, 0, 120),
+            'meta' => json_encode(['provider' => $provider, 'model' => $model, 'input_tokens' => $res['input_tokens'], 'output_tokens' => $res['output_tokens']]), 'created_at' => now(), 'updated_at' => now()]);
+        return $res + ['amount' => $amount];
+    }
 }

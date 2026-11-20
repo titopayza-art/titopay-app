@@ -96,3 +96,17 @@ Under Support desk, **Channels and rules** (`/admin/desk-settings` for SeaGeek, 
 - **Tidy up**: pending tickets are solved after the chosen quiet period (customer told), and solved tickets close 7 days later; a reply after that starts a follow-up.
 - **Tickets**: attachments both ways (10 MB, common document, image, audio and video types; stored in `storage/uploads/desk`, served by unguessable link), merge duplicates, colleague viewing/typing indicator, a warning before sending a reply that clashes with a newer message, AI draft and AI summary, and the requester's SeaGeek account beside SeaGeek's own tickets.
 - **Reports** (`/admin/desk-reports`): tickets per day and channel, share answered by AI alone, median first-reply and solve time, share within target, ratings and team workload.
+
+## AI assistants
+
+Customers create assistants under **AI assistants** in the dashboard, from six roles (personal assistant, project manager, sales, support lead, research and writing, policies and HR) or their own instructions.
+
+- **Tools**, switched on per assistant: tasks and projects (shared board at `/dashboard/work`), reminders by email or SMS, memory across conversations, knowledge from documents (Word, text, Markdown, CSV, HTML or a public web page; small sets go in every prompt, large ones are searched), email and SMS drafts, and Desk ticket lookup.
+- **Nothing goes out on its own**: emails and SMS are drafts with Send and Cancel buttons; approved emails reply to the person who approved them.
+- **Runs on SeaGeek AI** (Claude Opus 5.5 by default, any model in the AI list, with OpenAI as an option) using a tool-use loop of up to 8 steps per message, billed per step in rand and stopped by the account's monthly AI cap. Thinking and tool blocks are passed back to the model unchanged.
+- **Sharing**: team or private; a shared link (`/a/{token}`) lets outsiders ask about the assistant's knowledge only (no tasks, memory, tickets or drafts); and `POST /v1/assistants/{id}/messages` from the customer's own app (sandbox keys get a free simulated reply).
+- **Scheduled**: due reminders are sent and an optional morning email lists the day's tasks.
+
+## Startup offers
+
+`/startups` offers a lower price (launch credit, free Startup plan months, then a plan discount for a period, applied to renewal invoices) or an equity partnership (services credit and a longer free plan for a stake agreed in writing). Amounts are set under Admin, Settings, Startup programme; approvals are on the customer's page in Admin.

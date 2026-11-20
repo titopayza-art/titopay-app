@@ -7,7 +7,11 @@
     <div class="row"><div class="field"><label>Support email</label><input name="support_email" value="<?= $v('support_email') ?>"></div><div class="field"><label>Support hours</label><input name="support_hours" value="<?= $v('support_hours') ?>"></div></div>
     <div class="row"><div class="field"><label>Emails from (name)</label><input name="mail_from_name" value="<?= $v('mail_from_name') ?>"></div><div class="field"><label>Emails from (address)</label><input name="mail_from_address" value="<?= $v('mail_from_address') ?>"></div></div>
     <h2 style="margin-top:8px">Startup programme</h2>
+    <p class="muted small" style="margin:4px 0 8px">Lower price offer</p>
     <div class="row"><div class="field"><label>Launch credit (R)</label><input name="startup_credit" value="<?= $v('startup_credit') ?>" inputmode="decimal"></div><div class="field"><label>Startup plan free for (months)</label><input name="startup_plan_months" value="<?= $v('startup_plan_months') ?>" inputmode="numeric"></div></div>
+    <div class="row"><div class="field"><label>Then a discount of (%)</label><input name="startup_discount_pct" value="<?= $v('startup_discount_pct') ?>" inputmode="numeric"></div><div class="field"><label>For (months)</label><input name="startup_discount_months" value="<?= $v('startup_discount_months') ?>" inputmode="numeric"></div></div>
+    <p class="muted small" style="margin:4px 0 8px">Equity partnership</p>
+    <div class="row"><div class="field"><label>Services credit (R)</label><input name="startup_equity_credit" value="<?= $v('startup_equity_credit') ?>" inputmode="decimal"></div><div class="field"><label>Startup plan free for (months)</label><input name="startup_equity_months" value="<?= $v('startup_equity_months') ?>" inputmode="numeric"></div></div>
     <h2 style="margin-top:8px">VAT</h2>
     <div class="row"><div class="field"><label>VAT registered</label><select name="vat_registered"><option value="0">No</option><option value="1" <?= Settings::get('vat_registered') === '1' ? 'selected' : '' ?>>Yes</option></select></div><div class="field"><label>VAT number</label><input name="vat_number" value="<?= $v('vat_number') ?>"></div><div class="field"><label>Rate %</label><input name="vat_rate" value="<?= $v('vat_rate') ?>"></div></div>
     <h2 style="margin-top:8px">Bank details for EFT</h2>

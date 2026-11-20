@@ -15,7 +15,7 @@ $go = fn(string $path) => $signedIn ? $path : '/register';
 $groups = [
     'messaging' => ['Messaging', ['sms', 'whatsapp', 'mail', 'voice', 'campaigns']],
     'identity' => ['Sign-in and identity', ['auth', 'verify']],
-    'support' => ['AI and customer service', ['ai', 'desk', 'chat']],
+    'support' => ['AI assistants and customer service', ['assistants', 'ai', 'desk', 'chat']],
     'website' => ['Website and shop plug-ins', ['stores', 'forms', 'whatsapp_button', 'links', 'qr', 'monitor']],
 ];
 
@@ -41,6 +41,9 @@ $items = [
     'verify' => ['Verify', 'Check a South African ID number, a face photo, a company or a bank account in seconds.',
         ['Send the ID number, company number or bank details from your app or dashboard.', 'SeaGeek checks them with the official sources.', 'You get a clear result with each part matched or not.'],
         'From ' . $from('verify') . ' per check', '/dashboard/service/verify', '/docs/verify'],
+    'assistants' => ['AI assistants', 'Your own AI assistants for work and projects. They plan, keep your tasks, remind you, draft messages and answer from your documents.',
+        ['Pick a role: personal assistant, project manager, sales, support, research or HR, and add your documents.', 'Ask in plain words. It creates tasks and projects, sets reminders and drafts emails and SMS.', 'Nothing is sent until you press Send. Share it with your team, a customer link, or your own app.'],
+        'Pay per use from your credit, with a monthly cap', '/dashboard/assistants', '/docs/ai'],
     'ai' => ['SeaGeek AI', 'A smart assistant for your business: answers questions, writes replies and sorts messages, in many languages.',
         ['Add your help articles, prices and policies.', 'The AI answers customers instantly, using only what you gave it.', 'When it is unsure, it hands over to a person. You set a monthly spending cap.'],
         'Pay per use, with a spending cap', '/dashboard/service/ai', '/docs/ai'],
@@ -138,6 +141,13 @@ case 'sms': ?>
           <li class="d3"><span>Not on PEP or sanctions lists</span><i class="ok"></i></li>
           <li class="d3"><span>Bank account in her name</span><i class="ok"></i></li>
         </ul>
+      </div></div>
+<?php break; case 'assistants': ?>
+      <div class="chatwin asst-vis"><div class="cw-head"><b>Nandi · Project manager</b><small>Your assistant</small></div><div class="cw-body">
+        <div class="bub out d1">Plan the website relaunch for the next two weeks and email Thabo</div>
+        <div class="vis-done d2"><span>✓ Created project Website relaunch</span><span>✓ Task: Write home page copy, due Fri</span><span>✓ Task: Choose photos, due Mon</span></div>
+        <div class="bub in d2">Done. I set up the project with two tasks and drafted an email to Thabo.</div>
+        <div class="vis-draft d3"><b>Email to thabo@kasibites.co.za</b><span>Draft, needs your approval</span><i><em>Send</em><em>Cancel</em></i></div>
       </div></div>
 <?php break; case 'ai': ?>
       <div class="chatwin"><div class="cw-head"><b>Kasi Bites</b><small>Assistant replies straight away</small></div><div class="cw-body">

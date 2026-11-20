@@ -56,6 +56,9 @@ $openTickets = $isAdmin
       <a class="nav<?= $on('/dashboard/services') ?><?= $on('/dashboard/cart') ?>" href="/dashboard/services"><?= icon('box') ?>Services</a>
       <a class="nav<?= $on('/dashboard/keys') ?>" href="/dashboard/keys"><?= icon('key') ?>API keys</a>
       <a class="nav<?= $on('/dashboard/usage') ?>" href="/dashboard/usage"><?= icon('chart') ?>Usage &amp; logs</a>
+      <h6>Assistants</h6>
+      <a class="nav<?= $on('/dashboard/assistants') ?>" href="/dashboard/assistants"><?= icon('ai') ?>AI assistants</a>
+      <a class="nav<?= $on('/dashboard/work') ?>" href="/dashboard/work"><?= icon('check') ?>Projects and tasks</a>
       <h6>Plug-ins <a class="h6-link" href="/dashboard/plugins">All</a></h6>
       <a class="nav<?= $on('/dashboard/chat') ?>" href="/dashboard/chat"><?= icon('chat') ?>Website chat</a>
       <a class="nav<?= $on('/dashboard/forms') ?>" href="/dashboard/forms"><?= icon('form') ?>Website forms</a>

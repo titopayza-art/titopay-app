@@ -104,11 +104,12 @@ $r->add('GET|POST', '/startups', function () {
         if (rate_limited('startup:' . client_ip(), 5, 3600)) { flash('error', 'Too many applications from your connection. Try again later.'); redirect('/startups#apply'); }
         $email = (string) input('email');
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || trim((string) input('what')) === '' || trim((string) input('company')) === '') { flash('error', 'Add your email, startup name and what you are building.'); redirect('/startups#apply'); }
-        $body = "Startup programme application\n\nStartup: " . input('company') . "\nWebsite: " . (input('website') ?: '-') . "\nStage: " . input('stage')
+        $offer = ['discount' => 'Lower price', 'equity' => 'Equity partnership', 'unsure' => 'Not sure yet'][(string) input('offer')] ?? 'Not sure yet';
+        $body = "Startup programme application\n\nOffer wanted: $offer\nStartup: " . input('company') . "\nWebsite: " . (input('website') ?: '-') . "\nStage: " . input('stage')
             . "\nProducts: " . implode(', ', array_map('strval', (array) ($_POST['products'] ?? []))) . "\n\nWhat they are building:\n" . input('what')
-            . "\n\nTo approve: open their customer account in Admin and use Approve startup programme.";
+            . "\n\nTo approve: open their customer account in Admin and use Approve: lower price, or Approve: equity partnership (only after the stake is agreed in writing).";
         $t = Desk::createTicket((int) Desk::house()['id'], 'Startup application: ' . mb_substr((string) input('company'), 0, 80), $body, 'web',
-            ['name' => input('name'), 'email' => $email, 'phone' => input('phone')], 'normal', ['startup'], true);
+            ['name' => input('name'), 'email' => $email, 'phone' => input('phone')], 'normal', ['startup', input('offer') === 'equity' ? 'startup-equity' : 'startup-discount'], true);
         audit('startup.applied', null, (string) input('company'));
         flash('ok', "Thanks. Your application is #{$t['number']}. We reply within two working days.");
         redirect('/startups#apply');
@@ -597,7 +598,21 @@ function desk_inbox(array $org, string $base): never
     if ($q !== '') { $where .= ' AND (subject LIKE ? OR requester_email LIKE ? OR requester_name LIKE ?)'; array_push($args, "%$q%", "%$q%", "%$q%"); }
     $counts = [];
     foreach ($views as $k => $w) $counts[$k] = (int) DB::value("SELECT COUNT(*) FROM tickets WHERE org_id = ? AND $w", [$org['id']]);
-    render('dash/desk', ['title' => 'Desk', 'org' => $org, 'base' => $base, 'view' => $view, 'q' => $q, 'counts' => $counts, 'stats' => Desk::stats((int) $org['id']),
+    // A new company's first steps, shown until all are done.
+    $setup = [];
+    if (!$org['is_house']) {
+        $n = fn(string $sql) => (int) DB::value($sql, [$org['id']]);
+        $ds = DeskSettings::get($org);
+        $setup = [
+            ['Teach the AI your business', 'Add help articles: opening hours, prices, delivery, returns. The AI answers only from these.', '/dashboard/help-centre', $n('SELECT COUNT(*) FROM articles WHERE org_id = ? AND published = 1') >= 2],
+            ['Switch on your AI agent', 'Pick the model and add any instructions, such as your tone or what to never promise.', '/dashboard/service/ai#agent', $n('SELECT COUNT(*) FROM ai_agents WHERE org_id = ? AND active = 1') > 0],
+            ['Put the chat on your website', 'Copy one line into your site. Conversations arrive here.', '/dashboard/chat', $n("SELECT COUNT(*) FROM tickets WHERE org_id = ? AND channel = 'chat'") > 0 || !empty(json_decode((string) $org['chat_settings'], true))],
+            ['Connect your support email', 'Emails to your help@ address become tickets, and replies go back by email.', '/dashboard/desk-settings#email', $ds['mail']['mode'] === 'pop3'],
+            ['Invite your team', 'Add the people who answer customers, so tickets can be assigned.', '/dashboard/settings', $n('SELECT COUNT(*) FROM users WHERE org_id = ?') > 1],
+        ];
+        if (!array_filter($setup, fn($x) => !$x[3])) $setup = [];
+    }
+    render('dash/desk', ['title' => 'Desk', 'org' => $org, 'base' => $base, 'setup' => $setup, 'view' => $view, 'q' => $q, 'counts' => $counts, 'stats' => Desk::stats((int) $org['id']),
         'tickets' => DB::all("SELECT t.*, u.name assignee FROM tickets t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.org_id = ? AND $where ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT 200", $args)], 'app');
 }
 function desk_ticket(array $org, string $base, int $number): never
@@ -765,11 +780,28 @@ $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
                 if (!Auth::can('billing')) { flash('error', 'Approving the startup programme needs the Money permission.'); return; }
                 if (DB::one("SELECT id FROM ledger WHERE org_id = ? AND ref = 'startup'", [$org['id']])) { flash('error', 'This customer already received the startup programme.'); return; }
                 $credit = (float) Settings::get('startup_credit');
+                $free = (int) Settings::get('startup_plan_months');
+                $pct = max(0, min(100, (int) Settings::get('startup_discount_pct')));
+                $months = (int) Settings::get('startup_discount_months');
                 if ($credit > 0) Billing::credit((int) $org['id'], $credit, 'adjustment', 'startup', 'Startup programme launch credit');
-                DB::update('orgs', ['plan_code' => 'startup', 'plan_renews_at' => ts('+' . (int) Settings::get('startup_plan_months') . ' months')], 'id = ?', [$org['id']]);
+                $renews = ts("+$free months");
+                DB::update('orgs', ['plan_code' => 'startup', 'plan_renews_at' => $renews, 'plan_discount_pct' => $months > 0 ? $pct : 0,
+                    'plan_discount_until' => $months > 0 ? gmdate('Y-m-d H:i:s', strtotime($renews . " +$months months")) : null], 'id = ?', [$org['id']]);
                 Billing::maybeEnableLive((int) $org['id']);
-                audit('admin.startup_approved', (int) $org['id']);
-                flash('ok', 'Startup programme approved: ' . zar($credit) . ' credit and the Startup plan free for ' . (int) Settings::get('startup_plan_months') . ' months.');
+                audit('admin.startup_approved', (int) $org['id'], 'discount');
+                flash('ok', 'Lower-price offer approved: ' . zar($credit) . " credit, the Startup plan free for $free months, then $pct% off for $months months.");
+            })(),
+            'startup_equity' => (function () use ($org) {
+                if (!Auth::can('billing')) { flash('error', 'Approving an equity partnership needs the Money permission.'); return; }
+                if (!input('agreed')) { flash('error', 'Tick that the stake is agreed in writing first.'); return; }
+                if (DB::one("SELECT id FROM ledger WHERE org_id = ? AND ref = 'startup'", [$org['id']])) { flash('error', 'This customer already received a startup offer.'); return; }
+                $credit = (float) Settings::get('startup_equity_credit');
+                $months = (int) Settings::get('startup_equity_months');
+                if ($credit > 0) Billing::credit((int) $org['id'], $credit, 'adjustment', 'startup', 'Equity partnership: SeaGeek services credit');
+                DB::update('orgs', ['plan_code' => 'startup', 'plan_renews_at' => ts("+$months months"), 'plan_discount_pct' => 0, 'plan_discount_until' => null], 'id = ?', [$org['id']]);
+                Billing::maybeEnableLive((int) $org['id']);
+                audit('admin.startup_approved', (int) $org['id'], 'equity: ' . mb_substr((string) input('terms'), 0, 200));
+                flash('ok', 'Equity partnership approved: ' . zar($credit) . " credit and the Startup plan free for $months months.");
             })(),
             'act_as' => (function () use ($org) { $_SESSION['act_as_org'] = (int) $org['id']; audit('admin.act_as', (int) $org['id']); redirect('/dashboard'); })(),
             'service_on' => [Services::activate((int) $org['id'], (string) input('service'), true), audit('admin.service_on', (int) $org['id'], (string) input('service')), flash('ok', 'Service switched on.')],
@@ -1009,5 +1041,6 @@ require APP_DIR . '/routes_commerce.php';
 require APP_DIR . '/routes_growth.php';
 require APP_DIR . '/routes_tools.php';
 require APP_DIR . '/routes_desk.php';
+require APP_DIR . '/routes_assistants.php';
 
 return $r;

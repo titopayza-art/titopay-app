@@ -1,5 +1,14 @@
 <?php $root = str_starts_with($base, '/admin') ? '/admin' : '/dashboard'; ?>
 <div class="toolbar" style="justify-content:flex-end"><a class="btn btn-ghost btn-sm" href="<?= $root ?>/desk-reports">Reports</a><a class="btn btn-ghost btn-sm" href="<?= $root ?>/desk-settings">Channels and rules</a></div>
+<?php if (!empty($setup)): $done = count(array_filter($setup, fn($x) => $x[3])); ?>
+<div class="panel setup" style="margin-bottom:14px">
+  <div class="panel-head"><h2>Set up Desk in five steps</h2><span class="muted small"><?= $done ?> of <?= count($setup) ?> done</span></div>
+  <div class="setup-bar" role="progressbar" aria-valuenow="<?= $done ?>" aria-valuemin="0" aria-valuemax="<?= count($setup) ?>"><i style="width:<?= round($done / count($setup) * 100) ?>%"></i></div>
+  <ol class="setup-steps"><?php foreach ($setup as [$t, $d, $href, $ok]): ?>
+    <li class="<?= $ok ? 'done' : '' ?>"><span class="tick" aria-hidden="true"></span><div><b><?= e($t) ?></b><small><?= e($d) ?></small></div><?php if (!$ok): ?><a class="btn btn-ghost btn-xs" href="<?= e($href) ?>">Do it</a><?php else: ?><span class="muted small">Done</span><?php endif; ?></li>
+  <?php endforeach; ?></ol>
+</div>
+<?php endif; ?>
 <?php $labels = ['open' => 'Open', 'mine' => 'Mine', 'ai' => 'AI handling', 'pending' => 'Pending', 'breached' => 'Overdue', 'solved' => 'Solved', 'all' => 'All']; ?>
 <div class="grid cols-4">
   <div class="panel stat"><div class="k">Open</div><div class="v"><?= $stats['open'] ?></div><div class="d"><?= $stats['pending'] ?> waiting on customer</div></div>

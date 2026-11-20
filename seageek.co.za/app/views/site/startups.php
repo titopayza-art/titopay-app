@@ -8,7 +8,16 @@ $months = (int) Settings::get('startup_plan_months');
 $startup = DB::one("SELECT * FROM plans WHERE code = 'startup'");
 ?>
 <section class="section" style="padding-top:56px"><div class="wrap">
-  <div class="section-head"><h2>What you get</h2></div>
+  <div class="section-head"><h2>Two ways to start</h2><p class="lead">Pick the one that suits where your startup is today. Both include everything below.</p></div>
+  <div class="offer-grid">
+    <div class="card offer"><span class="k">Option 1</span><h3>Lower price</h3>
+      <ul class="plain"><li><?= zar($credit, 0) ?> launch credit</li><li>The Startup plan free for <?= $months ?> months</li><li>Then <?= (int) Settings::get('startup_discount_pct') ?>% off your plan for <?= (int) Settings::get('startup_discount_months') ?> more months</li><li>Pay as you grow, no contract</li></ul>
+      <p class="muted small">Best when you have some revenue or funding and want to keep full ownership.</p></div>
+    <div class="card offer"><span class="k">Option 2</span><h3>Equity partnership</h3>
+      <ul class="plain"><li><?= zar((float) Settings::get('startup_equity_credit'), 0) ?> of SeaGeek services credit</li><li>The Startup plan free for <?= (int) Settings::get('startup_equity_months') ?> months</li><li>In exchange for a small stake in your company</li><li>Terms agreed with you and signed before anything starts</li></ul>
+      <p class="muted small">Best when cash is tight and you want SeaGeek invested in your success. We take on a few partners at a time.</p></div>
+  </div>
+  <div class="section-head" style="margin-top:56px"><h2>What you get</h2></div>
   <div class="grid-3">
     <div class="card"><span class="k">Launch credit</span><h3><?= zar($credit, 0) ?> of free credit</h3><p>Spend it on any product: SMS, email, WhatsApp, OTP codes, ID checks, AI, QR codes or store SMS.</p></div>
     <div class="card"><span class="k">Startup plan</span><h3>Free for <?= $months ?> months</h3><p>Normally <?= zar($startup['price'] ?? 299, 0) ?> a month, with <?= zar($startup['included_credit'] ?? 150, 0) ?> of usage credit included every month.</p></div>
@@ -38,6 +47,9 @@ $startup = DB::one("SELECT * FROM plans WHERE code = 'startup'");
     <div class="row"><div class="field"><label for="s-company">Startup name</label><input id="s-company" name="company" required></div><div class="field"><label for="s-site">Website (optional)</label><input id="s-site" name="website" placeholder="https://"></div></div>
     <div class="row"><div class="field"><label for="s-phone">Phone (optional)</label><input id="s-phone" name="phone" type="tel"></div><div class="field"><label for="s-stage">Stage</label><select id="s-stage" name="stage"><option>Idea</option><option>Building the product</option><option>Launched, no revenue yet</option><option>Launched, earning revenue</option></select></div></div>
     <div class="field"><label for="s-what">What are you building?</label><textarea id="s-what" name="what" required placeholder="Who it is for and how you would use SeaGeek"></textarea></div>
+    <fieldset class="field" style="border:0;padding:0;margin:0"><legend style="margin-bottom:6px">Which offer interests you?</legend>
+      <div class="choice-row"><?php foreach (['discount' => ['Lower price', 'Credit, free months, then a discount'], 'equity' => ['Equity partnership', 'Services for a small stake'], 'unsure' => ['Not sure yet', "We'll help you choose"]] as $k => [$t, $d]): ?><label class="choice"><input type="radio" name="offer" value="<?= $k ?>" <?= $k === 'discount' ? 'checked' : '' ?>><span><b><?= e($t) ?></b><small><?= e($d) ?></small></span></label><?php endforeach; ?></div>
+    </fieldset>
     <fieldset class="field" style="border:0;padding:0;margin:0"><legend style="margin-bottom:6px">Products you plan to use</legend>
       <div class="pick-grid"><?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned' || in_array($k, ['qr', 'stores'], true)) continue; ?><label class="consent"><input type="checkbox" name="products[]" value="<?= e($s['name']) ?>"><span><?= e($s['name']) ?></span></label><?php endforeach; ?></div>
     </fieldset>

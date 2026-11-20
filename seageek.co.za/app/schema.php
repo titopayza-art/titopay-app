@@ -181,6 +181,26 @@ final class Schema
                 "ALTER TABLE tickets ADD COLUMN last_customer_at {TS}",
                 "ALTER TABLE orgs ADD COLUMN desk_settings {TEXT}",
             ],
+            7 => [
+                // Startup offers: a plan discount for a period
+                "ALTER TABLE orgs ADD COLUMN plan_discount_pct INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE orgs ADD COLUMN plan_discount_until {TS}",
+                // Assistants: AI agents people and companies deploy for work and projects
+                "CREATE TABLE assistants (id {PK}, public_id VARCHAR(40) NOT NULL UNIQUE, org_id {ID} NOT NULL, owner_id {ID}, name VARCHAR(80) NOT NULL, role VARCHAR(40) NOT NULL, instructions {TEXT}, provider VARCHAR(20) NOT NULL, model VARCHAR(60) NOT NULL, effort VARCHAR(10) NOT NULL DEFAULT 'medium', tools VARCHAR(500) NOT NULL DEFAULT '', color VARCHAR(7) NOT NULL DEFAULT '#5fe3cf', shared INTEGER NOT NULL DEFAULT 1, share_token VARCHAR(48), brief_hour INTEGER, brief_last VARCHAR(10), status VARCHAR(20) NOT NULL DEFAULT 'active', created_at {TS} NOT NULL, updated_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE assistant_docs (id {PK}, assistant_id {ID} NOT NULL, title VARCHAR(200) NOT NULL, source VARCHAR(20) NOT NULL, content {TEXT} NOT NULL, chars INTEGER NOT NULL, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX assistant_docs_a ON assistant_docs (assistant_id)",
+                "CREATE TABLE assistant_memory (id {PK}, assistant_id {ID} NOT NULL, fact VARCHAR(500) NOT NULL, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE assistant_chats (id {PK}, public_id VARCHAR(40) NOT NULL UNIQUE, assistant_id {ID} NOT NULL, user_id {ID}, guest VARCHAR(120), title VARCHAR(160) NOT NULL, created_at {TS} NOT NULL, updated_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX assistant_chats_a ON assistant_chats (assistant_id, updated_at)",
+                "CREATE TABLE assistant_messages (id {PK}, chat_id {ID} NOT NULL, role VARCHAR(12) NOT NULL, content {TEXT} NOT NULL, actions {TEXT}, amount {MONEY} NOT NULL DEFAULT 0, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX assistant_messages_c ON assistant_messages (chat_id, id)",
+                "CREATE TABLE assistant_actions (id {PK}, assistant_id {ID} NOT NULL, chat_id {ID}, kind VARCHAR(20) NOT NULL, payload {TEXT} NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', result VARCHAR(255), decided_by {ID}, created_at {TS} NOT NULL, decided_at {TS}){ENGINE}",
+                "CREATE TABLE projects (id {PK}, org_id {ID} NOT NULL, name VARCHAR(120) NOT NULL, description {TEXT}, status VARCHAR(20) NOT NULL DEFAULT 'active', due_on VARCHAR(10), created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE tasks (id {PK}, org_id {ID} NOT NULL, project_id {ID}, title VARCHAR(200) NOT NULL, notes {TEXT}, status VARCHAR(10) NOT NULL DEFAULT 'todo', priority VARCHAR(10) NOT NULL DEFAULT 'normal', due_on VARCHAR(10), assignee_id {ID}, created_by VARCHAR(60), created_at {TS} NOT NULL, done_at {TS}){ENGINE}",
+                "CREATE INDEX tasks_org ON tasks (org_id, status, due_on)",
+                "CREATE TABLE reminders (id {PK}, org_id {ID} NOT NULL, assistant_id {ID}, user_id {ID}, message VARCHAR(500) NOT NULL, channel VARCHAR(10) NOT NULL DEFAULT 'email', due_at {TS} NOT NULL, sent_at {TS}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX reminders_due ON reminders (sent_at, due_at)",
+            ],
         ];
     }
 

@@ -111,7 +111,7 @@ final class Gateway
             ['POST', '#^whatsapp/messages$#', 'sendWhatsapp'], ['GET', '#^whatsapp/messages/([\w-]+)$#', 'getMessage'], ['GET', '#^whatsapp/numbers$#', 'waNumbers'],
             ['POST', '#^verify/checks$#', 'verifyCheck'], ['GET', '#^verify/checks/([\w-]+)$#', 'getMessage'],
             ['POST', '#^voice/calls$#', 'voiceCall'], ['GET', '#^voice/calls/([\w-]+)$#', 'getMessage'],
-            ['POST', '#^ai/chat$#', 'aiChat'], ['GET', '#^ai/models$#', 'aiModels'], ['POST', '#^ai/agents/([\w-]+)/messages$#', 'aiAgent'],
+            ['POST', '#^ai/chat$#', 'aiChat'], ['GET', '#^ai/models$#', 'aiModels'], ['POST', '#^ai/agents/([\w-]+)/messages$#', 'aiAgent'], ['POST', '#^assistants/([\w-]+)/messages$#', 'assistantMessage'],
             ['POST', '#^desk/tickets$#', 'deskCreate'], ['GET', '#^desk/tickets$#', 'deskList'], ['POST', '#^desk/tickets/(\d+)/replies$#', 'deskReply'],
             ['POST', '#^qr/codes$#', 'qrCreate'], ['GET', '#^qr/codes$#', 'qrList'], ['GET', '#^qr/codes/([\w-]+)$#', 'qrGet'], ['POST', '#^qr/codes/([\w-]+)$#', 'qrUpdate'],
         ];
@@ -599,6 +599,27 @@ final class Gateway
         return [200, ['id' => $r['id'], 'provider' => self::p('provider'), 'model' => $r['model'], 'content' => $r['text'],
             'usage' => ['input_tokens' => $r['input_tokens'], 'output_tokens' => $r['output_tokens']], 'amount' => $r['amount'], 'currency' => 'ZAR',
             'limits' => ['month_spent' => round($r['spent'], 2), 'month_cap' => $r['cap']]]];
+    }
+
+    /** Talk to one of your assistants from your own app. Sandbox keys get a simulated reply at no cost. */
+    private static function assistantMessage(string $pid): array
+    {
+        $org = self::$ctx['org'];
+        $a = DB::one("SELECT * FROM assistants WHERE public_id = ? AND org_id = ? AND status = 'active'", [$pid, $org['id']]);
+        if (!$a) throw new ApiError(404, 'not_found', 'No active assistant with that ID.');
+        $text = trim((string) self::p('message', true));
+        if (mb_strlen($text) > 8000) throw new ApiError(422, 'message_too_long', 'message can be up to 8,000 characters.');
+        $chatId = (string) (self::p('chat_id') ?? '');
+        $chat = $chatId !== '' ? DB::one('SELECT * FROM assistant_chats WHERE public_id = ? AND assistant_id = ?', [$chatId, $a['id']]) : null;
+        if ($chatId !== '' && !$chat) throw new ApiError(404, 'not_found', 'Unknown chat_id.');
+        $chat ??= Assistants::newChat($a, null, 'api');
+        if (self::$ctx['env'] !== 'live') {
+            return [200, ['chat_id' => $chat['public_id'], 'reply' => 'Sandbox reply from ' . $a['name'] . '. Use a live key for real answers; nothing was done or charged.', 'actions' => [], 'approvals' => [], 'amount' => 0]];
+        }
+        $owner = DB::one('SELECT * FROM users WHERE id = ?', [$a['owner_id']]);
+        $res = Assistants::reply($a, $chat, $text, $owner);
+        return [200, ['chat_id' => $chat['public_id'], 'reply' => $res['text'], 'actions' => $res['actions'],
+            'approvals' => array_map(fn($id) => ['id' => $id, 'status' => 'pending', 'approve_in' => app_url('/dashboard/assistants/' . $a['public_id'])], $res['approvals']), 'amount' => round($res['amount'], 4), 'currency' => 'ZAR']];
     }
 
     private static function aiAgent(string $agentId): array
