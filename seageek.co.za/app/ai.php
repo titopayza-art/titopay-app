@@ -72,6 +72,8 @@ final class Ai
      */
     public static function complete(string $provider, string $model, string $system, array $messages, int $maxTokens, bool $allowHandover = false): array
     {
+        $system = Privacy::mask($system)[0];
+        $messages = Privacy::maskPayload($messages);
         $key = self::key($provider);
         if ($key === '') throw new AiError(503, 'ai_not_configured', "The $provider provider is not configured.");
         $handoverSchema = ['type' => 'object', 'properties' => ['reason' => ['type' => 'string', 'description' => 'One sentence for the human agent explaining why.']], 'required' => ['reason']];
@@ -152,6 +154,7 @@ final class Ai
      */
     public static function meteredChat(array $org, string $env, string $provider, string $model, string $system, array $messages, ?int $maxTokens, bool $allowHandover = false, string $reference = ''): array
     {
+        if (!Privacy::aiAllowed($org)) throw new AiError(403, 'ai_data_off', 'AI is switched off for your company\'s data. Turn it on under Privacy in your dashboard.');
         $m = Catalog::aiModel($provider, $model);
         if (!$m) throw new AiError(400, 'invalid_model', 'Unknown model. See GET /v1/ai/models.');
         $plan = Billing::plan($org);
@@ -243,6 +246,8 @@ final class Ai
      */
     public static function toolTurn(string $provider, string $model, string $system, array $messages, array $tools, int $maxTokens, string $effort = 'medium'): array
     {
+        $system = Privacy::mask($system)[0];
+        $messages = Privacy::maskPayload($messages);
         $key = self::key($provider);
         if ($key === '') throw new AiError(503, 'ai_not_configured', "The $provider provider is not configured.");
         if ($provider === 'anthropic') {
@@ -313,6 +318,7 @@ final class Ai
     /** toolTurn with the customer's limits checked first and the cost charged in rand afterwards. */
     public static function meteredToolTurn(array $org, string $provider, string $model, string $system, array $messages, array $tools, string $effort, string $reference): array
     {
+        if (!Privacy::aiAllowed($org)) throw new AiError(403, 'ai_data_off', 'AI is switched off for your company\'s data. Turn it on under Privacy in your dashboard.');
         $m = Catalog::aiModel($provider, $model);
         if (!$m) throw new AiError(400, 'invalid_model', 'Unknown model.');
         $plan = Billing::plan($org);

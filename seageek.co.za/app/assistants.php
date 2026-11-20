@@ -395,7 +395,7 @@ final class Assistants
                 if ($step === 7) $final = $final ?: 'I did several steps but ran out of turns. Here is where things stand: ' . implode('; ', $actions);
             }
         } catch (AiError $e) {
-            $final = in_array($e->type, ['ai_cap_reached', 'insufficient_balance', 'ai_rate_limited'], true) ? $e->getMessage() : 'Sorry, I could not answer just now (' . $e->getMessage() . '). Please try again.';
+            $final = in_array($e->type, ['ai_cap_reached', 'insufficient_balance', 'ai_rate_limited', 'ai_data_off'], true) ? $e->getMessage() : 'Sorry, I could not answer just now (' . $e->getMessage() . '). Please try again.';
             log_line('assistants', "{$a['public_id']}: " . $e->getMessage());
         }
         if ($final === '') $final = $actions ? 'Done.' : 'I am not sure how to help with that. Could you say a bit more?';

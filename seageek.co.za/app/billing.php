@@ -478,6 +478,7 @@ final class Cron
             'store_reminders' => fn() => Stores::runScheduled(),
             'monitors' => fn() => Monitors::run(),
             'assistants' => fn() => Assistants::runScheduled(),
+            'retention' => fn() => (int) gmdate('i') < 5 ? Privacy::runAll() : 'waiting for the hour',
             'xero' => fn() => Xero::sync(),
             'webhooks' => fn() => Webhooks::deliver(),
             'ops' => fn() => Ops::run(),

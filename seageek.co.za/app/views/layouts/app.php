@@ -59,6 +59,7 @@ $openTickets = $isAdmin
       <h6>Assistants</h6>
       <a class="nav<?= $on('/dashboard/assistants') ?>" href="/dashboard/assistants"><?= icon('ai') ?>AI assistants</a>
       <a class="nav<?= $on('/dashboard/work') ?>" href="/dashboard/work"><?= icon('check') ?>Projects and tasks</a>
+      <?php if (Team::allows($u, 'marketing', 'view')): ?><a class="nav<?= $on('/dashboard/wa-templates') ?>" href="/dashboard/wa-templates"><?= icon('chat') ?>WhatsApp templates</a><?php endif; ?>
       <h6>Plug-ins <a class="h6-link" href="/dashboard/plugins">All</a></h6>
       <a class="nav<?= $on('/dashboard/chat') ?>" href="/dashboard/chat"><?= icon('chat') ?>Website chat</a>
       <a class="nav<?= $on('/dashboard/forms') ?>" href="/dashboard/forms"><?= icon('form') ?>Website forms</a>
@@ -83,6 +84,7 @@ $openTickets = $isAdmin
       <a class="nav<?= $on('/dashboard/webhooks') ?>" href="/dashboard/webhooks"><?= icon('webhook') ?>Webhooks</a>
       <a class="nav" href="/docs" target="_blank" rel="noopener"><?= icon('code') ?>API docs</a>
       <h6>Account</h6>
+      <?php if (Team::allows($u, 'team', 'view')): ?><a class="nav<?= $on('/dashboard/activity') ?>" href="/dashboard/activity"><?= icon('check') ?>Activity log</a><a class="nav<?= $on('/dashboard/privacy') ?>" href="/dashboard/privacy"><?= icon('shield') ?>Privacy and data</a><?php endif; ?>
       <a class="nav<?= $on('/dashboard/settings') ?>" href="/dashboard/settings"><?= icon('cog') ?>Settings &amp; team</a>
     <?php endif; ?>
     <div class="side-foot">

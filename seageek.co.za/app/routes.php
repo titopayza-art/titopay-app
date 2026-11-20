@@ -46,6 +46,17 @@ function require_org(): array
     Auth::requireUser();
     $org = Auth::org();
     if (!$org) redirect('/admin');
+    $u = Auth::user();
+    // SeaGeek staff acting for a customer keep full access; team members are checked against their own access.
+    if (empty($u['is_admin'])) {
+        $area = Team::areaFor(rtrim((string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH), '/'));
+        $need = is_post() ? 'edit' : 'view';
+        if (!Team::allows($u, $area, $need)) {
+            audit('access.denied', (int) $org['id'], $area . ' ' . $need . ' ' . (parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: ''));
+            http_response_code(403);
+            render('dash/denied', ['title' => 'Not allowed', 'area' => Team::AREAS[$area][0] ?? $area, 'need' => $need, 'org' => $org], 'app');
+        }
+    }
     return $org;
 }
 
@@ -568,23 +579,46 @@ $r->add('GET|POST', '/dashboard/settings', function () {
             if ($p = Auth::passwordProblem((string) input('new'))) { flash('error', $p); redirect('/dashboard/settings'); }
             DB::update('users', ['password_hash' => password_hash((string) input('new'), PASSWORD_DEFAULT)], 'id = ?', [$u['id']]);
             flash('ok', 'Password changed.');
+        } elseif (input('action') === 'perms' && $u['role'] === 'owner' && (int) input('id') !== (int) $u['id']) {
+            $m = DB::one('SELECT * FROM users WHERE id = ? AND org_id = ?', [(int) input('id'), $org['id']]);
+            if ($m) {
+                Team::save((int) $m['id'], (array) ($_POST['lvl'] ?? []));
+                audit('team.access_changed', (int) $org['id'], $m['email']);
+                flash('ok', 'Access updated for ' . $m['name'] . '.');
+            }
         } elseif (input('action') === 'invite' && $u['role'] === 'owner') {
             $email = strtolower((string) input('email'));
             if (!filter_var($email, FILTER_VALIDATE_EMAIL) || DB::one('SELECT id FROM users WHERE email = ?', [$email])) { flash('error', 'That email is invalid or already has an account.'); redirect('/dashboard/settings'); }
-            $role = in_array(input('role'), ['agent', 'developer', 'billing'], true) ? input('role') : 'agent';
+            $role = array_key_exists(input('role'), Team::ROLES) && input('role') !== 'owner' ? input('role') : 'agent';
             if ($role === 'agent' && (int) DB::value("SELECT COUNT(*) FROM users WHERE org_id = ? AND role IN ('owner','agent')", [$org['id']]) >= (int) Billing::plan($org)['desk_agents']) {
                 flash('error', 'Your plan has no free Desk agent seats. Upgrade to add more.'); redirect('/dashboard/settings');
             }
             $uid = DB::insert('users', ['org_id' => $org['id'], 'name' => mb_substr((string) input('name'), 0, 120) ?: $email, 'email' => $email, 'password_hash' => password_hash(Crypto::token(), PASSWORD_DEFAULT), 'role' => $role, 'email_verified_at' => now(), 'created_at' => now()]);
+            Team::save($uid, (array) ($_POST['lvl'] ?? Team::defaultsFor($role)));
+            audit('team.invited', (int) $org['id'], $email . ' as ' . Team::ROLES[$role]);
             Mail::queue($email, "You've been added to {$org['name']} on SeaGeek", 'invite', ['org' => $org, 'by' => $u, 'link' => app_url('/reset/' . Auth::issueToken($uid, 'reset', '+3 days'))]);
             flash('ok', "Invitation sent to $email.");
         } elseif (input('action') === 'remove_user' && $u['role'] === 'owner' && (int) input('id') !== (int) $u['id']) {
+            $gone = DB::one('SELECT email FROM users WHERE id = ? AND org_id = ?', [(int) input('id'), $org['id']]);
             DB::run('DELETE FROM users WHERE id = ? AND org_id = ?', [(int) input('id'), $org['id']]);
+            audit('team.removed', (int) $org['id'], (string) ($gone['email'] ?? ''));
             flash('ok', 'User removed.');
         }
         redirect('/dashboard/settings');
     }
     render('dash/settings', ['title' => 'Settings', 'org' => $org, 'u' => $u, 'team' => DB::all('SELECT * FROM users WHERE org_id = ? ORDER BY id', [$org['id']]), 'plan' => Billing::plan($org)], 'app');
+});
+
+$r->add('GET', '/dashboard/activity', function () {
+    $org = require_org();
+    $u = Auth::user();
+    $who = (int) ($_GET['user'] ?? 0);
+    $sql = 'SELECT a.*, u.name uname, u.email uemail FROM audit_log a LEFT JOIN users u ON u.id = a.user_id WHERE a.org_id = ?';
+    $args = [$org['id']];
+    if ($who) { $sql .= ' AND a.user_id = ?'; $args[] = $who; }
+    render('dash/activity', ['title' => 'Activity', 'org' => $org, 'me' => $u, 'who' => $who,
+        'people' => DB::all('SELECT id, name FROM users WHERE org_id = ? ORDER BY name', [$org['id']]),
+        'rows' => DB::all($sql . ' ORDER BY a.id DESC LIMIT 300', $args)], 'app');
 });
 
 // Desk (shared by customers and SeaGeek staff)
@@ -636,14 +670,17 @@ function desk_ticket(array $org, string $base, int $number): never
                 [$stored, $refused] = DeskFiles::fromUpload((int) $t['id'], $msgId);
                 return $stored;
             });
+            audit(input('internal') ? 'desk.note' : 'desk.reply', (int) $org['id'], '#' . $t['number'] . ' ' . mb_substr((string) $t['subject'], 0, 60));
             flash($refused ? 'error' : 'ok', (input('internal') ? 'Note added.' : 'Reply sent.') . ($refused ? ' Not attached (type or size not allowed): ' . implode(', ', $refused) . '.' : ''));
         } elseif ($a === 'update') {
             DB::update('tickets', ['priority' => in_array(input('priority'), Desk::PRIORITIES, true) ? input('priority') : $t['priority'], 'assignee_id' => (int) input('assignee_id') ?: null, 'tags' => mb_substr((string) input('tags'), 0, 255), 'status' => in_array(input('status'), Desk::STATUSES, true) ? input('status') : $t['status']], 'id = ?', [$t['id']]);
+            audit('desk.update', (int) $org['id'], '#' . $t['number'] . ' status ' . input('status') . ', priority ' . input('priority'));
             flash('ok', 'Ticket updated.');
         } elseif ($a === 'merge') {
             $dst = DB::one('SELECT * FROM tickets WHERE org_id = ? AND number = ?', [$org['id'], (int) ltrim((string) input('into'), '#')]);
             if (!$dst || (int) $dst['id'] === (int) $t['id'] || $dst['merged_into']) { flash('error', 'Enter the number of another open ticket to merge into.'); redirect("$base/$number"); }
             DeskFlow::merge($t, $dst, (int) Auth::id());
+            audit('desk.merge', (int) $org['id'], '#' . $t['number'] . ' into #' . $dst['number']);
             flash('ok', "Merged #{$t['number']} into #{$dst['number']}.");
             redirect("$base/{$dst['number']}");
         } elseif ($a === 'summarise') {
@@ -1042,5 +1079,6 @@ require APP_DIR . '/routes_growth.php';
 require APP_DIR . '/routes_tools.php';
 require APP_DIR . '/routes_desk.php';
 require APP_DIR . '/routes_assistants.php';
+require APP_DIR . '/routes_business.php';
 
 return $r;

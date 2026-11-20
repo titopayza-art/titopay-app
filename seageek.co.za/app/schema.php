@@ -181,6 +181,14 @@ final class Schema
                 "ALTER TABLE tickets ADD COLUMN last_customer_at {TS}",
                 "ALTER TABLE orgs ADD COLUMN desk_settings {TEXT}",
             ],
+            8 => [
+                // Team access per area, data protection settings, and WhatsApp message templates
+                "ALTER TABLE users ADD COLUMN team_access {TEXT}",
+                "ALTER TABLE orgs ADD COLUMN ai_data_allowed INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE orgs ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 365",
+                "CREATE TABLE wa_templates (id {PK}, org_id {ID} NOT NULL, name VARCHAR(60) NOT NULL, category VARCHAR(20) NOT NULL, language VARCHAR(10) NOT NULL, header_type VARCHAR(10) NOT NULL DEFAULT 'none', header_text VARCHAR(60), body {TEXT} NOT NULL, footer VARCHAR(60), buttons {TEXT}, samples {TEXT}, status VARCHAR(20) NOT NULL DEFAULT 'draft', created_at {TS} NOT NULL, updated_at {TS} NOT NULL){ENGINE}",
+                "CREATE UNIQUE INDEX wa_templates_u ON wa_templates (org_id, name, language)",
+            ],
             7 => [
                 // Startup offers: a plan discount for a period
                 "ALTER TABLE orgs ADD COLUMN plan_discount_pct INTEGER NOT NULL DEFAULT 0",

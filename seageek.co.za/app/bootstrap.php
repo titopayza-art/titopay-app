@@ -22,6 +22,10 @@ require __DIR__ . '/tools.php';
 require __DIR__ . '/ops.php';
 require __DIR__ . '/desk_plus.php';
 require __DIR__ . '/assistants.php';
+require __DIR__ . '/team.php';
+require __DIR__ . '/privacy.php';
+require __DIR__ . '/wa_templates.php';
+require __DIR__ . '/build.php';
 require __DIR__ . '/docs.php';
 
 date_default_timezone_set('UTC');

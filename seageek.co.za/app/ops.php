@@ -22,6 +22,7 @@ final class Ops
         'store_reminders' => 'Send abandoned-cart reminders for stores',
         'monitors' => 'Check customer websites',
         'assistants' => 'Send assistant reminders and morning briefs',
+        'retention' => 'Delete old conversations as each company chose',
         'xero' => 'Copy invoices and payments to Xero',
         'webhooks' => 'Deliver webhooks to customer systems',
         'email' => 'Send queued email',

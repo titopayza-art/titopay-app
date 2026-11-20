@@ -110,3 +110,13 @@ Customers create assistants under **AI assistants** in the dashboard, from six r
 ## Startup offers
 
 `/startups` offers a lower price (launch credit, free Startup plan months, then a plan discount for a period, applied to renewal invoices) or an equity partnership (services credit and a longer free plan for a stake agreed in writing). Amounts are set under Admin, Settings, Startup programme; approvals are on the customer's page in Admin.
+
+## Team access, data protection, WhatsApp templates and build services
+
+- **Team access** (Settings, Team): each person gets one level per area (no access, can see, can change). Areas: overview, money, API, support desk, marketing and plug-ins, assistants and tasks, and team/privacy/activity. Invitations pick a role that pre-fills the access, which can then be changed. Every page checks access before it runs, and refused attempts are logged. Owners always have full access.
+- **Activity log** (Activity log): every change, who made it and when. Entries are not editable.
+- **Privacy and data** (Privacy and data): AI on or off for the company's data; retention from 30 days to forever (the default is 12 months); a daily-to-hourly job deletes old closed or solved conversations and their files, never open work; owners can download everything held for the company as JSON (no passwords, key values or secrets).
+- **Before AI sees data**: card numbers, South African ID numbers (checked against the ID format and checksum), bank account numbers, passwords and secret keys are replaced with a note. Names, emails and phone numbers are kept.
+- **WhatsApp templates**: create message templates with a heading, body values, footer and up to three buttons (website, phone, quick reply), with a live phone preview. Templates are submitted for WhatsApp approval and can only be sent once approved. Until the WhatsApp connection is live, sends run in the sandbox and are not delivered or charged.
+- **Build services** (/build): once-off offers with a three-question chooser, a seven-day timeline simulation, and requests that land in the support inbox. Prices exclude VAT and hosting.
+- **Ecommerce plug-ins**: the WooCommerce plug-in and the PHP drop-in are checked end to end, including the signed request to the store endpoint and a rejected forged signature.

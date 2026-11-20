@@ -1381,3 +1381,11 @@ tr.dim td { opacity: .55; }
 .side-block svg { width: 15px; height: 15px; vertical-align: -2px; color: var(--warn); }
 #as-grid input { max-width: 100%; } #as-grid p { overflow-wrap: anywhere; }
 #as-grid input[type=file] { width: 100%; font-size: 14px; } #as-grid details, #as-grid details form { min-width: 0; max-width: 100%; }
+
+/* Team access */
+.access-grid { display: grid; gap: 8px; margin-top: 10px; }
+.access-row { display: grid; grid-template-columns: minmax(0,1fr) 190px; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.access-row small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.4; margin-top: 2px; }
+.access-row select { height: 36px; }
+@media (max-width: 560px) { .access-row { grid-template-columns: 1fr; } }
+#priv-grid .btn { max-width: 100%; white-space: normal; text-align: center; } #priv-grid > * { min-width: 0; }
