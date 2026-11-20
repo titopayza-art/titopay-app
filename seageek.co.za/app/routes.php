@@ -728,6 +728,9 @@ $r->add('GET|POST', '/admin/pricing', function () {
             DB::update('packages', ['price' => max(0, (float) $v['price']), 'credit' => max(0, (float) $v['credit']), 'active' => !empty($v['active']) ? 1 : 0], 'code = ?', [$code]);
         }
         foreach (['usd_zar', 'ai_markup_pct'] as $k) if (input($k) !== null) Settings::set($k, (string) (float) input($k));
+        foreach ((array) ($_POST['svcswitch'] ?? []) as $svc => $v) {
+            if (isset(Catalog::baseServices()[$svc]) && in_array($v, ['auto', 'on', 'off'], true)) Settings::set('service_switch_' . $svc, $v === 'auto' ? '' : $v);
+        }
         audit('admin.pricing_saved');
         flash('ok', 'Pricing saved. New prices apply to the next request.');
         redirect('/admin/pricing');
@@ -748,6 +751,10 @@ $r->add('GET|POST', '/admin/settings', function () {
     $me = Auth::requireAdmin('settings');
     if (is_post()) {
         csrf_check();
+        if (input('action') === 'test_ai') {
+            foreach (Ai::selfTest() as $prov => $r) flash($r['ok'] ? 'ok' : 'error', ucfirst($prov) . ': ' . ($r['ok'] ? 'working, ' . $r['ms'] . ' ms. ' : 'not working. ') . $r['detail']);
+            redirect('/admin/settings#ai');
+        }
         if (input('action') === 'test_email') {
             $to = filter_var(input('to'), FILTER_VALIDATE_EMAIL) ? (string) input('to') : $me['email'];
             $html = view('emails/test', ['subject' => 'SeaGeek test email'], 'email');

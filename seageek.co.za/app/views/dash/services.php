@@ -66,4 +66,11 @@ $labels = ['active' => ['green', 'Active'], 'pending' => ['amber', 'Pending appr
     <?php if (!$any): ?><tr><td class="empty">No services switched on yet. Pick them above.</td></tr><?php endif; ?>
   </tbody></table></div>
 </div>
-<p class="muted small" style="margin-top:14px">Coming in 2028: Notify (push notifications) and Sign (electronic signatures).</p>
+<?php $soon = array_filter(Catalog::services(), fn($x) => in_array($x['status'], ['soon', 'planned'], true)); if ($soon): ?>
+<div class="panel flush" style="margin-top:14px">
+  <div class="panel-head"><h2>Coming soon</h2><span class="muted">Build against these now with a sandbox key</span></div>
+  <div class="tbl-wrap"><table class="tbl"><tbody>
+  <?php foreach ($soon as $k => $x): ?><tr><td><?= icon($x['icon'], 'ic-inline') ?> <?= e($x['name']) ?></td><td class="muted small"><?= e($x['summary']) ?></td><td><span class="pill blue"><?= e(Catalog::statusLabel($x['status'])) ?></span></td></tr><?php endforeach; ?>
+  </tbody></table></div>
+</div>
+<?php endif; ?>

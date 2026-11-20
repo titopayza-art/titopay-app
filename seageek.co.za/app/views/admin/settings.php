@@ -49,3 +49,9 @@
   <div class="panel-head"><h2>Send a test email</h2><span class="muted">Save your settings first</span></div>
   <div class="toolbar" style="margin:0"><input name="to" type="email" placeholder="<?= e(Auth::user()['email']) ?>" style="min-width:260px"><button class="btn btn-ghost btn-sm">Send test email</button></div>
 </form>
+
+<form method="post" class="panel" style="margin-top:14px" id="ai"><?= csrf_field() ?><input type="hidden" name="action" value="test_ai">
+  <div class="panel-head"><h2>Test SeaGeek AI</h2><span class="muted">Sends one tiny request to each AI provider with a saved key</span></div>
+  <p class="muted small">If one provider is busy or down, the chat and Desk agents switch to the other automatically, so keep both keys saved under Wholesale partners.</p>
+  <button class="btn btn-ghost btn-sm" style="margin-top:10px">Test Anthropic and OpenAI</button>
+</form>

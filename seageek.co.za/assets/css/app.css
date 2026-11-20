@@ -981,3 +981,6 @@ ul.plain li::before { content: ""; position: absolute; left: 0; top: .7em; width
 .docs-results a span { white-space: normal; }
 .docs-steps > li { padding-top: 1px; scroll-margin-top: 100px; }
 .docs-steps > li::before { top: 42px; }
+
+.when.on { color: var(--accent); }
+.side .nav small.soon { margin-left: auto; font-size: 12px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 6px; padding: 0 6px; }

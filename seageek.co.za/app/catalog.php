@@ -133,7 +133,30 @@ final class Catalog
     // API documentation
     // -------------------------------------------------------------------
 
+    /**
+     * Products with their status for this installation: a product whose partners are not set up
+     * yet shows as "soon" (Coming soon) everywhere until an admin switches it on.
+     */
     public static function services(): array
+    {
+        static $cache = null;
+        if ($cache !== null) return $cache;
+        $all = self::baseServices();
+        try {
+            foreach ($all as $k => &$s) if (in_array($s['status'], ['live', 'beta'], true) && !Services::enabled($k)) $s['status'] = 'soon';
+            unset($s);
+            return $cache = $all;
+        } catch (Throwable) {
+            return $all; // before installation there is no database to ask
+        }
+    }
+
+    public static function statusLabel(string $status): ?string
+    {
+        return ['beta' => 'Beta', 'soon' => 'Coming soon', 'planned' => 'Planned'][$status] ?? null;
+    }
+
+    public static function baseServices(): array
     {
         $p = fn($name, $type, $req, $desc) => compact('name', 'type', 'req', 'desc');
         return [

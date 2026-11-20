@@ -1,5 +1,15 @@
 <form method="post"><?= csrf_field() ?>
 <div class="panel flush">
+  <div class="panel-head"><h2>Products on sale</h2><span class="muted">Automatic: a product goes on sale when its partner is set up. Until then customers see Coming soon.</span></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Product</th><th>Shown to customers as</th><th>Switch</th></tr></thead><tbody>
+  <?php foreach (Catalog::baseServices() as $k => $bs): if ($bs['status'] === 'planned') continue; $now = Catalog::services()[$k]['status']; $sw = Settings::get('service_switch_' . $k) ?: 'auto'; ?>
+    <tr><td><?= icon($bs['icon'], 'ic-inline') ?> <?= e($bs['name']) ?></td><td><span class="pill <?= $now === 'soon' ? 'blue' : 'green' ?>"><?= e(Catalog::statusLabel($now) ?? 'Available') ?></span></td>
+      <td><select name="svcswitch[<?= e($k) ?>]" aria-label="Switch for <?= e($bs['name']) ?>"><?php foreach (['auto' => 'Automatic', 'on' => 'Always on sale', 'off' => 'Coming soon'] as $v => $l): ?><option value="<?= $v ?>" <?= $sw === $v ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></td></tr>
+  <?php endforeach; ?>
+  </tbody></table></div>
+</div>
+<div style="margin-top:14px"></div>
+<div class="panel flush">
   <div class="panel-head"><h2>Plans</h2><span class="muted">Limits are enforced on every API and AI request</span></div>
   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Plan</th><th>Price (R/mo)</th><th>Included credit</th><th>Usage discount %</th><th>AI cap (R/mo)</th><th>AI max tokens</th><th>AI req/min</th><th>API req/s</th><th>Desk seats</th><th>WA numbers</th><th>Active</th></tr></thead><tbody>
   <?php foreach ($plans as $p): $n = 'plan[' . e($p['code']) . ']'; ?><tr><td><b><?= e($p['name']) ?></b></td>

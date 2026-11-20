@@ -23,7 +23,7 @@ $groups = ['Messaging' => ['sms', 'mail', 'whatsapp', 'voice'], 'Identity and se
   <?php foreach ($keys as $k): $sv = Catalog::services()[$k]; ?>
     <a class="docs-product" href="/docs/<?= $k ?>">
       <span class="product-icon"><?= icon($sv['icon']) ?></span>
-      <span><b><?= e($sv['name']) ?></b><?php if ($sv['status'] !== 'live'): ?> <small class="muted"><?= $sv['status'] === 'beta' ? 'Beta' : 'Planned' ?></small><?php endif; ?><span class="muted"><?= e($sv['summary']) ?></span></span>
+      <span><b><?= e($sv['name']) ?></b><?php if ($sv['status'] !== 'live'): ?> <small class="muted"><?= e((string) Catalog::statusLabel($sv['status'])) ?></small><?php endif; ?><span class="muted"><?= e($sv['summary']) ?></span></span>
     </a>
   <?php endforeach; ?>
 </div>

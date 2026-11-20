@@ -16,12 +16,15 @@ $samples = function (array $ep) use ($base): array {
 };
 $pageTitle = $s['name'] . ($slug === 'stores' || $slug === 'qr' ? '' : ' API');
 $lead = $s['summary'];
-$badge = $s['status'] === 'live' ? null : ($s['status'] === 'beta' ? ['amber', 'Beta'] : ['', 'Planned']);
+$badge = ['beta' => ['amber', 'Beta'], 'soon' => ['blue', 'Coming soon'], 'planned' => ['', 'Planned']][$s['status']] ?? null;
 require __DIR__ . '/_top.php';
 $req = Docs::requirements($slug);
 ?>
 <p class="docs-intro"><?= e($s['intro']) ?></p>
 
+<?php if ($s['status'] === 'soon'): ?>
+  <div class="callout"><b>Coming soon.</b> This product is being connected to our network partners. You can build and test against it now with a sandbox key; live keys work as soon as it launches.</div>
+<?php endif; ?>
 <?php if ($s['status'] === 'planned'): ?>
   <div class="callout">This product is not available yet. Tell us what you need at <a class="link" href="mailto:hello@seageek.co.za">hello@seageek.co.za</a> and we will let you know when it opens.</div>
 <?php else: ?>

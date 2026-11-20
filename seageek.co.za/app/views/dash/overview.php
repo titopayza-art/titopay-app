@@ -73,6 +73,7 @@ $aiPct = $aiCap > 0 ? min(100, round($aiSpent / $aiCap * 100)) : 0;
       <a class="svc" href="<?= ['desk' => '/dashboard/desk', 'qr' => '/dashboard/qr', 'stores' => '/dashboard/stores'][$k] ?? '/dashboard/service/' . $k ?>">
         <?php $sst = $k === 'desk' ? 'active' : ($svcStatus[$k] ?? 'inactive');
           [$pcls, $plabel] = match (true) {
+              $s['status'] === 'soon' => ['blue', 'Coming soon'],
               $sst === 'active' && $org['live_enabled'] && $org['status'] === 'active' => ['green', 'Live'],
               $sst === 'active' => ['violet', 'Sandbox'],
               $sst === 'pending' => ['amber', 'Pending'],

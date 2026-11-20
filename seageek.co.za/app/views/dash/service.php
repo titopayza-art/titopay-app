@@ -8,7 +8,7 @@ if ($svc === 'ai' && $first) $sample = json_encode(['provider' => 'anthropic', '
 ?>
 <div class="grid cols-3">
   <div class="panel span-2">
-    <div class="panel-head"><h2><?= e($s['name']) ?></h2><span class="pill <?= $s['status'] === 'live' ? 'green' : 'amber' ?>"><?= $s['status'] === 'live' ? 'Available' : 'Beta' ?></span></div>
+    <div class="panel-head"><h2><?= e($s['name']) ?></h2><span class="pill <?= ['live' => 'green', 'beta' => 'amber', 'soon' => 'blue'][$s['status']] ?? '' ?>"><?= e(Catalog::statusLabel($s['status']) ?? 'Available') ?></span></div>
     <p class="muted"><?= e($s['summary']) ?></p>
     <p class="muted small" style="margin-top:8px"><?= e($s['intro']) ?></p>
     <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-ghost btn-sm" href="/docs/<?= e($svc) ?>" target="_blank" rel="noopener">Read the <?= e($s['name']) ?> docs</a></div>

@@ -42,54 +42,54 @@
 
     <div class="products">
       <article class="product wide">
-        <div class="product-top"><div class="product-icon"><?= icon('sms') ?></div><span class="when">Q1 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('sms') ?></div><span class="when<?= in_array(Catalog::services()['sms']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['sms']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>SMS</h3>
         <p>Bulk, transactional and OTP messages with delivery receipts, scheduling, templates and sender IDs.</p>
         <ul><li>Bulk and transactional</li><li>OTP</li><li>Delivery receipts</li><li>Scheduling</li></ul>
       </article>
       <article class="product wide">
-        <div class="product-top"><div class="product-icon"><?= icon('mail') ?></div><span class="when">Q1 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('mail') ?></div><span class="when<?= in_array(Catalog::services()['mail']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['mail']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>Mail</h3>
         <p>Transactional and marketing email with templates, bounce handling, suppression lists and help setting up SPF, DKIM and DMARC.</p>
         <ul><li>Templates</li><li>Bounces</li><li>Suppression lists</li><li>Analytics</li></ul>
       </article>
       <article class="product">
-        <div class="product-top"><div class="product-icon"><?= icon('auth') ?></div><span class="when">Q2 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('auth') ?></div><span class="when<?= in_array(Catalog::services()['auth']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['auth']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>Auth</h3>
         <p>OTP, multi-factor, passkeys and passwordless sign-in, with rate limiting and risk checks.</p>
       </article>
       <article class="product">
-        <div class="product-top"><div class="product-icon"><?= icon('notify') ?></div><span class="when">Q2 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('notify') ?></div><span class="when<?= in_array(Catalog::services()['notify']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['notify']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>Notify</h3>
         <p>Web and mobile push with segments, scheduling, user preferences and fallback to SMS or email.</p>
       </article>
       <article class="product">
-        <div class="product-top"><div class="product-icon"><?= icon('ai') ?></div><span class="when">Q2 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('ai') ?></div><span class="when<?= in_array(Catalog::services()['ai']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['ai']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>AI</h3>
         <p>Chat and support agents that answer from your own knowledge base and hand over to a person when needed.</p>
       </article>
       <article class="product">
-        <div class="product-top"><div class="product-icon"><?= icon('whatsapp') ?></div><span class="when">Q3 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('whatsapp') ?></div><span class="when<?= in_array(Catalog::services()['whatsapp']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['whatsapp']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>WhatsApp</h3>
         <p>WhatsApp Business Platform messaging with approved templates, a shared inbox and automated replies.</p>
       </article>
       <article class="product">
-        <div class="product-top"><div class="product-icon"><?= icon('verify') ?></div><span class="when">Q4 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('verify') ?></div><span class="when<?= in_array(Catalog::services()['verify']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['verify']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>Verify</h3>
         <p>Identity, document and business checks, plus PEP and sanctions screening, with an audit record of each check.</p>
       </article>
       <article class="product">
-        <div class="product-top"><div class="product-icon"><?= icon('voice') ?></div><span class="when">2028</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('voice') ?></div><span class="when<?= in_array(Catalog::services()['voice']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['voice']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>Voice</h3>
         <p>Voice OTP, IVR menus, call routing, outbound calls and AI receptionists.</p>
       </article>
       <article class="product wide">
-        <div class="product-top"><div class="product-icon"><?= icon('sign') ?></div><span class="when">2028</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('sign') ?></div><span class="when<?= in_array(Catalog::services()['sign']['status'] ?? 'planned', ['live','beta'], true) ? ' on' : '' ?>"><?= e(Catalog::statusLabel(Catalog::services()['sign']['status'] ?? 'planned') ?? 'Available') ?></span></div>
         <h3>Sign</h3>
         <p>Prepare documents, invite signers and run approvals, with an audit trail. Signers can be identity-checked first.</p>
       </article>
       <article class="product wide">
-        <div class="product-top"><div class="product-icon"><?= icon('connect') ?></div><span class="when">Q1 2027</span></div>
+        <div class="product-top"><div class="product-icon"><?= icon('connect') ?></div><span class="when">Available</span></div>
         <h3>Connect</h3>
         <p>The layer under every product: API keys, webhooks, workflows, integrations, usage reports and SDKs.</p>
       </article>
@@ -166,7 +166,7 @@ msg = sg.sms.<span class="tok-f">send</span>(
         <div class="partner"><div class="product-icon"><?= icon('whatsapp') ?></div><h3>WhatsApp</h3><div class="names">360dialog, ChatReach</div><p>WhatsApp Business Platform access.</p></div>
         <div class="partner"><div class="product-icon"><?= icon('verify') ?></div><h3>KYC / AML</h3><div class="names">Teruza, VerifyNow</div><p>Identity checks and screening data.</p></div>
         <div class="partner"><div class="product-icon"><?= icon('mail') ?></div><h3>Email</h3><div class="names">Amazon SES</div><p>Transactional and bulk email.</p></div>
-        <div class="partner"><div class="product-icon"><?= icon('ai') ?></div><h3>AI</h3><div class="names">OpenAI API</div><p>Language models for SeaGeek AI.</p></div>
+        <div class="partner"><div class="product-icon"><?= icon('ai') ?></div><h3>AI</h3><div class="names">Anthropic, OpenAI</div><p>Claude and GPT models for SeaGeek AI.</p></div>
         <div class="partner"><div class="product-icon"><?= icon('voice') ?></div><h3>Voice</h3><div class="names">Zephyr, Cloud Telecoms</div><p>Voice OTP, IVR and call routing.</p></div>
       </div>
       <p class="partners-note">Commercial agreements with these providers are being finalised and may change. Trademarks belong to their owners. Naming a provider here does not mean it endorses SeaGeek.</p>

@@ -61,7 +61,7 @@ $openTickets = $isAdmin
       <a class="nav<?= $on('/dashboard/qr') ?>" href="/dashboard/qr"><?= icon('qr') ?>QR codes</a>
       <h6>API environments</h6>
       <?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned' || in_array($k, ['desk', 'qr', 'stores'], true)) continue; $act = ($svcStatus[$k] ?? 'inactive') === 'active'; ?>
-        <a class="nav<?= $on('/dashboard/service/' . $k) ?><?= $act ? '' : ' dim' ?>" href="/dashboard/service/<?= $k ?>"<?= $act ? '' : ' title="Not switched on: sandbox only"' ?>><?= icon($s['icon']) ?><?= e($s['name']) ?></a>
+        <a class="nav<?= $on('/dashboard/service/' . $k) ?><?= $act ? '' : ' dim' ?>" href="/dashboard/service/<?= $k ?>"<?= $act ? '' : ' title="Not switched on: sandbox only"' ?>><?= icon($s['icon']) ?><?= e($s['name']) ?><?= $s['status'] === 'soon' ? '<small class="soon">Soon</small>' : '' ?></a>
       <?php endforeach; ?>
       <h6>Desk</h6>
       <a class="nav<?= $on('/dashboard/desk') ?>" href="/dashboard/desk"><?= icon('desk') ?>Tickets<?= $openTickets ? '<span class="badge">' . $openTickets . '</span>' : '' ?></a>

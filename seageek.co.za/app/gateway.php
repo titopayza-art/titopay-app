@@ -37,6 +37,10 @@ final class Gateway
                 if (!$org['live_enabled']) throw new ApiError(403, 'live_not_enabled', 'Live access turns on after your first payment. Use a sandbox key until then.');
             }
             $svc = explode('/', $path)[0];
+            $cat = Catalog::services()[$svc] ?? null;
+            if ($env === 'live' && $cat && $cat['status'] === 'soon') {
+                throw new ApiError(403, 'service_coming_soon', $cat['name'] . ' is coming soon and not available for live traffic yet. Sandbox keys work now.');
+            }
             if ($env === 'live' && isset(Services::sellable()[$svc])) {
                 $st = Services::status((int) $org['id'], $svc);
                 if ($st !== 'active') {

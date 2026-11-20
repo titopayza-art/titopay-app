@@ -109,11 +109,18 @@ final class Desk
         if ($history[0]['role'] !== 'user') array_shift($history);
 
         $system = Ai::agentSystemPrompt($org, empty($agent['house']) ? $agent : null);
+        $run = fn(string $prov, string $model) => !empty($agent['house'])
+            ? Ai::complete($prov, $model, $system, $history, 1024, true)
+            : Ai::meteredChat($org, $env, $prov, $model, $system, $history, 1024, (bool) $agent['handover'], 'ticket-' . $ticket['id']);
         try {
-            if (!empty($agent['house'])) {
-                $res = Ai::complete($agent['provider'], $agent['model'], $system, $history, 1024, true);
-            } else {
-                $res = Ai::meteredChat($org, $env, $agent['provider'], $agent['model'], $system, $history, 1024, (bool) $agent['handover'], 'ticket-' . $ticket['id']);
+            try {
+                $res = $run($agent['provider'], $agent['model']);
+            } catch (AiError $e) {
+                // One provider busy or down: answer with the other one instead of making the customer wait.
+                $fb = Ai::transient($e) ? Ai::fallbackFor($agent['provider']) : null;
+                if (!$fb) throw $e;
+                log_line('ai', 'Agent on ticket ' . $ticket['id'] . ' switched to ' . $fb[0] . ': ' . $e->getMessage());
+                $res = $run($fb[0], $fb[1]);
             }
         } catch (Throwable $e) {
             log_line('ai', 'Agent failed on ticket ' . $ticket['id'] . ': ' . $e->getMessage());

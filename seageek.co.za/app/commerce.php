@@ -10,7 +10,32 @@ final class Services
     /** Services a customer can switch on (planned products are listed but not sold). */
     public static function sellable(): array
     {
-        return array_filter(Catalog::services(), fn($s) => $s['status'] !== 'planned');
+        return array_filter(Catalog::services(), fn($s) => in_array($s['status'], ['live', 'beta'], true));
+    }
+
+    /**
+     * Whether a product is switched on for this platform. Admins can force it on or off
+     * (setting service_switch_<key>); by default it is on only when its partners are set up.
+     */
+    public static function enabled(string $svc): bool
+    {
+        $sw = Settings::get('service_switch_' . $svc);
+        if ($sw === 'on') return true;
+        if ($sw === 'off') return false;
+        $ready = function (string $service): bool {
+            foreach (DB::all('SELECT * FROM partners WHERE service = ? AND active = 1', [$service]) as $p) {
+                $cfg = Partners::config($p);
+                if (trim((string) ($cfg['url'] ?? $cfg['api_key'] ?? $cfg['access_key'] ?? $cfg['key'] ?? '')) !== '') return true;
+            }
+            return false;
+        };
+        return match ($svc) {
+            'desk', 'qr' => true,
+            'ai' => Ai::configured('anthropic') || Ai::configured('openai'),
+            'auth' => $ready('sms') || $ready('mail'),
+            'stores' => $ready('sms'),
+            default => $ready($svc),
+        };
     }
 
     /** @return array<string,string> service => active | pending | inactive */

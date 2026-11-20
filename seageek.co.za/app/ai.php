@@ -30,6 +30,42 @@ final class Ai
         return self::key($provider) !== '';
     }
 
+    /** The other provider and its default model, when it is set up: used when one provider is down. */
+    public static function fallbackFor(string $provider): ?array
+    {
+        $other = $provider === 'anthropic' ? 'openai' : 'anthropic';
+        if (!self::configured($other)) return null;
+        $model = Settings::get('chat_model_' . $other);
+        return Catalog::aiModel($other, $model) ? [$other, $model] : null;
+    }
+
+    /** Errors worth trying again or trying elsewhere: busy, down or unreachable providers. */
+    public static function transient(AiError $e): bool
+    {
+        return in_array($e->status, [429, 500, 502, 503, 504], true) && $e->type !== 'ai_cap_reached' && $e->type !== 'ai_rate_limited';
+    }
+
+    /**
+     * Quick health check for the admin console: one tiny request per configured provider.
+     * @return array<string, array{ok:bool, ms:int, detail:string}>
+     */
+    public static function selfTest(): array
+    {
+        $out = [];
+        foreach (['anthropic', 'openai'] as $prov) {
+            if (!self::configured($prov)) { $out[$prov] = ['ok' => false, 'ms' => 0, 'detail' => 'No API key saved']; continue; }
+            $model = Settings::get('chat_model_' . $prov);
+            $t = microtime(true);
+            try {
+                $r = self::complete($prov, $model, 'Reply with the single word OK.', [['role' => 'user', 'content' => 'Health check']], 16);
+                $out[$prov] = ['ok' => true, 'ms' => (int) ((microtime(true) - $t) * 1000), 'detail' => $model . ' replied "' . mb_strimwidth($r['text'], 0, 40, '…') . '"'];
+            } catch (Throwable $e) {
+                $out[$prov] = ['ok' => false, 'ms' => (int) ((microtime(true) - $t) * 1000), 'detail' => $e->getMessage()];
+            }
+        }
+        return $out;
+    }
+
     /**
      * One model call. Returns text, token usage and whether the model asked to hand over to a person.
      * @param array<int, array{role:string, content:string}> $messages
@@ -90,6 +126,10 @@ final class Ai
                 $body['tools'] = [['type' => 'function', 'function' => ['name' => self::HANDOVER_TOOL, 'description' => $handoverDesc, 'parameters' => $handoverSchema]]];
             }
             $res = Http::request('POST', $base . '/chat/completions', ['Authorization' => 'Bearer ' . $key], $body, 60);
+            if ($res['error'] || $res['status'] === 429 || $res['status'] >= 500) { // one retry for a busy or flaky moment
+                usleep(800000);
+                $res = Http::request('POST', $base . '/chat/completions', ['Authorization' => 'Bearer ' . $key], $body, 60);
+            }
             if ($res['error']) throw new AiError(504, 'provider_unreachable', 'Could not reach the AI provider.');
             if ($res['status'] === 429) throw new AiError(429, 'provider_rate_limited', 'The AI provider is busy. Try again shortly.');
             if ($res['status'] === 401) throw new AiError(503, 'ai_not_configured', 'The AI provider key was rejected.');

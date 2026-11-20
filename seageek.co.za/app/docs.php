@@ -33,7 +33,7 @@ final class Docs
             $nav[$group][] = [$title, '/docs/' . $slug, $slug, null];
         }
         foreach (Catalog::services() as $k => $s) {
-            $nav['Products'][] = [$s['name'], '/docs/' . $k, $k, $s['status'] === 'live' ? null : ($s['status'] === 'beta' ? 'Beta' : 'Planned')];
+            $nav['Products'][] = [$s['name'], '/docs/' . $k, $k, Catalog::statusLabel($s['status'])];
         }
         foreach (self::guides() as $slug => [$title, $group]) if ($group === 'Reference') $nav['Reference'][] = [$title, '/docs/' . $slug, $slug, null];
         $nav['Reference'][] = ['OpenAPI spec', '/docs/openapi.json', 'openapi', 'JSON'];
