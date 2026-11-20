@@ -1,0 +1,15 @@
+SET search_path TO tr;
+ALTER TABLE refunds ADD CONSTRAINT refunds_maker_checker CHECK (decided_by IS NULL OR requested_by IS NULL OR decided_by <> requested_by) NOT VALID;
+DROP TABLE IF EXISTS support_messages;
+DROP INDEX IF EXISTS support_cases_organiser_idx;
+ALTER TABLE support_cases DROP COLUMN IF EXISTS transferred_at;
+ALTER TABLE support_cases DROP COLUMN IF EXISTS handled_by;
+ALTER TABLE support_cases DROP COLUMN IF EXISTS event_id;
+ALTER TABLE support_cases DROP COLUMN IF EXISTS organiser_id;
+DROP TRIGGER IF EXISTS users_email_key_trg ON users;
+DROP FUNCTION IF EXISTS tr.users_email_key();
+DROP INDEX IF EXISTS users_phone_idx;
+DROP INDEX IF EXISTS users_email_key_idx;
+ALTER TABLE users DROP COLUMN IF EXISTS guest;
+ALTER TABLE users DROP COLUMN IF EXISTS email_key;
+DROP FUNCTION IF EXISTS tr.email_key(text);
