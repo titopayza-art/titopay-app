@@ -6,6 +6,23 @@ Status key: **Built** means the code is in place and tested against a stand-in o
 
 ## 1. Server and database
 
+**Hosting partner: Afrihost.** Production will run on Afrihost hosting. Before go-live, confirm the items in the table below with Afrihost and record their answers here.
+
+| Confirm with Afrihost | Why it matters | Answer |
+|---|---|---|
+| Plan that supports PHP 8.3, PDO and cURL | The app requires them | |
+| MySQL or MariaDB version and whether a database can be created per environment | Production database; MySQL path still under test | |
+| Cron access that can run every minute (`php cli.php cron`) | Billing, reminders, queued sends, webhooks | |
+| SSH or file-manager access and a way to write `app/config.php` outside the web root | Holds `app_key`; must not be publicly readable | |
+| Outbound HTTPS and SMTP (ports 587/465) allowed | Partner APIs, PayFast, Anthropic/OpenAI, SES | |
+| Free SSL certificate on the production domain | Webhooks and payments require HTTPS | |
+| Daily backups and how to restore them, plus a copy of `app_key` kept off the server | Restore has to be tested, not assumed | |
+| Data centre location and whether it is in South Africa | Relevant to POPIA and customer trust statements | |
+| Support hours and escalation contact | Launch-week incidents | |
+
+Do not describe Afrihost's data centre location, uptime or plan limits in customer-facing material until Afrihost has confirmed them in writing.
+
+
 | Item | Where | Notes |
 |---|---|---|
 | PHP 8.3 with PDO, curl, mbstring, openssl, json | Host | Checked by the installer |
