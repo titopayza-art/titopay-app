@@ -6,8 +6,8 @@
  *   php cli.php worker             keep sending queued messages, email and webhooks (run under systemd/supervisor)
  *   php cli.php create-admin EMAIL NAME   first owner (more staff: Admin, Staff)
  *   php cli.php test-email ADDRESS     send one email through the configured delivery
- *   php cli.php backup FILE.json   export every table to JSON (for moving servers)
- *   php cli.php restore FILE.json  import a backup into an empty, migrated database
+ *   php cli.php backup [FILE]      export every table (gzipped JSON); nightly backups go to storage/backups
+ *   php cli.php restore FILE       import a backup (.json or .json.gz) into a migrated database
  */
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') exit("CLI only\n");
@@ -48,20 +48,20 @@ switch ($cmd) {
         echo $ok ? "Sent with driver " . Mail::driver() . ".\n" : "Failed (" . Mail::driver() . "): $err\n";
         break;
     case 'backup':
-        $file = $argv[2] ?? ('backup-' . gmdate('Ymd-His') . '.json');
-        $tables = ['settings', 'orgs', 'users', 'api_keys', 'plans', 'rates', 'packages', 'partners', 'messages', 'ledger', 'invoices', 'invoice_items', 'payments', 'org_services', 'quotes', 'bank_lines',
-            'otp_codes', 'webhook_deliveries', 'email_outbox', 'wa_numbers', 'ai_agents', 'tickets', 'ticket_messages', 'macros', 'articles', 'audit_log', 'jobs', 'idempotency',
-            'qr_codes', 'qr_scans', 'stores', 'store_events', 'contact_lists', 'contacts', 'opt_outs', 'message_templates', 'campaigns', 'campaign_recipients', 'schema_migrations'];
-        $out = [];
-        foreach ($tables as $t) $out[$t] = DB::all("SELECT * FROM $t");
-        file_put_contents($file, json_encode($out));
+        $file = Ops::backup($argv[2] ?? null);
         echo "Wrote $file. Keep app_key from app/config.php with it: stored secrets can't be read without it.\n";
         break;
     case 'restore':
-        $data = json_decode((string) file_get_contents($argv[2] ?? ''), true);
-        if (!is_array($data)) exit("Usage: php cli.php restore FILE.json\n");
-        DB::tx(function () use ($data) {
+        $path = $argv[2] ?? '';
+        $raw = (string) @file_get_contents($path);
+        if (str_ends_with($path, '.gz')) $raw = (string) @gzdecode($raw);
+        $data = json_decode($raw, true);
+        if (!is_array($data)) exit("Usage: php cli.php restore FILE.json[.gz]\n");
+        unset($data['_meta']);
+        $known = Schema::tables();
+        DB::tx(function () use ($data, $known) {
             foreach ($data as $table => $rows) {
+                if (!in_array($table, $known, true)) continue;
                 DB::run("DELETE FROM $table");
                 foreach ($rows as $row) DB::insert($table, $row);
             }

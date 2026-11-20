@@ -16,6 +16,15 @@
     <p class="muted small">Customers pay by EFT with their 6-digit customer number as the reference. Import your bank statement under Bank payments (EFT) and payments are matched to the right account automatically.</p>
   </div>
   <div class="stack">
+    <div class="panel form" id="team-alerts">
+      <h2>Team alerts</h2>
+      <p class="muted small">For running SeaGeek with a small team. A morning email lists only what needs a person; urgent problems (scheduled jobs stopped, a supplier failing, email not sending) are sent at once.</p>
+      <div class="row"><div class="field"><label for="ops-email">Send to</label><input id="ops-email" name="ops_email" value="<?= $v('ops_email') ?>" placeholder="Leave empty for all owners and administrators"></div>
+      <div class="field"><label for="ops-phone">SMS for urgent alerts <span class="muted">(optional)</span></label><input id="ops-phone" name="ops_phone" value="<?= $v('ops_phone') ?>" inputmode="tel" placeholder="082 123 4567"></div></div>
+      <div class="row"><div class="field"><label for="ops-digest">Morning email</label><select id="ops-digest" name="ops_digest"><option value="1">On</option><option value="0" <?= Settings::get('ops_digest') === '0' ? 'selected' : '' ?>>Off</option></select></div>
+      <div class="field"><label for="ops-hour">Send at (SAST)</label><select id="ops-hour" name="ops_digest_hour"><?php foreach (range(5, 10) as $h): ?><option value="<?= $h ?>" <?= (int) Settings::get('ops_digest_hour') === $h ? 'selected' : '' ?>><?= sprintf('%02d:00', $h) ?></option><?php endforeach; ?></select></div></div>
+      <p class="muted small">Goes to: <?= e(implode(', ', Ops::recipients()) ?: 'nobody yet') ?>.</p>
+    </div>
     <div class="panel form" id="email">
       <h2>Email delivery</h2>
       <p class="muted small">How the platform sends invoices, receipts, reminders, Desk replies and newsletters. Most hosts and Microsoft 365 or Google Workspace give you SMTP details. Amazon SES works too once the SES partner is active.</p>

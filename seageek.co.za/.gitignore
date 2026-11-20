@@ -8,3 +8,4 @@ docker/.env
 # Installed by Composer (shipped inside the deploy zip)
 vendor/*
 !vendor/.htaccess
+storage/backups/*

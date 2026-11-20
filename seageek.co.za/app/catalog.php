@@ -425,3 +425,15 @@ final class Catalog
         ];
     }
 }
+
+/** Product names by key, for labels in pages, emails and scheduled jobs. */
+function service_names(): array
+{
+    return array_map(fn($s) => $s['name'], Catalog::services());
+}
+
+/** Desk channel names. */
+function channel_label(string $c): string
+{
+    return ['chat' => 'Chat', 'whatsapp' => 'WhatsApp', 'email' => 'Email', 'web' => 'Web form', 'api' => 'API', 'system' => 'System'][$c] ?? ucfirst($c);
+}

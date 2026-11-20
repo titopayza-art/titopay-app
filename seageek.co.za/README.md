@@ -78,3 +78,10 @@ Customers find these under Plug-ins in their dashboard; the public overview is a
 - **Website monitor**: the scheduled jobs check each site (every 1, 5, 15 or 60 minutes), optionally for a required word on the page. Two failed checks in a row send an email and SMS alert; recovery sends a "back up" message. Only public websites can be watched: private, local and cloud-metadata addresses and unusual ports are refused.
 
 Form and monitor SMS alerts are charged at the normal SMS rate; everything else is free.
+
+## Running SeaGeek with one or two people
+
+- **Needs you** at the top of the admin home lists only what a person must do, most urgent first, each with a button: customers the AI handed over, startup applications, approvals (sender names, WhatsApp numbers, email domains, business checks), bank payments that could not be matched, Xero items that failed, a reminder to import the bank statement, and missing backups. Everything else (renewals, invoices, reminders, locking and unlocking, low-balance warnings, campaigns, store SMS, monitors, Xero, webhooks, email) runs by itself and is listed under **Running on its own**.
+- **Morning email** (07:00 SAST by default) with the same list and yesterday's numbers. Settings, Team alerts sets who receives it, the time, and an optional SMS number.
+- **Urgent alerts** by email and SMS the moment scheduled jobs stop, a supplier fails or email stops sending; repeated every 6 hours until fixed. If the scheduled jobs themselves stop, ordinary website visits notice within 5 minutes and send the alert directly.
+- **Nightly backups** of every table to `storage/backups` (newest 14 kept, readable only by the server). Owners can download them from Jobs & logs; restore with `php cli.php restore FILE`.

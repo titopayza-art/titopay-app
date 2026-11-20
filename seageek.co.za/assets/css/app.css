@@ -1223,3 +1223,18 @@ pre.snippet { white-space: pre-wrap; overflow-wrap: anywhere; }
 .lk-short em { font-style: normal; }
 .scan-chip { top: auto; bottom: 46px; right: -34px; }
 @media (max-width: 560px) { .split-vis { flex-direction: column; } .vis-arrow:not(.down) { transform: rotate(90deg); margin: 10px 0; } .scan-chip { right: -10px; } }
+
+/* Admin: what needs a person, and what runs by itself */
+.today { margin-bottom: 14px; }
+.todo { list-style: none; margin: 0; padding: 0; }
+.todo li { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 14px 20px; border-top: 1px solid var(--line); }
+.todo li b { font-size: 16px; }
+.todo li p { margin: 3px 0 0; color: var(--muted); font-size: 14.5px; line-height: 1.5; }
+.todo .pill { justify-self: start; }
+.todo-urgent { background: rgba(255, 157, 177, .05); }
+.autopilot { list-style: none; margin: 0; padding: 6px 0; }
+.autopilot li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 20px; font-size: 14px; }
+.autopilot small { color: var(--muted); white-space: nowrap; }
+.autopilot .dot { width: 8px; height: 8px; border-radius: 50%; }
+.autopilot .dot.up { background: var(--accent); } .autopilot .dot.down { background: #ff9db1; }
+@media (max-width: 640px) { .todo li { grid-template-columns: 1fr; gap: 8px; } .todo li .btn { justify-self: start; } }

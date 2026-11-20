@@ -40,15 +40,6 @@ function balance_units(array $org): array
     return $out;
 }
 
-function service_names(): array
-{
-    return array_map(fn($s) => $s['name'], Catalog::services());
-}
-
-function channel_label(string $c): string
-{
-    return ['chat' => 'Chat', 'whatsapp' => 'WhatsApp', 'email' => 'Email', 'web' => 'Web form', 'api' => 'API', 'system' => 'System'][$c] ?? ucfirst($c);
-}
 
 function require_org(): array
 {
@@ -686,7 +677,7 @@ $r->add('GET', '/admin', function () {
     foreach (DB::all("SELECT substr(created_at,1,10) d, COUNT(*) c, SUM(amount) a FROM messages WHERE env = 'live' AND created_at >= ? GROUP BY substr(created_at,1,10)", [ts('-30 days')]) as $row) {
         if (isset($series[$row['d']])) $series[$row['d']] = ['count' => (int) $row['c'], 'amount' => (float) $row['a']];
     }
-    render('admin/overview', ['title' => 'Admin', 'kpi' => $kpi, 'byService' => $byService, 'series' => $series,
+    render('admin/overview', ['title' => 'Admin', 'todo' => Ops::todo(), 'jobs' => DB::all('SELECT * FROM jobs ORDER BY name'), 'kpi' => $kpi, 'byService' => $byService, 'series' => $series,
         'partners' => DB::all('SELECT * FROM partners ORDER BY service, priority'), 'desk' => Desk::stats((int) Desk::house()['id']),
         'queue' => ['email' => (int) DB::value("SELECT COUNT(*) FROM email_outbox WHERE status = 'queued'"), 'webhooks' => (int) DB::value("SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'pending'"), 'messages' => (int) DB::value("SELECT COUNT(*) FROM messages WHERE status = 'queued' AND env = 'live'")],
         'cron' => Settings::get('last_cron_at'),
@@ -862,9 +853,30 @@ $r->add('GET|POST', '/admin/settings', function () {
     }
     render('admin/settings', ['title' => 'Settings'], 'app');
 });
-$r->add('GET', '/admin/system', function () {
-    Auth::requireAdmin('system');
-    render('admin/system', ['title' => 'System', 'jobs' => DB::all('SELECT * FROM jobs ORDER BY name'), 'outbox' => DB::all('SELECT id, to_addr, subject, status, attempts, last_error, created_at FROM email_outbox ORDER BY id DESC LIMIT 25'),
+$r->add('GET|POST', '/admin/system', function () {
+    $me = Auth::requireAdmin('system');
+    if (is_post()) {
+        csrf_check();
+        if (input('action') === 'backup') {
+            $f = Ops::backup();
+            audit('system.backup', null, basename($f));
+            flash('ok', 'Backup made: ' . basename($f) . '. Download it and keep it somewhere safe, away from this server.');
+        }
+        redirect('/admin/system#backups');
+    }
+    if (($dl = (string) input('download')) !== '') {
+        // Backups hold every customer record, so only owners may download them.
+        if (($me['admin_role'] ?: 'owner') !== 'owner') { flash('error', 'Only an owner can download backups.'); redirect('/admin/system#backups'); }
+        $path = Ops::backupDir() . '/' . basename($dl);
+        if (!preg_match('/^seageek-\d{8}-\d{6}\.json\.gz$/', basename($dl)) || !is_file($path)) redirect('/admin/system#backups');
+        audit('system.backup_downloaded', null, basename($dl));
+        header('Content-Type: application/gzip');
+        header('Content-Disposition: attachment; filename="' . basename($dl) . '"');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        exit;
+    }
+    render('admin/system', ['title' => 'System', 'backups' => Ops::backups(), 'jobs' => DB::all('SELECT * FROM jobs ORDER BY name'), 'outbox' => DB::all('SELECT id, to_addr, subject, status, attempts, last_error, created_at FROM email_outbox ORDER BY id DESC LIMIT 25'),
         'audit' => DB::all('SELECT a.*, u.email FROM audit_log a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 40'),
         'webhooks' => DB::all("SELECT d.*, o.name org FROM webhook_deliveries d JOIN orgs o ON o.id = d.org_id WHERE d.status <> 'delivered' ORDER BY d.id DESC LIMIT 20"),
         'db' => DB::driver(), 'php' => PHP_VERSION, 'cronUrl' => app_url('/cron/' . config('cron_token'))], 'app');

@@ -1,6 +1,20 @@
 <?php $margin = $kpi['usage_month'] > 0 ? round(($kpi['usage_month'] - $kpi['cost_month']) / $kpi['usage_month'] * 100) : 0;
 $cronOk = $cron !== '' && strtotime($cron . ' UTC') > time() - 600; ?>
-<?php if (!$cronOk): ?><div class="alert alert-error"><b>Scheduled jobs are not running.</b> Reminders, renewals, queued messages and email depend on them. Set up the cron job shown under <a class="link" href="/admin/system">Jobs &amp; logs</a>.</div><?php endif; ?>
+<?php $lv = ['urgent' => ['red', 'Urgent'], 'today' => ['green', 'Today'], 'week' => ['amber', 'This week']]; ?>
+<div class="panel flush today" id="today">
+  <div class="panel-head"><h2><?= $todo ? 'Needs you' : 'Nothing needs you right now' ?></h2><span class="muted small"><?= $todo ? count($todo) . ' item' . (count($todo) === 1 ? '' : 's') : 'Support, billing, reminders and messages are running by themselves' ?></span></div>
+  <?php if ($todo): ?>
+  <ul class="todo">
+    <?php foreach ($todo as $t): ?>
+      <li class="todo-<?= e($t['level']) ?>">
+        <span class="pill <?= $lv[$t['level']][0] ?>"><?= $lv[$t['level']][1] ?></span>
+        <div><b><?= e($t['title']) ?></b><p><?= e($t['detail']) ?></p></div>
+        <a class="btn <?= $t['level'] === 'urgent' ? 'btn-primary' : 'btn-ghost' ?> btn-sm" href="<?= e($t['href']) ?>"><?= e($t['action']) ?></a>
+      </li>
+    <?php endforeach; ?>
+  </ul>
+  <?php endif; ?>
+</div>
 <div class="grid cols-4">
   <div class="panel stat"><div class="k">Monthly recurring revenue</div><div class="v"><?= zar($kpi['mrr'], 0) ?></div><div class="d">From plan subscriptions</div></div>
   <div class="panel stat"><div class="k">Usage billed this month</div><div class="v"><?= zar($kpi['usage_month'], 0) ?></div><div class="d">Gross margin <?= $margin ?>% (cost <?= zar($kpi['cost_month'], 0) ?>)</div></div>
@@ -18,9 +32,13 @@ $cronOk = $cron !== '' && strtotime($cron . ' UTC') > time() - 600; ?>
 </div>
 <div class="grid cols-3" style="margin-top:14px;align-items:start">
   <div class="panel flush">
-    <div class="panel-head"><h2>Needs a person</h2><span class="muted"><?= count($pendingReviews) ?></span></div>
-    <?php if (!$pendingReviews): ?><div class="empty">Nothing waiting. The system is handling everything.</div><?php else: ?>
-    <table class="tbl"><tbody><?php foreach ($pendingReviews as $p): ?><tr><td><a class="link" href="/admin/orgs/<?= (int) $p['id'] ?>"><?= e($p['name']) ?></a></td><td class="right"><span class="pill amber"><?= e($p['what']) ?></span></td></tr><?php endforeach; ?></tbody></table><?php endif; ?>
+    <div class="panel-head"><h2>Running on its own</h2><a class="link small" href="/admin/system">Details</a></div>
+    <?php $byName = array_column($jobs, null, 'name'); ?>
+    <ul class="autopilot">
+      <?php foreach (Ops::JOBS as $k => $label): $j = $byName[$k] ?? null; $okJob = $j && strtotime($j['last_run_at'] . ' UTC') > time() - 900 && !str_starts_with((string) $j['last_result'], 'error'); ?>
+        <li><span class="dot <?= $okJob ? 'up' : 'down' ?>"></span><span><?= e($label) ?></span><small><?= $j ? e(Ops::ago($j['last_run_at'])) : 'not yet' ?></small></li>
+      <?php endforeach; ?>
+    </ul>
   </div>
   <div class="panel flush">
     <div class="panel-head"><h2>Partner health</h2><a class="link small" href="/admin/partners">Manage</a></div>

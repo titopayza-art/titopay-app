@@ -7,6 +7,15 @@ declare(strict_types=1);
 
 final class Schema
 {
+    /** Every table in the database, read from the database itself so new tables are never missed. */
+    public static function tables(): array
+    {
+        $sql = DB::driver() === 'mysql'
+            ? 'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name'
+            : "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
+        return array_map(fn($r) => (string) reset($r), DB::all($sql));
+    }
+
     private static function t(string $sql): string
     {
         $mysql = DB::driver() === 'mysql';

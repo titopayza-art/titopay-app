@@ -469,6 +469,7 @@ final class Cron
             'monitors' => fn() => Monitors::run(),
             'xero' => fn() => Xero::sync(),
             'webhooks' => fn() => Webhooks::deliver(),
+            'ops' => fn() => Ops::run(),
             'email' => fn() => Mail::deliver(),
             'cleanup' => function () {
                 DB::run('DELETE FROM rate_limits WHERE window_start < ?', [(int) floor(time() / 60) - 120]);
