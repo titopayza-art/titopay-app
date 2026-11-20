@@ -51,6 +51,6 @@
 </footer>
 <script src="/assets/js/main.js?v=3" defer></script>
 <?php if (!empty($ocean)): ?><script src="/assets/js/ocean.js?v=5" defer></script><?php endif; ?>
-<script src="/assets/js/chat-widget.js?v=4" defer></script>
+<script src="/assets/js/chat-widget.js?v=5" defer></script>
 </body>
 </html>

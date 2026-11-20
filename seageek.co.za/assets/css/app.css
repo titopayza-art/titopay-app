@@ -1273,3 +1273,8 @@ tr.dim td { opacity: .55; }
 .why.why-3 { grid-template-columns: repeat(3, 1fr); }
 @media (max-width: 900px) { .why.why-3 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 600px) { .why.why-3 { grid-template-columns: 1fr; } }
+.powered-wrap { margin: 28px 0 0; text-align: center; }
+.powered { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted); font-size: 13.5px; text-decoration: none; }
+.powered svg, .powered img { width: 20px; height: 20px; }
+.powered b { color: var(--text); font-weight: 600; }
+.powered:hover { border-color: var(--accent); color: var(--text); }

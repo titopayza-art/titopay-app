@@ -26,7 +26,8 @@ $font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans
   <tr><td style="background:#0b1f27;padding:28px 36px;font-size:14.5px;line-height:1.7;color:#c4d3d7">
     <?php if ($brand): ?>
       <div style="font-size:16px;font-weight:700;color:#ffffff"><?= e($brand) ?></div>
-      <div>Sent with SeaGeek on behalf of <?= e($brand) ?>.</div>
+      <div>Sent on behalf of <?= e($brand) ?>.</div>
+      <div style="margin-top:12px;font-size:13px;color:#8fa4aa">Powered by <a href="<?= e(app_url('/?ref=powered-email')) ?>" style="color:#8fe6d8;text-decoration:underline;font-weight:600">SeaGeek</a></div>
       <?php if (!empty($unsubscribe)): ?><div style="margin-top:10px"><a href="<?= e($unsubscribe) ?>" style="color:#8fe6d8;text-decoration:underline">Unsubscribe</a></div><?php endif; ?>
     <?php else: ?>
       <div style="font-size:16px;font-weight:700;color:#ffffff">SeaGeek</div>

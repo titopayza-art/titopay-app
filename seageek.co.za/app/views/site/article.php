@@ -5,5 +5,6 @@
   <div class="prose" style="margin-top:22px"><?php foreach (preg_split("/\n\s*\n/", trim($a['body'])) as $para): ?><p><?= nl2br(e($para)) ?></p><?php endforeach; ?></div>
   <p class="muted small" style="margin-top:30px">Updated <?= e(date('j F Y', strtotime($a['updated_at']))) ?></p>
   <?php if ($related): ?><h2 style="font-size:20px;margin-top:40px">Related</h2><ul><?php foreach ($related as $r): ?><li><a class="link" href="<?= e($base . '/' . $r['slug']) ?>"><?= e($r['title']) ?></a></li><?php endforeach; ?></ul><?php endif; ?>
+  <?php if (!$org['is_house']) { $poweredRef = 'help'; require APP_DIR . '/views/partials/powered.php'; } ?>
   <div class="card" style="margin-top:40px"><h3>Still need help?</h3><p>Start a chat in the corner, or <a class="link" href="/contact">send us a message</a>.</p></div>
 </div></section>

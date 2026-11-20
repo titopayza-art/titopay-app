@@ -28,6 +28,7 @@
     + ".sgw-form{display:flex;gap:8px;padding:12px;border-top:1px solid rgba(150,200,210,.13)}.sgw-form textarea{flex:1;height:44px;min-height:44px;max-height:120px;resize:none;padding:11px 12px;border-radius:10px;border:1px solid rgba(150,200,210,.22);background:#04090c;color:#e6eff1;font:inherit;font-size:14.5px}"
     + ".sgw-form button{width:44px;height:44px;border-radius:10px;border:0;background:#5fe3cf;color:#031512;cursor:pointer;display:grid;place-items:center}.sgw-form button svg{width:18px;height:18px}"
     + ".sgw-email{display:flex;gap:6px;padding:0 14px 10px}.sgw-email input{flex:1;height:36px;border-radius:8px;border:1px solid rgba(150,200,210,.22);background:#04090c;color:#e6eff1;padding:0 10px;font:inherit;font-size:13.5px}.sgw-email button{height:36px;border-radius:8px;border:1px solid rgba(150,200,210,.3);background:none;color:#e6eff1;padding:0 12px;cursor:pointer;font-size:13px}";
+  css += ".sgw-pow{display:block;text-align:center;padding:0 12px 10px;font-size:11.5px;color:#7e959c;text-decoration:none}.sgw-pow b{color:#c3d2d6;font-weight:600}.sgw-pow:hover b{color:#5fe3cf}";
   css = css.replace(/#5fe3cf/g, color).replace(/#031512/g, ink);
   var style = document.createElement("style"); style.textContent = css; document.head.appendChild(style);
 
@@ -41,7 +42,7 @@
   panel.innerHTML = '<div class="sgw-head"><div><b>' + (org ? "Support" : "SeaGeek support") + '</b><span class="sgw-mode">Assistant replies straight away</span></div><button class="sgw-x" type="button" aria-label="Close chat">×</button></div>'
     + '<div class="sgw-log" aria-live="polite"></div>'
     + '<div class="sgw-email" hidden><input type="email" placeholder="Your email, so we can reply"><button type="button">Save</button></div>'
-    + '<form class="sgw-form"><textarea rows="1" placeholder="Type your message" aria-label="Message"></textarea><button type="submit" aria-label="Send">' + icSend + "</button></form>";
+    + '<form class="sgw-form"><textarea rows="1" placeholder="Type your message" aria-label="Message"></textarea><button type="submit" aria-label="Send">' + icSend + "</button></form>" + (org ? '<a class="sgw-pow" href="' + origin + '/?ref=powered-chat" target="_blank" rel="noopener">Powered by <b>SeaGeek</b></a>' : '');
   document.body.appendChild(fab); document.body.appendChild(panel);
 
   var log = panel.querySelector(".sgw-log"), form = panel.querySelector(".sgw-form"), box = form.querySelector("textarea");

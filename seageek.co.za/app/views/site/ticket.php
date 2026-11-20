@@ -15,4 +15,5 @@
     <button class="btn btn-primary btn-sm">Send reply</button></form>
   <?php else: ?><p class="muted" style="margin-top:16px">This request is closed. Write to us again and we will open a new one.</p>
   <?php endif; ?>
+  <?php if (!$org['is_house']) { $poweredRef = 'desk'; require APP_DIR . '/views/partials/powered.php'; } ?>
 </div></section>
