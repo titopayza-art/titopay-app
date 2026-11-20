@@ -66,3 +66,15 @@ PHP 8.1+ with `pdo_mysql` (or `pdo_sqlite`), `curl`, `sodium`, `mbstring`, and `
 1. At developer.xero.com create a **Web app** with redirect URI `https://www.seageek.co.za/admin/xero/callback`.
 2. In Admin, Xero accounting, paste the Client ID and Client secret, check the sales (200) and bank (090) account codes and the tax rate, then press **Connect to Xero**.
 3. From then on the scheduled jobs (`php cli.php cron`) copy every invoice, its customer (matched on the 6-digit customer number) and every card, EFT or PayFast payment to Xero, and void invoices voided here. Failures are retried up to five times and shown in the log with Xero's reason.
+
+## Plug-ins (no code)
+
+Customers find these under Plug-ins in their dashboard; the public overview is at `/plugins`.
+
+- **Website chat**: one script line puts the SeaGeek AI chat on their site; chats hand over to their Desk. Colour, button text and greeting are set in the dashboard.
+- **WhatsApp button**: one script line adds a "Chat on WhatsApp" button that opens their own WhatsApp number.
+- **Website forms**: any HTML form posts to `/f/{token}`. Each message is saved, emailed (reply goes straight to the sender), optionally opens a Desk ticket and sends an SMS alert. Hidden-field spam trap, per-address rate limits, JSON answers for JavaScript, CSV download.
+- **Short links**: `/l/{code}` with click and device counts, own endings, and re-pointing.
+- **Website monitor**: the scheduled jobs check each site (every 1, 5, 15 or 60 minutes), optionally for a required word on the page. Two failed checks in a row send an email and SMS alert; recovery sends a "back up" message. Only public websites can be watched: private, local and cloud-metadata addresses and unusual ports are refused.
+
+Form and monitor SMS alerts are charged at the normal SMS rate; everything else is free.

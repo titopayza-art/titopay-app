@@ -237,6 +237,7 @@ final class Settings
         'xero_sales_account' => '200',
         'xero_bank_account' => '090',
         'xero_tax_type' => 'NONE',
+        'monitor_allow_private' => '0',
         'xero_scopes' => 'openid profile email offline_access accounting.transactions accounting.contacts accounting.settings.read',
         'xero_login_url' => 'https://login.xero.com/identity/connect/authorize',
         'xero_identity_url' => 'https://identity.xero.com',

@@ -56,11 +56,15 @@ $openTickets = $isAdmin
       <a class="nav<?= $on('/dashboard/services') ?><?= $on('/dashboard/cart') ?>" href="/dashboard/services"><?= icon('box') ?>Services</a>
       <a class="nav<?= $on('/dashboard/keys') ?>" href="/dashboard/keys"><?= icon('key') ?>API keys</a>
       <a class="nav<?= $on('/dashboard/usage') ?>" href="/dashboard/usage"><?= icon('chart') ?>Usage &amp; logs</a>
-      <h6>No-code tools</h6>
+      <h6>Plug-ins <a class="h6-link" href="/dashboard/plugins">All</a></h6>
+      <a class="nav<?= $on('/dashboard/chat') ?>" href="/dashboard/chat"><?= icon('chat') ?>Website chat</a>
+      <a class="nav<?= $on('/dashboard/forms') ?>" href="/dashboard/forms"><?= icon('form') ?>Website forms</a>
+      <a class="nav<?= $on('/dashboard/links') ?>" href="/dashboard/links"><?= icon('link') ?>Short links</a>
+      <a class="nav<?= $on('/dashboard/monitors') ?>" href="/dashboard/monitors"><?= icon('pulse') ?>Website monitor</a>
+      <a class="nav<?= $on('/dashboard/qr') ?>" href="/dashboard/qr"><?= icon('qr') ?>QR codes</a>
       <a class="nav<?= $on('/dashboard/stores') ?>" href="/dashboard/stores"><?= icon('store') ?>Store SMS</a>
       <a class="nav<?= $on('/dashboard/campaigns') ?>" href="/dashboard/campaigns"><?= icon('megaphone') ?>Campaigns</a>
       <a class="nav<?= $on('/dashboard/contacts') ?>" href="/dashboard/contacts"><?= icon('contacts') ?>Contacts</a>
-      <a class="nav<?= $on('/dashboard/qr') ?>" href="/dashboard/qr"><?= icon('qr') ?>QR codes</a>
       <h6>API environments</h6>
       <?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned' || in_array($k, ['desk', 'qr', 'stores'], true)) continue; $act = ($svcStatus[$k] ?? 'inactive') === 'active'; ?>
         <a class="nav<?= $on('/dashboard/service/' . $k) ?><?= $act ? '' : ' dim' ?>" href="/dashboard/service/<?= $k ?>"<?= $act ? '' : ' title="Not switched on: sandbox only"' ?>><?= icon($s['icon']) ?><?= e($s['name']) ?><?= $s['status'] === 'soon' ? '<small class="soon">Soon</small>' : '' ?></a>
@@ -120,6 +124,6 @@ $openTickets = $isAdmin
   </div>
 </div>
 <script src="/assets/js/dashboard.js?v=5" defer></script>
-<?php if (!$isAdmin): ?><script src="/assets/js/chat-widget.js?v=3" defer></script><?php endif; ?>
+<?php if (!$isAdmin): ?><script src="/assets/js/chat-widget.js?v=4" defer></script><?php endif; ?>
 </body>
 </html>

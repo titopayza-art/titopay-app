@@ -12,6 +12,11 @@
   var org = (script && script.getAttribute("data-org")) || window.SEAGEEK_CHAT_ORG || "";
   var title = (script && script.getAttribute("data-title")) || "Chat with us";
   var storeKey = "sgchat:" + (org || "seageek");
+  var greeting = (script && script.getAttribute("data-greeting")) || "";
+  var color = (script && script.getAttribute("data-color")) || "";
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) color = "#5fe3cf";
+  var rgb = [1, 3, 5].map(function (i) { return parseInt(color.substr(i, 2), 16); });
+  var ink = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) > 150 ? "#031512" : "#ffffff";
 
   var css = ".sgw-fab{position:fixed;right:20px;bottom:20px;z-index:2147483000;height:52px;padding:0 20px 0 16px;border-radius:999px;border:0;background:#5fe3cf;color:#031512;font:600 15px/1 system-ui,-apple-system,Segoe UI,sans-serif;display:inline-flex;gap:8px;align-items:center;cursor:pointer;box-shadow:0 10px 30px -10px rgba(0,0,0,.6)}"
     + ".sgw-fab svg{width:20px;height:20px}.sgw-panel{position:fixed;right:20px;bottom:84px;z-index:2147483000;width:min(380px,calc(100vw - 24px));height:min(560px,calc(100vh - 110px));border-radius:18px;border:1px solid rgba(150,200,210,.22);background:#061218;color:#e6eff1;display:none;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px -20px rgba(0,0,0,.8);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}"
@@ -23,6 +28,7 @@
     + ".sgw-form{display:flex;gap:8px;padding:12px;border-top:1px solid rgba(150,200,210,.13)}.sgw-form textarea{flex:1;height:44px;min-height:44px;max-height:120px;resize:none;padding:11px 12px;border-radius:10px;border:1px solid rgba(150,200,210,.22);background:#04090c;color:#e6eff1;font:inherit;font-size:14.5px}"
     + ".sgw-form button{width:44px;height:44px;border-radius:10px;border:0;background:#5fe3cf;color:#031512;cursor:pointer;display:grid;place-items:center}.sgw-form button svg{width:18px;height:18px}"
     + ".sgw-email{display:flex;gap:6px;padding:0 14px 10px}.sgw-email input{flex:1;height:36px;border-radius:8px;border:1px solid rgba(150,200,210,.22);background:#04090c;color:#e6eff1;padding:0 10px;font:inherit;font-size:13.5px}.sgw-email button{height:36px;border-radius:8px;border:1px solid rgba(150,200,210,.3);background:none;color:#e6eff1;padding:0 12px;cursor:pointer;font-size:13px}";
+  css = css.replace(/#5fe3cf/g, color).replace(/#031512/g, ink);
   var style = document.createElement("style"); style.textContent = css; document.head.appendChild(style);
 
   var icChat = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
@@ -82,7 +88,7 @@
     panel.classList.toggle("open", on); fab.setAttribute("aria-expanded", String(on));
     if (on) {
       if (!log.childNodes.length) {
-        bubble("ai", "Hi! Ask me anything about " + (org ? "our products and services" : "SeaGeek: pricing, APIs, WhatsApp, billing or your account") + ". If I can't help, I'll bring in a person.");
+        bubble("ai", greeting || "Hi! Ask me anything about " + (org ? "our products and services" : "SeaGeek: pricing, APIs, WhatsApp, billing or your account") + ". If I can't help, I'll bring in a person.");
         if (state.token) request("GET", "/chat/poll", { token: state.token, after: 0, org: org }).then(apply).catch(function () {});
       }
       box.focus(); schedule();

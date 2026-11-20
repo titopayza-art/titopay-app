@@ -15,9 +15,8 @@
       <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
       <div class="field"><label>New password (10+ characters)</label><input name="new" type="password" required minlength="10" autocomplete="new-password"></div>
       <button class="btn btn-primary btn-sm">Change password</button></form>
-    <h2 style="margin-top:26px">Embed your help widget</h2>
-    <p class="muted small" style="margin:6px 0 10px">Add the chat to your website. Conversations go to your Desk and your AI agent answers first.</p>
-    <pre class="snippet">&lt;script src="<?= e(app_url('/assets/js/chat-widget.js')) ?>" data-org="<?= e($org['slug']) ?>" defer&gt;&lt;/script&gt;</pre>
+    <h2 style="margin-top:26px">Chat on your website</h2>
+    <p class="muted small" style="margin:6px 0 0">Set the colour and greeting and copy your snippet under <a class="link" href="/dashboard/chat">Plug-ins, Website chat</a>.</p>
     <p class="muted small" style="margin-top:8px">Your public help centre: <a class="link" href="/h/<?= e($org['slug']) ?>" target="_blank"><?= e(app_url('/h/' . $org['slug'])) ?></a></p>
   </div>
 </div>

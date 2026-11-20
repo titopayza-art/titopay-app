@@ -145,6 +145,20 @@ final class Schema
                 "CREATE TABLE xero_sync (id {PK}, entity VARCHAR(20) NOT NULL, local_id {ID} NOT NULL, xero_id VARCHAR(64), status VARCHAR(20) NOT NULL, error VARCHAR(500), attempts INTEGER NOT NULL DEFAULT 0, synced_at {TS}, created_at {TS} NOT NULL){ENGINE}",
                 "CREATE UNIQUE INDEX xero_sync_entity ON xero_sync (entity, local_id)",
             ],
+            5 => [
+                // Plug-ins: website forms, short links, website monitors, chat widget settings
+                "CREATE TABLE web_forms (id {PK}, org_id {ID} NOT NULL, token VARCHAR(40) NOT NULL UNIQUE, name VARCHAR(120) NOT NULL, notify_email VARCHAR(190), notify_phone VARCHAR(30), to_desk INTEGER NOT NULL DEFAULT 1, auto_reply {TEXT}, thanks_url VARCHAR(500), submissions INTEGER NOT NULL DEFAULT 0, last_at {TS}, status VARCHAR(20) NOT NULL DEFAULT 'active', created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE web_form_entries (id {PK}, form_id {ID} NOT NULL, data {TEXT} NOT NULL, email VARCHAR(190), page VARCHAR(500), ip VARCHAR(64), ticket_id {ID}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX web_form_entries_form ON web_form_entries (form_id, id)",
+                "CREATE TABLE short_links (id {PK}, org_id {ID} NOT NULL, code VARCHAR(20) NOT NULL UNIQUE, name VARCHAR(120), target_url VARCHAR(1000) NOT NULL, clicks INTEGER NOT NULL DEFAULT 0, last_click_at {TS}, status VARCHAR(20) NOT NULL DEFAULT 'active', created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE short_link_clicks (id {PK}, link_id {ID} NOT NULL, device VARCHAR(20), created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX short_link_clicks_link ON short_link_clicks (link_id, created_at)",
+                "CREATE TABLE monitors (id {PK}, org_id {ID} NOT NULL, name VARCHAR(120) NOT NULL, url VARCHAR(500) NOT NULL, every_min INTEGER NOT NULL DEFAULT 5, keyword VARCHAR(120), alert_email VARCHAR(190), alert_phone VARCHAR(30), state VARCHAR(20) NOT NULL DEFAULT 'pending', fails INTEGER NOT NULL DEFAULT 0, checks INTEGER NOT NULL DEFAULT 0, up_checks INTEGER NOT NULL DEFAULT 0, last_ms INTEGER, last_code INTEGER, last_error VARCHAR(255), last_check_at {TS}, next_check_at {TS}, state_since {TS}, paused INTEGER NOT NULL DEFAULT 0, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX monitors_due ON monitors (paused, next_check_at)",
+                "CREATE TABLE monitor_events (id {PK}, monitor_id {ID} NOT NULL, state VARCHAR(20) NOT NULL, detail VARCHAR(255), created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX monitor_events_m ON monitor_events (monitor_id, id)",
+                "ALTER TABLE orgs ADD COLUMN chat_settings {TEXT}",
+            ],
         ];
     }
 

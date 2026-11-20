@@ -39,7 +39,10 @@ $startup = DB::one("SELECT * FROM plans WHERE code = 'startup'");
     <div class="row"><div class="field"><label for="s-phone">Phone (optional)</label><input id="s-phone" name="phone" type="tel"></div><div class="field"><label for="s-stage">Stage</label><select id="s-stage" name="stage"><option>Idea</option><option>Building the product</option><option>Launched, no revenue yet</option><option>Launched, earning revenue</option></select></div></div>
     <div class="field"><label for="s-what">What are you building?</label><textarea id="s-what" name="what" required placeholder="Who it is for and how you would use SeaGeek"></textarea></div>
     <fieldset class="field" style="border:0;padding:0;margin:0"><legend style="margin-bottom:6px">Products you plan to use</legend>
-      <div class="pick-grid"><?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned') continue; ?><label class="consent"><input type="checkbox" name="products[]" value="<?= e($s['name']) ?>"><span><?= e($s['name']) ?></span></label><?php endforeach; ?></div>
+      <div class="pick-grid"><?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned' || in_array($k, ['qr', 'stores'], true)) continue; ?><label class="consent"><input type="checkbox" name="products[]" value="<?= e($s['name']) ?>"><span><?= e($s['name']) ?></span></label><?php endforeach; ?></div>
+    </fieldset>
+    <fieldset class="field" style="border:0;padding:0;margin:0"><legend style="margin-bottom:6px">Plug-ins (no code)</legend>
+      <div class="pick-grid"><?php foreach (Plugins::all() as $k => [$pname]): ?><label class="consent"><input type="checkbox" name="products[]" value="<?= e($pname) ?>"><span><?= e($pname) ?></span></label><?php endforeach; ?></div>
     </fieldset>
     <label class="consent"><input type="checkbox" required><span>SeaGeek may use these details to review my application, as described in the <a class="link" href="/privacy">privacy notice</a>.</span></label>
     <?= Shield::turnstileWidget() ?>

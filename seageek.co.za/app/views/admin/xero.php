@@ -60,7 +60,7 @@ $label = ['contact' => 'Customer', 'invoice' => 'Invoice', 'payment' => 'Payment
         <tbody>
         <?php if (!$log): ?><tr><td colspan="3" class="muted">Nothing copied yet.</td></tr><?php endif; ?>
         <?php foreach ($log as $l): ?>
-          <tr><td><?= e($label[$l['entity']]) ?> <b><?= e((string) $l['label']) ?></b><?= $l['error'] ? '<div class="small" style="color:var(--red)">' . e($l['error']) . '</div>' : '' ?></td>
+          <tr><td><?= e($label[$l['entity']]) ?> <b><?= e((string) $l['label']) ?></b><?= $l['error'] ? '<div class="small" style="color:#ff9db1">' . e($l['error']) . '</div>' : '' ?></td>
           <td><span class="pill <?= $l['status'] === 'error' ? 'red' : ($l['status'] === 'voided' ? 'amber' : 'green') ?>"><?= e(ucfirst($l['status'] === 'synced' ? 'in Xero' : $l['status'])) ?></span></td>
           <td class="small muted nowrap"><?= e(date('j M H:i', strtotime(($l['synced_at'] ?: $l['created_at']) . ' UTC'))) ?></td></tr>
         <?php endforeach; ?>

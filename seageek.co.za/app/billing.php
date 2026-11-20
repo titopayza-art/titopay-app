@@ -466,6 +466,7 @@ final class Cron
             'desk_sla' => fn() => Desk::runSla(),
             'campaigns' => fn() => Campaigns::process(500),
             'store_reminders' => fn() => Stores::runScheduled(),
+            'monitors' => fn() => Monitors::run(),
             'xero' => fn() => Xero::sync(),
             'webhooks' => fn() => Webhooks::deliver(),
             'email' => fn() => Mail::deliver(),
@@ -477,6 +478,7 @@ final class Cron
                 DB::run("UPDATE invoices SET status = 'void' WHERE status = 'unpaid' AND kind IN ('topup','order') AND created_at < ?", [ts('-30 days')]);
                 DB::run('DELETE FROM security_events WHERE created_at < ?', [ts('-30 days')]);
                 DB::run('DELETE FROM ip_blocks WHERE until < ?', [ts('-1 day')]);
+                DB::run('DELETE FROM monitor_events WHERE created_at < ?', [ts('-180 days')]);
                 DB::run("UPDATE quotes SET status = 'expired' WHERE status = 'open' AND valid_until < ?", [now()]);
                 return 'ok';
             },

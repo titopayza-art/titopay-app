@@ -952,6 +952,7 @@ $r->add('GET', '/sitemap.xml', function () {
     foreach (array_keys(Docs::guides()) as $k) $urls[] = '/docs/' . $k;
     $urls[] = '/quote';
     $urls[] = '/startups';
+    $urls[] = '/plugins';
     foreach (DB::all('SELECT slug FROM articles WHERE org_id = ? AND published = 1', [Desk::house()['id']]) as $a) $urls[] = '/help/' . $a['slug'];
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
     foreach ($urls as $u) echo '<url><loc>' . e(app_url($u)) . '</loc></url>';
@@ -967,5 +968,6 @@ $r->add('GET', '/health', function () {
 
 require APP_DIR . '/routes_commerce.php';
 require APP_DIR . '/routes_growth.php';
+require APP_DIR . '/routes_tools.php';
 
 return $r;
