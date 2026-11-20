@@ -108,7 +108,7 @@ code { font-family: var(--font-mono); font-size: .88em; color: var(--accent); }
 @media (max-width: 920px) {
   .nav-pill { display: none; }
   .site-header .bar { grid-template-columns: 1fr auto; }
-  .menu-toggle { display: grid; }
+  .menu-toggle { display: grid; border: 0; background: none; width: 44px; height: 44px; }
   .header-actions .btn { display: none; }
 }
 

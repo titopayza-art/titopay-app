@@ -11,4 +11,4 @@
 <link rel="manifest" href="/site.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Urbanist:wght@600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/css/app.css?v=29">
+<link rel="stylesheet" href="/assets/css/app.css?v=30">
