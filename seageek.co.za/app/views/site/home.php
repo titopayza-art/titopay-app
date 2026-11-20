@@ -261,6 +261,12 @@ msg = sg.sms.<span class="tok-f">send</span>(
   </div>
 </section>
 
+<section class="section" id="startups"><div class="wrap">
+  <div class="quote-cta" style="padding:clamp(22px,3vw,34px)">
+    <div><b style="font-size:clamp(22px,3vw,30px);font-family:var(--font-display)">Build with us</b><span style="display:block;margin-top:6px">Startups get <?= zar((float) Settings::get('startup_credit'), 0) ?> of launch credit, the Startup plan free for <?= (int) Settings::get('startup_plan_months') ?> months and help from our engineers.</span></div>
+    <a class="btn btn-primary" href="/startups">Apply for the startup programme</a>
+  </div>
+</div></section>
 <section class="section" id="early-access">
   <div class="wrap">
     <div class="cta">

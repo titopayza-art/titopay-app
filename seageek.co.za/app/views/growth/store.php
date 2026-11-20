@@ -15,6 +15,9 @@ $genericSample = json_encode(['event' => 'order.shipped', 'order' => ['number' =
 <div class="panel" id="setup">
   <div class="panel-head"><h2>Connect <?= e(Stores::PLATFORMS[$p]) ?></h2><span class="muted">About 3 minutes</span></div>
   <div class="field"><label>Your SeaGeek link (keep it private)</label><div class="secret"><span id="hook-url"><?= e($hook) ?></span><button class="copy-btn" type="button" data-copy="hook-url">Copy</button></div></div>
+  <?php foreach (StorePlugins::forPlatform($p) as $kind => [$plabel, $pfile, $phelp]): ?>
+    <div class="plugin-box"><div><b><?= e($plabel) ?></b><span><?= e($phelp) ?> This copy is already connected to <?= e($store['name']) ?>, so there is nothing to type.</span></div><a class="btn btn-primary btn-sm" href="/dashboard/stores/<?= e($store['public_id']) ?>/download/<?= e($kind) ?>"><?= icon('download') ?>Download <?= e($pfile) ?></a></div>
+  <?php endforeach; ?>
   <?php if ($p === 'shopify'): ?>
     <ol class="howto">
       <li><b>1</b><span>In Shopify admin open <b>Settings</b>, then <b>Notifications</b>, then <b>Webhooks</b> at the bottom of the page.</span></li>
@@ -24,6 +27,12 @@ $genericSample = json_encode(['event' => 'order.shipped', 'order' => ['number' =
     </ol>
     <form method="post" class="toolbar" style="margin:14px 0 0"><?= csrf_field() ?><input type="hidden" name="action" value="secret"><input name="secret" type="password" placeholder="<?= $secret ? 'Signing secret saved. Paste a new one to replace it.' : 'Paste the Shopify webhook signing secret' ?>" style="flex:1;min-width:0" autocomplete="off"><button class="btn <?= $secret ? 'btn-ghost' : 'btn-primary' ?> btn-sm">Save secret</button></form>
   <?php elseif ($p === 'woocommerce'): ?>
+    <ol class="howto">
+      <li><b>1</b><span>Download the plugin above.</span></li>
+      <li><b>2</b><span>In WordPress open <b>Plugins</b>, <b>Add new</b>, <b>Upload plugin</b>, choose the file and click <b>Activate</b>.</span></li>
+      <li><b>3</b><span>Done. Place a test order to see the SMS. A tick box at checkout lets customers join your SMS offers list.</span></li>
+    </ol>
+    <details class="fold-plain"><summary>Prefer WooCommerce webhooks instead of the plugin?</summary>
     <div class="field"><label>Secret for WooCommerce</label><div class="secret"><span id="hook-secret"><?= e((string) $secret) ?></span><button class="copy-btn" type="button" data-copy="hook-secret">Copy</button></div></div>
     <ol class="howto">
       <li><b>1</b><span>In WordPress open <b>WooCommerce</b>, <b>Settings</b>, <b>Advanced</b>, <b>Webhooks</b>, then <b>Add webhook</b>.</span></li>
@@ -31,10 +40,17 @@ $genericSample = json_encode(['event' => 'order.shipped', 'order' => ['number' =
       <li><b>3</b><span>Add a second webhook the same way with the topic <b>Order updated</b>. That one sends payment, completed (shipped), cancelled and refunded updates.</span></li>
       <li><b>4</b><span>For tracking links in the shipped SMS, store them in the order field <code>_tracking_url</code> (most tracking plugins do).</span></li>
     </ol>
+    </details>
   <?php else: ?>
     <div class="field"><label>Signing secret (optional)</label><div class="secret"><span id="hook-secret"><?= e((string) $secret) ?></span><button class="copy-btn" type="button" data-copy="hook-secret">Copy</button></div></div>
     <ol class="howto">
-      <?php if ($p === 'wix'): ?>
+      <?php if (in_array($p, ['opencart', 'prestashop', 'magento'], true)): ?>
+      <li><b>1</b><span>Download the PHP file above and upload it to your store's folder.</span></li>
+      <li><b>2</b><span>Where your store saves an order (or in an order-status module), add <code>require_once 'seageek-store.php';</code> and call <code>seageek_store_event('order.created', $order, $customer)</code>. The file explains every option.</span></li>
+      <?php elseif (in_array($p, ['zapier', 'bigcommerce'], true)): ?>
+      <li><b>1</b><span>In Zapier or Make, start a flow with your store's trigger, for example BigCommerce <b>New order</b>.</span></li>
+      <li><b>2</b><span>Add a <b>Webhooks</b> step: method POST, URL your SeaGeek link, payload type JSON, with the fields shown in the example.</span></li>
+      <?php elseif ($p === 'wix'): ?>
       <li><b>1</b><span>In Wix open <b>Automations</b> and create one with the trigger <b>Order placed</b> (and others such as <b>Order fulfilled</b>).</span></li>
       <li><b>2</b><span>Add the action <b>Send HTTP request</b> (webhook), method POST, to your SeaGeek link, with a JSON body like the example.</span></li>
       <?php else: ?>

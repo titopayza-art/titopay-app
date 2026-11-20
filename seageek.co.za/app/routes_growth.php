@@ -294,6 +294,23 @@ $r->add('GET|POST', '/dashboard/stores', function () {
         'price' => Billing::price($org, 'store_sms')['price']], 'app');
 });
 
+$r->add('GET', '/dashboard/stores/{id}/download/{kind}', function ($id, $kind) {
+    $org = require_org();
+    $store = DB::one('SELECT * FROM stores WHERE public_id = ? AND org_id = ?', [$id, $org['id']]) ?? redirect('/dashboard/stores');
+    if (!Stores::secret($store)) { flash('error', 'This store has no secret yet.'); redirect('/dashboard/stores/' . $id); }
+    audit('store.plugin_downloaded', (int) $org['id'], $store['public_id'] . ' ' . $kind);
+    if ($kind === 'wordpress') {
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="seageek-sms-woocommerce.zip"');
+        echo StorePlugins::wordpressZip($store);
+    } else {
+        header('Content-Type: application/x-php');
+        header('Content-Disposition: attachment; filename="seageek-store.php"');
+        echo StorePlugins::phpDropIn($store);
+    }
+    exit;
+});
+
 $r->add('GET|POST', '/dashboard/stores/{id}', function ($id) {
     $org = require_org();
     $store = DB::one('SELECT * FROM stores WHERE public_id = ? AND org_id = ?', [$id, $org['id']]) ?? redirect('/dashboard/stores');

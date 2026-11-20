@@ -226,6 +226,8 @@ final class Settings
         'payfast_merchant_key' => '46f0cd694581a',
         'payfast_passphrase' => '',
         'min_topup' => '100',
+        'startup_credit' => '500',
+        'startup_plan_months' => '3',
         'invoice_due_days' => '7',
         'reminder_days' => '0,3,6',
         'lock_after_days' => '7',

@@ -105,6 +105,23 @@ $r->add('GET', '/status', function () {
     $partners = DB::all('SELECT name, service, active, last_ok_at, fail_count FROM partners WHERE active = 1 ORDER BY service, priority');
     render('site/status', ['title' => 'Service status', 'partners' => $partners, 'cron' => Settings::get('last_cron_at')]);
 });
+$r->add('GET|POST', '/startups', function () {
+    if (is_post()) {
+        csrf_check();
+        if (rate_limited('startup:' . client_ip(), 5, 3600)) { flash('error', 'Too many applications from your connection. Try again later.'); redirect('/startups#apply'); }
+        $email = (string) input('email');
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || trim((string) input('what')) === '' || trim((string) input('company')) === '') { flash('error', 'Add your email, startup name and what you are building.'); redirect('/startups#apply'); }
+        $body = "Startup programme application\n\nStartup: " . input('company') . "\nWebsite: " . (input('website') ?: '-') . "\nStage: " . input('stage')
+            . "\nProducts: " . implode(', ', array_map('strval', (array) ($_POST['products'] ?? []))) . "\n\nWhat they are building:\n" . input('what')
+            . "\n\nTo approve: open their customer account in Admin and use Approve startup programme.";
+        $t = Desk::createTicket((int) Desk::house()['id'], 'Startup application: ' . mb_substr((string) input('company'), 0, 80), $body, 'web',
+            ['name' => input('name'), 'email' => $email, 'phone' => input('phone')], 'normal', ['startup'], true);
+        audit('startup.applied', null, (string) input('company'));
+        flash('ok', "Thanks. Your application is #{$t['number']}. We reply within two working days.");
+        redirect('/startups#apply');
+    }
+    render('site/startups', ['title' => 'Build with SeaGeek', 'nav' => 'startups', 'description' => 'SeaGeek for startups: launch credit, a free Startup plan and help from our engineers.']);
+});
 $r->add('GET|POST', '/contact', function () {
     if (is_post()) {
         csrf_check();
@@ -667,6 +684,16 @@ $r->add('GET|POST', '/admin/orgs/{id}', function ($id) {
                     flash('ok', 'WhatsApp number updated.');
                 }
             })(),
+            'startup' => (function () use ($org) {
+                if (!Auth::can('billing')) { flash('error', 'Approving the startup programme needs the Money permission.'); return; }
+                if (DB::one("SELECT id FROM ledger WHERE org_id = ? AND ref = 'startup'", [$org['id']])) { flash('error', 'This customer already received the startup programme.'); return; }
+                $credit = (float) Settings::get('startup_credit');
+                if ($credit > 0) Billing::credit((int) $org['id'], $credit, 'adjustment', 'startup', 'Startup programme launch credit');
+                DB::update('orgs', ['plan_code' => 'startup', 'plan_renews_at' => ts('+' . (int) Settings::get('startup_plan_months') . ' months')], 'id = ?', [$org['id']]);
+                Billing::maybeEnableLive((int) $org['id']);
+                audit('admin.startup_approved', (int) $org['id']);
+                flash('ok', 'Startup programme approved: ' . zar($credit) . ' credit and the Startup plan free for ' . (int) Settings::get('startup_plan_months') . ' months.');
+            })(),
             'act_as' => (function () use ($org) { $_SESSION['act_as_org'] = (int) $org['id']; audit('admin.act_as', (int) $org['id']); redirect('/dashboard'); })(),
             'service_on' => [Services::activate((int) $org['id'], (string) input('service'), true), audit('admin.service_on', (int) $org['id'], (string) input('service')), flash('ok', 'Service switched on.')],
             'service_off' => [Services::deactivate((int) $org['id'], (string) input('service')), audit('admin.service_off', (int) $org['id'], (string) input('service')), flash('ok', 'Service switched off.')],
@@ -868,6 +895,7 @@ $r->add('GET', '/sitemap.xml', function () {
     foreach (array_keys(Catalog::services()) as $k) $urls[] = '/docs/' . $k;
     foreach (array_keys(Docs::guides()) as $k) $urls[] = '/docs/' . $k;
     $urls[] = '/quote';
+    $urls[] = '/startups';
     foreach (DB::all('SELECT slug FROM articles WHERE org_id = ? AND published = 1', [Desk::house()['id']]) as $a) $urls[] = '/help/' . $a['slug'];
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
     foreach ($urls as $u) echo '<url><loc>' . e(app_url($u)) . '</loc></url>';

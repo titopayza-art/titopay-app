@@ -13,7 +13,7 @@
   <form method="post" class="panel form"><?= csrf_field() ?>
     <h2>Connect a store</h2>
     <div class="platforms">
-      <?php foreach (Stores::PLATFORMS as $k => $label): ?><label class="choice"><input type="radio" name="platform" value="<?= $k ?>" <?= $k === 'shopify' ? 'checked' : '' ?>><span><b><?= e($label) ?></b><small><?= ['shopify' => 'Settings, Notifications, Webhooks', 'woocommerce' => 'WooCommerce, Settings, Advanced, Webhooks', 'wix' => 'Automations with a webhook action', 'other' => 'Magento, BigCommerce, OpenCart, your own site'][$k] ?></small></span></label><?php endforeach; ?>
+      <?php foreach (Stores::PLATFORMS as $k => $label): ?><label class="choice"><input type="radio" name="platform" value="<?= $k ?>" <?= $k === 'shopify' ? 'checked' : '' ?>><span><b><?= e($label) ?></b><small><?= e(Stores::HOW[$k]) ?></small></span></label><?php endforeach; ?>
     </div>
     <div class="row"><div class="field"><label for="st-name">Store name <span class="muted">(used in messages)</span></label><input id="st-name" name="name" placeholder="Acme Stores" required></div><div class="field"><label for="st-domain">Store address</label><input id="st-domain" name="domain" placeholder="acme.co.za"></div></div>
     <button class="btn btn-primary btn-sm">Connect store</button>

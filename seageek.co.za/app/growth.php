@@ -256,7 +256,13 @@ final class Qr
 
 final class Stores
 {
-    public const PLATFORMS = ['shopify' => 'Shopify', 'woocommerce' => 'WooCommerce', 'wix' => 'Wix', 'other' => 'Any other platform'];
+    public const PLATFORMS = ['shopify' => 'Shopify', 'woocommerce' => 'WooCommerce', 'wix' => 'Wix', 'opencart' => 'OpenCart', 'prestashop' => 'PrestaShop',
+        'magento' => 'Magento', 'bigcommerce' => 'BigCommerce', 'zapier' => 'Zapier or Make', 'other' => 'Any other platform'];
+
+    /** One line per platform for the connect screen. */
+    public const HOW = ['shopify' => 'Paste a link into Shopify webhooks', 'woocommerce' => 'Install our WordPress plugin', 'wix' => 'Add a webhook step to Wix Automations',
+        'opencart' => 'Add our PHP file', 'prestashop' => 'Add our PHP file', 'magento' => 'Add our PHP file', 'bigcommerce' => 'Connect through Zapier or Make',
+        'zapier' => 'Use a Webhooks step', 'other' => 'Send one JSON request'];
 
     /** event => [label, default template, on by default, when it is sent]. */
     public static function events(): array

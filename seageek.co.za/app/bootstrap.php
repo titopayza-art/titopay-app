@@ -15,6 +15,7 @@ require __DIR__ . '/ai.php';
 require __DIR__ . '/desk.php';
 require __DIR__ . '/gateway.php';
 require __DIR__ . '/growth.php';
+require __DIR__ . '/plugins.php';
 require __DIR__ . '/docs.php';
 
 date_default_timezone_set('UTC');

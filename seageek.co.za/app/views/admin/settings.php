@@ -6,6 +6,8 @@
     <div class="field"><label>Address on invoices and statements</label><input name="company_address" value="<?= $v('company_address') ?>"></div>
     <div class="row"><div class="field"><label>Support email</label><input name="support_email" value="<?= $v('support_email') ?>"></div><div class="field"><label>Support hours</label><input name="support_hours" value="<?= $v('support_hours') ?>"></div></div>
     <div class="row"><div class="field"><label>Emails from (name)</label><input name="mail_from_name" value="<?= $v('mail_from_name') ?>"></div><div class="field"><label>Emails from (address)</label><input name="mail_from_address" value="<?= $v('mail_from_address') ?>"></div></div>
+    <h2 style="margin-top:8px">Startup programme</h2>
+    <div class="row"><div class="field"><label>Launch credit (R)</label><input name="startup_credit" value="<?= $v('startup_credit') ?>" inputmode="decimal"></div><div class="field"><label>Startup plan free for (months)</label><input name="startup_plan_months" value="<?= $v('startup_plan_months') ?>" inputmode="numeric"></div></div>
     <h2 style="margin-top:8px">VAT</h2>
     <div class="row"><div class="field"><label>VAT registered</label><select name="vat_registered"><option value="0">No</option><option value="1" <?= Settings::get('vat_registered') === '1' ? 'selected' : '' ?>>Yes</option></select></div><div class="field"><label>VAT number</label><input name="vat_number" value="<?= $v('vat_number') ?>"></div><div class="field"><label>Rate %</label><input name="vat_rate" value="<?= $v('vat_rate') ?>"></div></div>
     <h2 style="margin-top:8px">Bank details for EFT</h2>

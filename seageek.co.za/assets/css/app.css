@@ -984,3 +984,14 @@ ul.plain li::before { content: ""; position: absolute; left: 0; top: .7em; width
 
 .when.on { color: var(--accent); }
 .side .nav small.soon { margin-left: auto; font-size: 12px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 6px; padding: 0 6px; }
+
+.plugin-box { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 16px 18px; margin: 14px 0; border-radius: 12px; border: 1px solid rgba(95, 227, 207, .45); background: rgba(95, 227, 207, .05); }
+.plugin-box b { display: block; font-size: 16px; }
+.plugin-box span { color: var(--text-soft); font-size: 15px; }
+.plugin-box > div { flex: 1; min-width: 260px; }
+details.fold-plain { margin-top: 14px; }
+details.fold-plain summary { cursor: pointer; color: var(--accent); font-size: 15px; }
+.platforms { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+@media (max-width: 900px) { .platforms { grid-template-columns: 1fr 1fr !important; } }
+.pick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
+@media (max-width: 700px) { .pick-grid { grid-template-columns: 1fr 1fr; } }
