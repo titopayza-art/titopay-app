@@ -30,7 +30,13 @@ CREATE TABLE users (
   pin_locked_until    TEXT,
   email_otp_enabled   INTEGER NOT NULL DEFAULT 0 CHECK (email_otp_enabled IN (0,1)),
   -- Upgrade 58: set on a linked device's own account (event_devices).
-  device_id           TEXT
+  device_id           TEXT,
+  -- Upgrade 59: staff two-step sign-in with an authenticator app (secrets
+  -- encrypted with the data key; the last code step used, never accepted twice).
+  totp_secret         TEXT,
+  totp_pending        TEXT,
+  totp_enabled_at     TEXT,
+  totp_last_step      INTEGER
 );
 CREATE UNIQUE INDEX users_email_uq ON users (lower(email));
 CREATE INDEX users_type_idx ON users (account_type, created_at);

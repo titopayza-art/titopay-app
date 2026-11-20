@@ -79,6 +79,12 @@ const INTEGRATION_FIELDS = [
         'templateName' => ['label' => 'Template name', 'provider' => 'cloud', 'placeholder' => 'ticket_ready', 'hint' => 'A Utility template with four values: Hi {{1}}, your tickets for {{2}} on {{3}} are ready. Open them here: {{4}}'],
         'templateLanguage' => ['label' => 'Template language code', 'provider' => 'cloud', 'placeholder' => 'en', 'hint' => 'As approved in WhatsApp Manager, for example en or en_US.'],
     ],
+    // Cloudflare Turnstile: the "I am human" check on public forms (lib/security.php).
+    // Set on Site settings, Security, not the Integrations page.
+    'turnstile' => [
+        'siteKey' => ['label' => 'Turnstile site key', 'max' => 100],
+        'secretKey' => ['label' => 'Turnstile secret key', 'secret' => true, 'max' => 100],
+    ],
     // Organiser identity checks (FICA). See lib/verification.php.
     'kyc' => [
         'provider' => ['label' => 'Identity checks by', 'options' => ['manual' => 'TicketRoom staff (every document reviewed by a person)', 'sandbox' => 'Sandbox: simulated checks for testing, nothing real is checked', 'http' => 'My own provider (any web API)']],

@@ -53,6 +53,18 @@ What is ready, what only you can do, and the first marketing steps.
 10. **Remove sample content.** Make sure no test or sample events are
     published (test events never show to the public, but check drafts too).
 
+## Security switches (Admin portal, Site settings, Security)
+
+- **Two-step sign-in for staff:** each staff member opens My password, Two-step
+  sign-in, and scans the QR code with an authenticator app. When everyone has
+  (the card lists who has not), tick "Staff must use two-step sign-in" and
+  save. Someone who loses their phone: an admin presses Reset two-step on
+  Staff & roles.
+- **Cloudflare Turnstile (optional):** at dash.cloudflare.com, Turnstile, add
+  the site ticketroom.co.za, then paste the site key and secret key on the
+  card. Sign-up, contact, callback, newsletter and password reset forms then
+  ask for the "I am human" check. The hidden bot traps work with or without it.
+
 ## Before your first event with handhelds
 
 - Link each handheld under the event's Devices tab (one code per device, it

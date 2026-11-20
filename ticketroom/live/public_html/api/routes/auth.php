@@ -11,7 +11,7 @@ route('GET', '/api/health', function () {
     return ['ok' => true, 'healthy' => !ops_problems($s), 'service' => 'ticketroom', 'edition' => 'php', 'version' => TR_VERSION, 'provider' => pay_provider()] + $s;
 });
 route('GET', '/api/config', fn() => [
-    'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'googleSignIn' => google_ready(), 'titopayWallet' => false,
+    'operator' => 'TicketRoom', 'edition' => 'php', 'provider' => pay_provider(), 'simulatedPayments' => false, 'cardPaymentsEnabled' => pay_ready(), 'paymentsTest' => pay_ready() && pay_test(), 'googleSignIn' => google_ready(), 'turnstileSiteKey' => turnstile_ready() ? turnstile_site_key() : null, 'titopayWallet' => false,
     // Cashless (event wallets, wristbands and the vendor till) switches on
     // with card payments, because top-ups are card payments. Each event then
     // opts in with its own "cashless event" setting. tagRegistry: organisers
@@ -61,6 +61,7 @@ function send_account_exists(array $u): void
 // account becomes theirs, with every ticket already in it.
 route('POST', '/api/auth/register', function () {
     limit('register', 60, 3600);
+    human_check();
     $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true]),
         'password' => R::password(), 'marketingOptIn' => R::bool(), 'acceptTerms' => R::bool(), 'context' => R::oneOf(['retail'], ['optional' => true])]);
     if (!$b['acceptTerms']) throw bad('Please accept the Terms and Privacy Notice.', ['acceptTerms' => 'Required.']);
@@ -147,6 +148,13 @@ route('POST', '/api/auth/login', function () {
     if (password_needs_rehash($u['password_hash'], PASSWORD_DEFAULT)) q('UPDATE users SET password_hash = ? WHERE id = ?', [hash_secret($b['password']), $u['id']]);
     q('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [$u['id']]);
     limit_clear('loginpair', $pair);
+    if ($type === 'staff' && !empty($u['totp_enabled_at'])) {
+        // Two-step with an authenticator app: the next step is its code.
+        $challenge = random_token(32);
+        q('INSERT INTO staff_login_codes (user_id, challenge_hash, code_hash, attempts, expires_at, created_at) VALUES (?,?,?,0,?,?) ON CONFLICT(user_id) DO UPDATE SET challenge_hash = excluded.challenge_hash, code_hash = excluded.code_hash, attempts = 0, expires_at = excluded.expires_at, created_at = excluded.created_at',
+            [$u['id'], sha256($challenge), 'totp', iso_in(600), now_iso()]);
+        return ['mfaRequired' => true, 'mfaType' => 'totp', 'challenge' => $challenge, 'expiresIn' => 600];
+    }
     if ($type === 'staff') {
         // Password alone never creates a staff session: issue a short-lived,
         // one-use code to the verified address on the staff account.
@@ -213,7 +221,8 @@ route('POST', '/api/auth/staff-code/verify', function () {
         if (!$c) return 'invalid';
         if (to_unix($c['expires_at']) < microtime(true)) { q('DELETE FROM staff_login_codes WHERE user_id = ?', [$c['user_id']]); return 'expired'; }
         if ((int) $c['attempts'] >= 5) return 'locked';
-        if (!verify_secret($b['code'], $c['code_hash'])) {
+        $ok = $c['code_hash'] === 'totp' ? staff_two_step_check($c['user_id'], $b['code']) : verify_secret($b['code'], $c['code_hash']);
+        if (!$ok) {
             q('UPDATE staff_login_codes SET attempts = attempts + 1 WHERE user_id = ?', [$c['user_id']]);
             audit('security.staff_login_code_rejected', ['entityType' => 'user', 'entityId' => $c['user_id'], 'ip' => client_ip()]);
             return 'wrong';
@@ -226,7 +235,7 @@ route('POST', '/api/auth/staff-code/verify', function () {
     });
     if ($result === 'expired') throw bad('That sign-in code expired. Sign in again to get a new one.');
     if ($result === 'locked') throw too_many();
-    if ($result === 'wrong') throw bad('That sign-in code is not right. Check your email and try again.');
+    if ($result === 'wrong') throw bad('That sign-in code is not right. Use the newest code from your authenticator app or email, and try again.');
     if ($result === 'invalid') throw new AppError(401, 'bad_credentials', 'That sign-in request is no longer valid. Sign in again.');
     create_session($result);
     return ['user' => profile($result)];
@@ -244,6 +253,7 @@ route('GET', '/api/auth/me', function () {
     // The first administrator signs in with a temporary password; the pages
     // keep reminding them until it is changed.
     if (val('SELECT 1 FROM meta WHERE key = ?', ['temp_password:' . user()['id']])) $p['mustChangePassword'] = true;
+    if (account_type(user()) === 'staff') { $p['twoStepEnabled'] = !empty(user()['twoStep']); $p['twoStepRequired'] = staff_two_step_required(); }
     // A linked device (a gate handheld, a top-up desk phone): its event, roles and reader.
     if (!empty(user()['device'])) $p['device'] = user()['device'];
     return ['user' => $p, 'csrfToken' => session()['csrfToken']];
@@ -379,6 +389,7 @@ route('POST', '/api/auth/password/forgot', function () {
     // A roomy limit per connection (many phones share one address) and a
     // quiet one per email, so nobody can flood one inbox.
     limit('forgot', 60, 3600);
+    human_check();
     $b = check(body(), ['email' => R::email()]);
     $u = user_by_email($b['email']);
     // Staff passwords are reset by the platform owner from the admin portal,

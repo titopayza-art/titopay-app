@@ -61,6 +61,11 @@ export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[
 const ALL_FEATURES = { payments: true, cashless: true, pos: true, finance: true, sms: true, tags: true, promote: false, cashDesk: false, tagRegistry: false };
 let featurePromise;
 let configPromise;
+// Page-to-page fades (tr.css @view-transition): a fade cut short by another
+// navigation (a redirect after payment, a quick second tap) is not an error.
+for (const type of ["pageswap", "pagereveal"]) {
+  addEventListener(type, (e) => { const t = e.viewTransition; if (t) for (const k of ["ready", "finished", "updateCallbackDone"]) t[k]?.catch?.(() => {}); });
+}
 export const appConfig = () => (configPromise ||= fetch("/api/config", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
 export function features() {
   featurePromise ||= appConfig().then((c) => ({ ...ALL_FEATURES, ...(c.features || {}) }));
@@ -478,6 +483,34 @@ export function showErrors(form, err) {
 }
 
 // Wraps a form submit: busy state, error display, double-submit protection.
+// ---- "I am human" on public forms ---------------------------------------------
+// humanFields() goes inside a form: a hidden trap field people never see (bots
+// fill it in), and the Cloudflare Turnstile check when it is switched on
+// (Admin portal, Site settings, Security). mountHuman(form) draws the check.
+// Both end up in the form's values, which the form sends as they are.
+export function humanFields() {
+  return html`<div class="hp-trap" aria-hidden="true"><label>Leave this empty <input name="fax_number" type="text" tabindex="-1" autocomplete="off"></label></div><div class="ts-box" data-turnstile hidden></div>`;
+}
+let turnstileScript = null;
+export async function mountHuman(form) {
+  const box = form && form.querySelector("[data-turnstile]");
+  if (!box) return;
+  const key = (await appConfig()).turnstileSiteKey;
+  if (!key) return;
+  turnstileScript ||= new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    s.async = true; s.onload = res; s.onerror = rej;
+    document.head.append(s);
+  });
+  try { await turnstileScript; } catch { return; }
+  box.hidden = false;
+  const id = window.turnstile.render(box, { sitekey: key, theme: "light", size: "flexible" });
+  // A token works once: after each send, the check starts again.
+  form.addEventListener("submit", () => setTimeout(() => { try { window.turnstile.reset(id); } catch { /* gone */ } }, 800));
+}
+// For forms that send chosen fields rather than all their values.
+export const humanValues = (v) => ({ fax_number: v.fax_number || "", ...(v["cf-turnstile-response"] ? { turnstileToken: v["cf-turnstile-response"] } : {}) });
 export function onSubmit(form, fn) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -765,10 +798,11 @@ export function subscribeForm(source = "footer") {
   const box = document.createElement("div");
   render(box, html`<form class="sub-form" novalidate><label class="sr-only" for="sub-${source}">Email address</label>
     <input id="sub-${source}" name="email" type="email" autocomplete="email" inputmode="email" placeholder="Your email address" required>
-    <button class="btn btn-primary">Subscribe</button></form>
+    ${humanFields()}<button class="btn btn-primary">Subscribe</button></form>
     <p class="sub-note">New events and ticket news, about twice a month. Unsubscribe any time. See our <a href="/legal/privacy">Privacy Policy</a>.</p>`);
   const f = box.querySelector("form");
   me().then((u) => { if (u && !f.email.value) f.email.value = u.email; });
+  mountHuman(f);
   f.addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = f.querySelector("button");
@@ -776,7 +810,7 @@ export function subscribeForm(source = "footer") {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { f.email.setAttribute("aria-invalid", "true"); f.email.focus(); toast("Enter a valid email address.", "bad"); return; }
     btn.setAttribute("aria-busy", "true");
     try {
-      const r = await post("/api/site/subscribe", { email, source });
+      const r = await post("/api/site/subscribe", { email, source, ...humanValues(formValues(f)) });
       render(box, html`<p class="sub-done" role="status">${r.message}</p>`);
     } catch (err) { toast(err.message, "bad"); }
     finally { btn.removeAttribute("aria-busy"); }
@@ -977,9 +1011,10 @@ export async function callbackDialog({ topic = "callback", message = "", source 
   const d = dialog("Request a callback", html`<form class="stack" novalidate>
     <p class="muted mb-0">Leave your details and our team will get back to you within <strong>${resp}</strong>${s ? html` (${s.hours.note || "Monday to Friday, 9am to 5pm"})` : ""}.</p>
     ${s && !s.hours.openNow ? html`<p class="callout warn mb-0">${hoursText(s.hours)}. Your request is saved and handled first thing.</p>` : ""}
-    ${callbackFields(u, topic, message)}
+    ${callbackFields(u, topic, message)}${humanFields()}
     <button class="btn btn-primary btn-block">Request callback</button>
     <p class="tiny muted mb-0">We use these details only to respond to you. See our <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</p></form>`);
+  mountHuman($("form", d));
   onSubmit($("form", d), async (v) => {
     const r = await post("/api/site/callback", { ...v, source });
     render($(".dialog-body", d), html`<div class="stack center"><h3>Thanks, we've got it</h3><p>Your reference is <strong>${r.reference}</strong>. We'll contact you within ${r.responseTime}. A confirmation is on its way to your email.</p><button class="btn btn-dark" data-close>Done</button></div>`);
@@ -1118,13 +1153,14 @@ export function authDialog(mode = "signin", { onDone, reason, portal = "site", c
       ${signup ? html`<div class="field"><label for="a-pass2">Confirm password</label><input id="a-pass2" name="passwordConfirm" type="password" autocomplete="new-password" required minlength="14"></div>` : ""}
       ${signup ? html`<label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
         <label class="check"><input type="checkbox" name="marketingOptIn"><span>Send me TicketRoom event news by email. You can unsubscribe at any time.</span></label>` : ""}
-      <button class="btn btn-primary btn-block" type="submit">${signup ? "Create account" : "Sign in"}</button>
+      ${signup ? humanFields() : ""}<button class="btn btn-primary btn-block" type="submit">${signup ? "Create account" : "Sign in"}</button>
       ${staffBox ? html`<p class="small muted mb-0">TicketRoom staff only. Forgotten your password? Ask the platform owner to send you a new link.</p>`
         : html`<div class="row between small">${signup ? html`<span>Already have an account? <button type="button" class="btn-link" data-switch>Sign in</button></span>`
         : html`<button type="button" class="btn-link" data-forgot>Forgot password?</button>${canSignUp ? html`<span>New here? <button type="button" class="btn-link" data-switch>${portal === "organiser" ? "Start selling" : "Create account"}</button></span>` : ""}`}</div>`}
     </form>`);
   wireGoogle(d, portal, context);
   const form = $("form", d);
+  if (signup) mountHuman(form);
   const completeSignIn = async (u) => {
     markSignedIn(u);
     await me(true);
@@ -1158,13 +1194,14 @@ export function authDialog(mode = "signin", { onDone, reason, portal = "site", c
       return;
     }
     if (result.mfaRequired) {
-      const staffCode = result.mfaType === "staff";
-      render($(".dialog-body", d), html`<div class="stack"><h3 class="mb-0">Check your email</h3>
-        <p class="muted">We sent a six-digit, one-use code to your ${staffCode ? "TicketRoom staff email" : "account email"}. It expires in 10 minutes.</p>
+      const app = result.mfaType === "totp";
+      const staffCode = result.mfaType === "staff" || app;
+      render($(".dialog-body", d), html`<div class="stack"><h3 class="mb-0">${app ? "Two-step sign-in" : "Check your email"}</h3>
+        <p class="muted">${app ? "Open your authenticator app and type the six-digit code it shows for TicketRoom." : html`We sent a six-digit, one-use code to your ${staffCode ? "TicketRoom staff email" : "account email"}. It expires in 10 minutes.`}</p>
         <form class="stack" id="login-otp"><input type="hidden" name="challenge" value="${result.challenge}">
           <div class="field"><label for="login-code">One-time code</label><input id="login-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></div>
           <button class="btn btn-primary btn-block" type="submit">Verify and sign in</button></form>
-        <p class="tiny muted mb-0">Didn't request this? Ignore the email. To get another code, close this dialog and sign in again.</p></div>`);
+        <p class="tiny muted mb-0">${app ? "Lost your phone? Ask an admin to reset your two-step sign-in." : "Didn't request this? Ignore the email. To get another code, close this dialog and sign in again."}</p></div>`);
       const otpForm = $("#login-otp", d);
       onSubmit(otpForm, async (values) => {
         const verified = await post(staffCode ? "/api/auth/staff-code/verify" : "/api/auth/login-code/verify", values);
@@ -1243,9 +1280,10 @@ export function organiserSignupDialog() {
     <div class="grid-2"><div class="field"><label for="os-pass">Password</label><input id="os-pass" name="password" type="password" required minlength="14" autocomplete="new-password"><span class="hint">At least 14 characters.</span></div>
       <div class="field"><label for="os-pass2">Confirm password</label><input id="os-pass2" name="passwordConfirm" type="password" required minlength="14" autocomplete="new-password"></div></div>
     <label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
-    <button class="btn btn-primary btn-block">Create my organiser account</button>
+    ${humanFields()}<button class="btn btn-primary btn-block">Create my organiser account</button>
     <p class="small mb-0">Already have a TicketRoom account? <a href="/organisers">Sign in</a> and set up your organisation there.</p></form>`, { wide: true });
   wireGoogle(d, "organiser");
+  mountHuman($("form", d));
   onSubmit($("form", d), async (v) => {
     matchPasswords(v, "password", "passwordConfirm");
     const r = await post("/api/organiser/signup", v);
@@ -1262,7 +1300,8 @@ export function organiserSignupDialog() {
 function forgotDialog() {
   const d = dialog("Reset your password", html`<form class="stack"><p class="muted">We will email you a link to choose a new password.</p>
     <div class="field"><label for="f-email">Email</label><input id="f-email" name="email" type="email" required autocomplete="email"></div>
-    <button class="btn btn-dark btn-block">Send reset link</button></form>`);
+    ${humanFields()}<button class="btn btn-dark btn-block">Send reset link</button></form>`);
+  mountHuman($("form", d));
   onSubmit($("form", d), async (v) => { const r = await post("/api/auth/password/forgot", v); d.close(); toast(r.message, "good"); });
 }
 

@@ -510,10 +510,10 @@ function adm_staff_reset_link(string $userId, int $days = 7): string
 }
 route('GET', '/api/admin/staff', function () {
     adm_any();
-    $list = rows("SELECT u.id, u.full_name, u.email, u.status, u.created_at, group_concat(r.role) AS roles
+    $list = rows("SELECT u.id, u.full_name, u.email, u.status, u.created_at, (u.totp_enabled_at IS NOT NULL) AS two_step, group_concat(r.role) AS roles
                     FROM users u LEFT JOIN platform_roles r ON r.user_id = u.id WHERE u.account_type = 'staff' GROUP BY u.id ORDER BY u.full_name");
     $owner = adm_owner_id();
-    foreach ($list as &$x) { $x['roles'] = array_values(array_filter(explode(',', (string) $x['roles']))); $x['owner'] = $x['id'] === $owner; }
+    foreach ($list as &$x) { $x['roles'] = array_values(array_filter(explode(',', (string) $x['roles']))); $x['owner'] = $x['id'] === $owner; $x['two_step'] = (int) $x['two_step'] === 1; }
     return ['staff' => $list];
 });
 // Add someone to the team: a new staff account and an email to set a password.

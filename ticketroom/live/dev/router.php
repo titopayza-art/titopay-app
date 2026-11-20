@@ -73,7 +73,7 @@ $serve = function (string $file, int $status = 200) use ($root, $types, $always)
     if (in_array($ext, ['html', 'css', 'js', 'webmanifest'], true)) header('Cache-Control: no-cache, must-revalidate');
     if (in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'svg', 'ico'], true)) header('Cache-Control: public, no-cache');
     if ($ext === 'html') {
-        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://www.payfast.co.za https://sandbox.payfast.co.za; frame-ancestors 'none'");
+        header("Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://www.payfast.co.za https://sandbox.payfast.co.za; frame-ancestors 'none'");
         header('Permissions-Policy: camera=(self), microphone=(), geolocation=(self), payment=()');
     }
     if ($name === 'login-otp.html') { header('Cache-Control: no-store'); header('Referrer-Policy: no-referrer'); }

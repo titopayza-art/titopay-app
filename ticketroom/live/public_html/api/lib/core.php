@@ -64,7 +64,7 @@ function cfg(?string $key = null, $default = null)
     $c = $GLOBALS['TR_CONFIG'] ?? [];
     if ($key === null) return $c;
     // Email, payment and SMS settings saved in the admin portal win over config.php.
-    if (preg_match('/^(mail|payments|payouts|sms|whatsapp|kyc|google|verifynow|wallet)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
+    if (preg_match('/^(mail|payments|payouts|sms|whatsapp|turnstile|kyc|google|verifynow|wallet)\.(\w+)$/', $key, $m) && function_exists('integration_value') && isset(INTEGRATION_FIELDS[$m[1]][$m[2]])) {
         $v = integration_value($m[1], $m[2]);
         if ($v !== null) return $v;
     }
@@ -566,7 +566,7 @@ function load_session(): void
     $GLOBALS['TR_SESSION'] = null;
     $token = $_COOKIE[SESSION_COOKIE] ?? '';
     if (!is_string($token) || $token === '' || strlen($token) > 100) return;
-    $r = row('SELECT s.id AS session_id, s.csrf_token, s.created_at AS session_created_at, s.expires_at AS session_expires_at, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at, u.account_type, u.device_id
+    $r = row('SELECT s.id AS session_id, s.csrf_token, s.created_at AS session_created_at, s.expires_at AS session_expires_at, u.id, u.email, u.full_name, u.phone, u.status, u.email_verified_at, u.account_type, u.device_id, u.totp_enabled_at
                 FROM sessions s JOIN users u ON u.id = s.user_id
                WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?', [sha256($token), now_iso()]);
     if (!$r || $r['status'] !== 'active') return;
@@ -597,6 +597,7 @@ function load_session(): void
         'emailVerified' => $r['email_verified_at'] !== null, 'platformRoles' => $roles, 'accountType' => $r['account_type'],
         'primaryRole' => array_values(array_intersect(['admin', 'finance', 'support'], $roles))[0] ?? 'user',
         'device' => $device,
+        'twoStep' => !empty($r['totp_enabled_at']),
     ];
 }
 function user(): ?array { return $GLOBALS['TR_USER'] ?? null; }

@@ -1,4 +1,4 @@
-import { appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, seatMapHtml, venueSvg, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
+import { humanFields, mountHuman, humanValues, appConfig, html, raw, render, $, $$, get, post, del, money, moneyExact, categoryLabel, plural, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, authDialog, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, X_SOCIAL, FACEBOOK_SOCIAL, calendarFile, AGE_GROUPS, TICKET_KINDS, seatMapHtml, venueSvg, ageGroupText, ticketPng, walletBadges, organiserSignupDialog, dialog, consent } from "/assets/core.js?build=2026-10-22-phases";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js?build=2026-10-22-phases";
 
 const main = $("#main");
@@ -1227,8 +1227,18 @@ async function supportPanel(site, { topic = "callback" } = {}) {
       ${site?.chatbot?.enabled && !site?.maintenance ? html`<button class="btn btn-ghost" data-open-chat>Ask the assistant now</button>` : ""}</section></div>`;
 }
 
+// The hidden trap and the Turnstile check, before a form's send button.
+function addHuman(form) {
+  if (!form || form.querySelector("[data-turnstile]")) return;
+  const btn = form.querySelector("button[type=submit], button:not([type])");
+  const t = document.createElement("div");
+  render(t, humanFields());
+  (btn || form.lastChild).before(...t.childNodes);
+  mountHuman(form);
+}
 function wireSupport(root) {
   const f = $("#cbf", root);
+  addHuman(f);
   if (f) onSubmit(f, async (v) => {
     const r = await post("/api/site/callback", { ...v, source: "web" });
     render(f, html`<div class="callout good"><strong>Thanks, we've got it.</strong> Your reference is <strong>${r.reference}</strong>. We'll contact you within ${r.responseTime}. A confirmation is on its way to your email.</div>`);
@@ -1356,13 +1366,14 @@ async function advertisePage() {
           <p class="tiny muted mb-0">We use these details only to respond to you. See our <a href="/legal/privacy">Privacy Policy</a>.</p></form></section>
     </div></section>`);
   const form = $("#ad-enquiry");
+  addHuman(form);
   onSubmit(form, async (v) => {
     const message = [
       `What they'd like to advertise: ${v.campaign}`,
       v.campaignDates ? `Dates in mind: ${v.campaignDates}` : "",
       v.message ? `Additional details: ${v.message}` : "",
     ].filter(Boolean).join("\n");
-    const r = await post("/api/site/contact", { audience: "organiser", queryType: "advertising", fullName: v.fullName, email: v.email,
+    const r = await post("/api/site/contact", { ...humanValues(v), audience: "organiser", queryType: "advertising", fullName: v.fullName, email: v.email,
       phone: v.phone || undefined, companyName: v.companyName, website: v.website || undefined, message });
     render(form, html`<div class="callout good"><strong>Enquiry received.</strong><p class="mb-0 mt-sm">Your reference is <strong>${r.reference}</strong>. We’ve sent a copy to your email and will reply within ${r.responseTime}.</p><a class="btn btn-ghost mt" href="/">Back to events</a></div>`);
   });
@@ -1408,6 +1419,7 @@ async function contact() {
         <h3>Office hours</h3>${site ? weekTable(site.hours) : html`<p>Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.</p>`}
         <p class="small muted mb-0">Messages received after hours, on weekends or public holidays are answered on the next working day.</p></section></div></div>`);
   const f = $("#ctf");
+  addHuman(f);
   const setAudience = (a) => {
     if (partnershipMode) a = "organiser";
     audience = a;
@@ -1440,7 +1452,7 @@ async function contact() {
   updatePartnershipFields();
   $("[data-callback]").addEventListener("click", () => callbackDialog({ topic: audience === "organiser" ? "organiser" : "callback" }));
   onSubmit(f, async (v) => {
-    const r = await post("/api/site/contact", { audience, fullName: v.fullName, email: v.email, phone: v.phone || undefined, queryType: v.queryType,
+    const r = await post("/api/site/contact", { ...humanValues(v), audience, fullName: v.fullName, email: v.email, phone: v.phone || undefined, queryType: v.queryType,
       companyName: v.companyName || undefined, partnerType: v.partnerType || undefined, website: v.website || undefined, socialHandle: v.socialHandle || undefined, partnerTimeline: v.partnerTimeline || undefined,
       eventName: v.eventName || undefined, reference: audience === "customer" && v.reference ? v.reference : undefined, message: v.message });
     render(f, html`<div class="callout good"><strong>Thanks, we've got it.</strong> Your reference is <strong>${r.reference}</strong>. We'll reply within ${r.responseTime}. A copy is on its way to your email.</div>`);

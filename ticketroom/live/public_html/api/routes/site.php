@@ -36,6 +36,7 @@ route('GET', '/api/public/jobs', function () {
 const CB_CATEGORIES = ['tickets', 'refund', 'tag', 'payment', 'account', 'organiser', 'advertising', 'callback', 'other'];
 route('POST', '/api/site/callback', function () {
     limit('callback', 5, 3600);
+    human_check();
     $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'phone' => R::contactPhone(), 'email' => R::email(),
         'topic' => R::oneOf(CB_CATEGORIES, ['optional' => true, 'fallback' => 'callback']), 'message' => R::text(['max' => 2000]),
         'preferredTime' => R::str(['optional' => true, 'max' => 60]), 'source' => R::oneOf(['web', 'chat'], ['optional' => true, 'fallback' => 'web'])]);
@@ -65,6 +66,7 @@ const CONTACT_TYPES = [
 ];
 route('POST', '/api/site/contact', function () {
     limit('contact', 8, 3600);
+    human_check();
     $b = check(body(), ['audience' => R::oneOf(['customer', 'organiser']), 'fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(),
         'phone' => R::str(['optional' => true, 'max' => 30]), 'eventSlug' => R::str(['optional' => true, 'max' => 160]), 'eventName' => R::str(['optional' => true, 'max' => 160]),
         'companyName' => R::str(['optional' => true, 'max' => 160]), 'partnerType' => R::oneOf(['event-organiser', 'venue', 'artist-brand', 'corporate-institution', 'technology-commercial', 'other'], ['optional' => true]),
@@ -148,6 +150,7 @@ route('POST', '/api/site/unsubscribe-request', function () {
 const NEWS_CONFIRM_TTL = 7 * 86400;
 route('POST', '/api/site/subscribe', function () {
     limit('subscribe', 10, 3600);
+    human_check();
     $b = check(body(), ['email' => R::email(), 'source' => R::str(['optional' => true, 'max' => 40])]);
     $email = $b['email'];
     $done = ['ok' => true, 'status' => 'pending', 'message' => "Thanks. If $email isn't on our list yet, we've sent it an email: click the link in it to confirm."];

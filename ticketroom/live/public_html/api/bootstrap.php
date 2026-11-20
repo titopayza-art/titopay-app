@@ -34,11 +34,12 @@ require TR_APP . '/lib/team.php';
 require TR_APP . '/lib/seo.php';
 require TR_APP . '/lib/extras.php';
 require TR_APP . '/lib/devices.php';
+require TR_APP . '/lib/security.php';
 
 // The API's route files, loaded by name. A file left behind by an older
 // upload (one no longer in this list) is never run. A new route file must be
 // added here.
-const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'devices', 'exchange', 'extras', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
+const TR_ROUTE_FILES = ['account', 'admin', 'auth', 'cashdesk', 'cashless', 'devices', 'exchange', 'extras', 'finance', 'google', 'ops', 'organiser', 'promote', 'public', 'retail', 'security', 'site', 'staff', 'support', 'team', 'testevent', 'verification'];
 function tr_load_routes(): void
 {
     foreach (TR_ROUTE_FILES as $f) require_once TR_APP . "/routes/$f.php";
@@ -234,7 +235,7 @@ const WALLET_PASSES_SQL = "CREATE TABLE IF NOT EXISTS wallet_passes (serial TEXT
 const WALLET_DEVICES_SQL = 'CREATE TABLE IF NOT EXISTS wallet_devices (device_id TEXT NOT NULL, serial TEXT NOT NULL, push_token TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (device_id, serial))';
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 58;
+const SCHEMA_VERSION = 59;
 // The last upgrade included in schema.mysql.sql.
 const MYSQL_SCHEMA_BASE = 56;
 const UPGRADES = [
@@ -616,6 +617,16 @@ const UPGRADES = [
         'ALTER TABLE tickets ADD COLUMN seat_label TEXT',
         '@extras56',
     ],
+    // Staff two-step sign-in with an authenticator app.
+    59 => [
+        'ALTER TABLE users ADD COLUMN totp_secret TEXT',
+        'ALTER TABLE users ADD COLUMN totp_pending TEXT',
+        'ALTER TABLE users ADD COLUMN totp_enabled_at TEXT',
+        'ALTER TABLE users ADD COLUMN totp_last_step INTEGER',
+        'mysql' => [
+            'ALTER TABLE users ADD COLUMN totp_secret MEDIUMTEXT, ADD COLUMN totp_pending MEDIUMTEXT, ADD COLUMN totp_enabled_at VARCHAR(40), ADD COLUMN totp_last_step BIGINT',
+        ],
+    ],
     // Linked devices: handhelds and phones at a gate or top-up desk.
     58 => [
         'ALTER TABLE users ADD COLUMN device_id TEXT',
@@ -936,6 +947,7 @@ function tr_handle(): void
         $GLOBALS['TR_REQ'] = ['method' => $method, 'path' => $path, 'body' => $body, 'raw' => $raw];
         tr_load_routes();
         device_guard($method, $path);
+        staff_two_step_guard($method, $path);
         // The customer portal's API is for customer accounts. Organisers and
         // staff have their own portals (liking an event is open to anyone signed in).
         if (str_starts_with($path, '/api/me/') && $path !== '/api/me/likes' && user() && account_type(user()) !== 'customer') {

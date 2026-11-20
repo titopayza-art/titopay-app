@@ -34,6 +34,8 @@ function setting_defaults(): array
         // years after the relationship ends; replaced or rejected copies are
         // not records and go sooner.
         'verification' => ['retentionYears' => 5, 'discardRejectedDays' => 90],
+        // Staff must set up an authenticator app before the admin portal opens.
+        'security' => ['staffTwoStep' => false],
     ];
 }
 function settings_all(bool $fresh = false): array
@@ -57,6 +59,7 @@ function setting_clean(string $key, $v): array
     $time = R::str(['pattern' => '/^([01]\d|2[0-3]):[0-5]\d$/', 'message' => 'Use HH:MM (24-hour).']);
     switch ($key) {
         case 'maintenance': return check($v, ['enabled' => R::bool(), 'message' => R::text(['max' => 500])]);
+        case 'security': return check($v, ['staffTwoStep' => R::bool()]);
         case 'retail': return check($v, ['enabled' => R::bool(), 'message' => R::str(['max' => 300])]);
         case 'banner':
             return check($v, ['enabled' => R::bool(), 'text' => R::str(['max' => 200]), 'linkText' => R::str(['optional' => true, 'max' => 40]),

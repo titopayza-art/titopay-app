@@ -571,6 +571,7 @@ route('POST', '/api/organiser/apply', function () {
 // Same rules as any sign-up: one account per email, confirmed before use.
 route('POST', '/api/organiser/signup', function () {
     limit('register', 60, 3600);
+    human_check();
     $b = check(body(), ['fullName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(), 'phone' => R::phone(['optional' => true]), 'password' => R::password(),
         'organisation' => R::str(['min' => 2, 'max' => 120]), 'description' => R::text(['optional' => true, 'max' => 2000]), 'acceptTerms' => R::bool()]);
     if (!$b['acceptTerms']) throw bad('Please accept the Terms and Privacy Notice.', ['acceptTerms' => 'Required.']);

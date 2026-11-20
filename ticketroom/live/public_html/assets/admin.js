@@ -114,7 +114,7 @@ async function staffPage() {
         <div class="field"><label for="se">Work email</label><input id="se" name="email" type="email" required><span class="hint">A new staff account is made for this email, and they get a link to set their password. Customer and organiser emails can't be used.</span></div></div>
         ${roleBoxes("r_")}<button class="btn btn-primary">Add to the team</button></form></section>` : ""}
     <section class="mt"><h2>The team</h2>${tbl(["Name", "Email", "Roles", ""], staff.map((s) => html`<tr><td>${s.full_name}${s.owner ? html` <span class="badge info">Owner</span>` : ""}${s.id === meId ? html` <span class="tiny muted">(you)</span>` : ""}</td><td class="small">${s.email}</td>
-      <td>${s.status !== "active" ? html`<span class="badge plain">Off the team</span>` : s.roles.map((r) => html`<span class="badge ${r === "admin" ? "bad" : r === "finance" ? "info" : "good"}">${(ROLE_INFO.find(([k]) => k === r) || [, r])[1]}</span> `)}</td>
+      <td>${s.status === "active" ? (s.two_step ? html`<span class="badge good">Two-step on</span> ` : html`<span class="badge plain">No two-step</span> `) : ""}${s.status !== "active" ? html`<span class="badge plain">Off the team</span>` : s.roles.map((r) => html`<span class="badge ${r === "admin" ? "bad" : r === "finance" ? "info" : "good"}">${(ROLE_INFO.find(([k]) => k === r) || [, r])[1]}</span> `)}</td>
       <td class="nowrap">${isA() && s.id !== meId && !s.owner ? html`<button class="btn btn-ghost btn-sm" data-edit="${s.id}">Change roles</button>${s.status === "active" ? html` <button class="btn btn-ghost btn-sm" data-reset="${s.id}">Send password link</button>` : ""}` : ""}</td></tr>`), "No staff yet.")}
       <p class="small muted">Staff can't reset their own password from the sign-in box. If someone is locked out, send them a password link here; it works for 24 hours. The owner's account can only be changed by the owner.</p></section>`);
   const f = $("#sf");
@@ -125,6 +125,19 @@ async function staffPage() {
     toast(r.invited ? `Added. ${v.email} will get an email to set a password.` : `Added. ${v.email} can sign in with their usual password.`, "good");
     staffPage();
   });
+  // A colleague lost their phone: clear their two-step so they can set it up again.
+  if (isA()) for (const s of staff) {
+    if (!s.two_step || s.id === meId || s.owner) continue;
+    const cell = $(`[data-edit="${s.id}"]`)?.parentElement;
+    if (!cell) continue;
+    const b = document.createElement("button");
+    b.className = "btn btn-ghost btn-sm"; b.textContent = "Reset two-step";
+    b.addEventListener("click", async () => {
+      if (!(await confirmDialog(`Reset two-step for ${s.full_name}?`, "Their authenticator app stops working for TicketRoom and they are signed out. They set it up again after signing in with an emailed code.", { confirm: "Reset two-step", danger: true }))) return;
+      if (await act(() => post(`/api/admin/staff/${s.id}/two-step/reset`), "Two-step reset.")) staffPage();
+    });
+    cell.append(" ", b);
+  }
   $$("[data-reset]").forEach((b) => b.addEventListener("click", async () => {
     const s = staff.find((x) => x.id === b.dataset.reset);
     if (!(await confirmDialog(`Send ${s.full_name} a password link?`, `${s.email} gets a link to choose a new password, valid for 24 hours. Their current password keeps working until they use it.`, { confirm: "Send link" }))) return;
@@ -177,7 +190,9 @@ async function myPassword() {
       <div class="field"><label for="cp">Current password</label><input id="cp" name="currentPassword" type="password" required autocomplete="current-password"></div>
       <div class="field"><label for="np">New password</label><input id="np" name="newPassword" type="password" required minlength="14" autocomplete="new-password"><span class="hint">At least 14 characters.</span></div>
       <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="newPasswordConfirm" type="password" required minlength="14" autocomplete="new-password"></div>
-      <button class="btn btn-dark">Change password</button></form></section>`);
+      <button class="btn btn-dark">Change password</button></form></section>
+    <div id="two-step" class="mt"></div>`);
+  twoStepCard($("#two-step"));
   onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", matchPasswords(v, "newPassword", "newPasswordConfirm")); f.reset(); $(".pw-nag")?.remove(); toast("Password changed.", "good"); });
 }
 const act = async (fn, msg = "Done.") => { try { await fn(); toast(msg, "good"); return true; } catch (err) { toast(err.message, "bad"); return false; } };
@@ -847,12 +862,84 @@ async function backups() {
 
 // ---------------- site settings: maintenance, banner, hours, support, legal, assistant ----------------
 const DAYS = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"], ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
+// ---------------- security (Site settings) ----------------
+// Staff two-step sign-in and Cloudflare Turnstile, as one card.
+async function securityCard() {
+  const box = $("#sec-card");
+  if (!box) return;
+  const s = await get("/api/admin/security");
+  const ro = raw(isA() ? "" : "disabled");
+  render(box, html`<section class="card stack sec-card" aria-labelledby="sec-h"><h2 id="sec-h" class="mb-0">Security</h2>
+    <form class="stack" id="f-sec" autocomplete="off">
+      <label class="check"><input type="checkbox" name="staffTwoStep" ${raw(s.staffTwoStep ? "checked" : "")} ${ro}><span>Staff must use two-step sign-in to open the admin portal</span></label>
+      <p class="small mb-0">${s.notSetUp.length ? html`Not set up yet: ${s.notSetUp.join(", ")}.` : "Every staff member has set it up."} <a href="#/password">Set up yours</a></p>
+      <h3 class="mb-0">Cloudflare Turnstile</h3>
+      <p class="small muted mb-0">Optional "I am human" check on sign-up, contact, callback, newsletter and password reset forms. Free in the ${raw('<a href="https://dash.cloudflare.com" target="_blank" rel="noopener">Cloudflare dashboard</a>')}, under Turnstile. Leave empty to rely on the hidden traps only.</p>
+      <div class="grid-2"><div class="field"><label for="ts-site">Site key</label><input id="ts-site" name="turnstileSiteKey" value="${s.turnstile.siteKey}" maxlength="100" spellcheck="false" ${ro}></div>
+        <div class="field"><label for="ts-secret">Secret key ${s.turnstile.secretSet ? html`<span class="badge good">Saved</span>` : ""}</label>${writeOnly("ts-secret", "turnstileSecretKey", false, s.turnstile.secretSet)}</div></div>
+      <p class="small mb-0">Turnstile is <strong>${s.turnstile.on ? "on" : "off"}</strong>.</p>
+      ${isA() ? html`<div class="row"><button class="btn btn-dark">Save</button>${s.turnstile.siteKey || s.turnstile.secretSet ? html`<button type="button" class="btn btn-ghost" data-ts-clear>Remove Turnstile keys</button>` : ""}</div>` : ""}
+    </form></section>`);
+  $$("[data-unlock]", box).forEach((el) => { const open = () => el.removeAttribute("readonly"); for (const ev of ["pointerdown", "touchstart", "focus"]) el.addEventListener(ev, open, { once: true, passive: true }); });
+  const send = async (extra) => {
+    const pw = await confirmDialog("Save security settings?", "Type your TicketRoom password to confirm. These settings change how staff and visitors sign in.", { confirm: "Save", input: { label: "Your password", type: "password", required: true, autocomplete: "current-password" } });
+    if (!pw) return;
+    const f = $("#f-sec");
+    try { await put("/api/admin/security", { currentPassword: pw, staffTwoStep: f.staffTwoStep.checked, turnstileSiteKey: f.turnstileSiteKey.value.trim(), turnstileSecretKey: f.turnstileSecretKey.value.trim(), ...extra }); toast("Saved.", "good"); securityCard(); }
+    catch (err) { toast(err.message, "bad"); }
+  };
+  $("#f-sec").addEventListener("submit", (e) => { e.preventDefault(); send({}); });
+  $("[data-ts-clear]", box)?.addEventListener("click", () => send({ clearTurnstile: true, turnstileSiteKey: "", turnstileSecretKey: "" }));
+}
+
+// ---------------- my two-step sign-in ----------------
+// An authenticator app (Google Authenticator, Microsoft Authenticator,
+// Authy, 1Password): scan the QR code once, then type its code when signing in.
+async function twoStepCard(el, { forced = false } = {}) {
+  const t = await get("/api/admin/me/two-step");
+  if (t.enabled) {
+    render(el, html`<section class="card stack" style="max-width:520px"><h2 class="mb-0">Two-step sign-in <span class="badge good">On</span></h2>
+      <p class="mb-0">When you sign in, TicketRoom asks for the six-digit code from your authenticator app.</p>
+      ${t.required ? html`<p class="small muted mb-0">Two-step sign-in is compulsory for staff. Moving to a new phone? Ask another admin to reset it for you, then set it up again.</p>`
+        : html`<form class="stack" id="ts-off"><p class="small muted mb-0">To turn it off (or move it to a new phone), confirm with your password and a code from the app.</p>
+          <div class="grid-2"><div class="field"><label for="to-pw">Your password</label><input id="to-pw" name="currentPassword" type="password" required autocomplete="current-password"></div>
+          <div class="field"><label for="to-code">Code from the app</label><input id="to-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code"></div></div>
+          <button class="btn btn-ghost">Turn off two-step sign-in</button></form>`}</section>`);
+    const off = $("#ts-off", el);
+    if (off) onSubmit(off, async (v) => { await post("/api/admin/me/two-step/off", v); toast("Two-step sign-in is off.", "good"); twoStepCard(el); });
+    return;
+  }
+  render(el, html`<section class="card stack" style="max-width:560px"><h2 class="mb-0">Two-step sign-in ${forced ? "" : html`<span class="badge plain">Off</span>`}</h2>
+    ${forced ? html`<p class="callout warn mb-0">TicketRoom asks every staff member to use two-step sign-in. Set it up to open the admin portal. It takes a minute.</p>` : ""}
+    <p class="mb-0">Use an authenticator app on your phone, for example Google Authenticator, Microsoft Authenticator or Authy. After this, signing in asks for the app's six-digit code instead of an emailed code.</p>
+    <button class="btn btn-primary" data-ts-start>Set up two-step sign-in</button><div data-ts-setup></div></section>`);
+  $("[data-ts-start]", el).addEventListener("click", async (e) => {
+    e.target.hidden = true;
+    let r;
+    try { r = await post("/api/admin/me/two-step/start"); } catch (err) { toast(err.message, "bad"); e.target.hidden = false; return; }
+    const setup = $("[data-ts-setup]", el);
+    render(setup, html`<div class="stack">
+      <p class="mb-0"><strong>1.</strong> In the app, add an account and scan this code.</p>
+      <div class="qr-preview two-step-qr">${raw(r.qrSvg.replace("<svg ", '<svg role="img" aria-label="QR code for your authenticator app" width="200" height="200" '))}</div>
+      <p class="small mb-0">Can't scan it? Type this key instead: <span class="mono two-step-key">${r.secret}</span></p>
+      <form class="stack" id="ts-confirm"><div class="field"><label for="ts-code"><strong>2.</strong> Type the six-digit code the app shows</label><input id="ts-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code"></div>
+        <button class="btn btn-primary">Turn on two-step sign-in</button></form></div>`);
+    onSubmit($("#ts-confirm", setup), async (v) => {
+      await post("/api/admin/me/two-step/confirm", v);
+      toast("Two-step sign-in is on.", "good");
+      if (forced) location.reload(); else twoStepCard(el);
+    });
+    setTimeout(() => $("#ts-code", setup)?.focus(), 50);
+  });
+}
 async function siteSettings() {
   const { settings: s, hoursStatus: hs, aiConfigured, assistantModel } = await get("/api/admin/settings");
   const ro = raw(isA() ? "" : "disabled");
   const save = async (key, value, msg) => { if (await act(() => put(`/api/admin/settings/${key}`, value), msg)) siteSettings(); };
+  queueMicrotask(() => securityCard().catch((err) => toast(err.message, "bad")));
   render(main, html`${head("Site settings", "Changes apply to the live site within a few seconds. Every change is written to the audit log.")}
     ${!isA() ? html`<p class="callout">View only. Changing site settings needs the admin role.</p>` : ""}
+    <div id="sec-card"></div>
     <div class="grid-2">
     <section class="card stack ${s.maintenance.enabled ? "flat" : ""}" aria-labelledby="mt-h"><h2 id="mt-h">Maintenance mode ${s.maintenance.enabled ? html`<span class="badge bad">ON</span>` : html`<span class="badge good">Off</span>`}</h2>
       <p class="small muted mb-0">When on, every visitor gets the maintenance page from the server: nobody can browse, book, sign up or sign in except TicketRoom staff, who see the site as normal with a yellow reminder bar. Payment notifications from Yoco and PayFast keep arriving.</p>
@@ -1516,6 +1603,13 @@ function practiceTickets(e, tickets) {
   }
   await header($("#header"), { portal: "admin" });
   document.title = "Admin portal | TicketRoom";
+  // Two-step is compulsory and this person has not set it up: only that, first.
+  const mine = await me();
+  if (mine.twoStepRequired && !mine.twoStepEnabled) {
+    render($("#sidenav"), "");
+    render(main, html`${head("Set up two-step sign-in", "One minute, then the admin portal opens.")}<div id="two-step"></div>`);
+    return twoStepCard($("#two-step"), { forced: true });
+  }
   nav();
   router([["/", overview], ["/organisers", organisers], ["/organisers/:id", (p) => organiserDetail(p)], ["/verification", verificationQueue], ["/events", events], ["/events/:id", (p) => eventPage(p)], ["/event-changes", eventChangeRequests], ["/promo-codes", promoCodes], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/wallets", gate("cashDesk", wallets)], ["/support", support], ["/promotions", promotions],
     ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/retail-partners", retailPartners], ["/audit", audit], ["/outbox", outbox], ["/backups", backups], ["/site", siteSettings], ["/posters", posters], ["/careers", careersAdmin], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/test-event", testEventPage], ["/staff", staffPage]], () => { location.hash = "#/"; });

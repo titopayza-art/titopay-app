@@ -1659,3 +1659,9 @@ body:has(.chat-fab) .site-footer .legal-line { padding-right: 150px; }
 /* About: ownership badges in the opening section. */
 .own-badges { gap: 10px; margin-top: 18px; flex-wrap: wrap; }
 .own-badge { display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--amber-500); color: var(--amber-500); font-weight: 800; font-size: .9rem; letter-spacing: .02em; }
+/* Public forms: a trap field people never see (bots fill it in), and the Turnstile check. */
+.hp-trap { position: absolute !important; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+.ts-box { min-height: 65px; }
+/* Admin: two-step set-up. */
+.two-step-qr { display: inline-block; padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+.two-step-key { letter-spacing: .06em; word-spacing: .25em; overflow-wrap: normal; }
