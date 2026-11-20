@@ -89,7 +89,7 @@ $qr = Totp::qrSvg('https://www.seageek.co.za/plugins');
       <ol class="prod-steps"><?php foreach ($steps as $n => $s): ?><li><b><?= $n + 1 ?></b><span><?= e($s) ?></span></li><?php endforeach; ?></ol>
       <p class="prod-price"><?= e($price) ?></p>
       <div class="prod-links">
-        <?php if ($st === 'live'): ?><a class="btn btn-primary btn-sm" href="<?= e($go($setup)) ?>"><?= $signedIn ? 'Set it up' : 'Start free' ?></a><?php else: ?><a class="btn btn-ghost btn-sm" href="/contact">Get told when it opens</a><?php endif; ?>
+        <?php if ($st === 'live'): ?><a class="btn btn-primary btn-sm" href="<?= e($go($setup)) ?>"><?= $signedIn ? 'Set it up' : 'Start with Pay as you Use' ?></a><?php else: ?><a class="btn btn-ghost btn-sm" href="/contact">Get told when it opens</a><?php endif; ?>
         <?php if ($docs): ?><a class="link" href="<?= e($docs) ?>">For developers: API docs</a><?php endif; ?>
       </div>
     </div>

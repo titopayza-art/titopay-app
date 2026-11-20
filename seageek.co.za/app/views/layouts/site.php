@@ -16,7 +16,7 @@
         <a class="btn btn-primary btn-sm" href="<?= Auth::user()['is_admin'] ? '/admin' : '/dashboard' ?>">Dashboard</a>
       <?php else: ?>
         <a class="btn btn-ghost btn-sm" href="/login" style="border-color:transparent">Sign in</a>
-        <a class="btn btn-primary btn-sm" href="/register">Start free</a>
+        <a class="btn btn-primary btn-sm" href="/register">Start with Pay as you Use</a>
       <?php endif; ?>
       <button class="icon-btn menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="mobile-nav"><?= icon('menu') ?></button>
     </div>
@@ -24,7 +24,7 @@
 </header>
 <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile">
   <a href="/products">Products</a><a href="/desk">Desk</a><a href="/plugins">Plug-ins</a><a href="/pricing">Pricing</a><a href="/docs">Developers</a><a href="/startups">Startups</a><a href="/about">About</a><a href="/help">Help centre</a><a href="/login">Sign in</a>
-  <a class="btn btn-primary" href="/register">Start free</a>
+  <a class="btn btn-primary" href="/register">Start with Pay as you Use</a>
 </nav>
 <main id="main"><?= $content ?></main>
 <footer class="site-footer">

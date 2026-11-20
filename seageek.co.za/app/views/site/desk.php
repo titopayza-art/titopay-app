@@ -26,6 +26,6 @@
     <li><h3>Reports</h3><p>Tickets by day and channel, share answered by AI alone, median first-reply and solve times, ratings, and each person's workload.</p></li>
     <li><h3>Included in every plan</h3><p>Desk seats come with your SeaGeek plan, billed in rand with everything else. No separate help desk subscription in dollars.</p></li>
   </ul>
-  <div style="margin-top:28px;display:flex;gap:10px;flex-wrap:wrap"><a class="btn btn-primary" href="/register">Start free</a><a class="btn btn-ghost" href="/docs/desk">Desk API</a></div>
+  <div style="margin-top:28px;display:flex;gap:10px;flex-wrap:wrap"><a class="btn btn-primary" href="/register">Start with Pay as you Use</a><a class="btn btn-ghost" href="/docs/desk">Desk API</a></div>
 </div></section>
 <style>@media (max-width:760px){.desk-demo{grid-template-columns:1fr!important}.desk-demo>div:first-child{border-right:0!important;border-bottom:1px solid var(--line)}}</style>

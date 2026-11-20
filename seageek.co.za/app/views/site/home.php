@@ -13,7 +13,7 @@
       <div class="hero-copy">
         <p>SMS, email, authentication, identity checks, WhatsApp, voice and AI through one South African API. Integrate once, pay in rand, get support in your time zone.</p>
         <div class="btn-row">
-          <a class="btn btn-primary" href="/register">Start free</a>
+          <a class="btn btn-primary" href="/register">Start with Pay as you Use</a>
           <a class="btn btn-ghost" href="/developers">API preview</a>
         </div>
       </div>
