@@ -54,6 +54,10 @@ $r->add('GET|POST', '/admin/staff', function () {
                 DB::update('users', ['disabled_at' => null], 'id = ?', [$u['id']]);
                 audit('staff.enabled', null, $u['email']);
                 flash('ok', $u['name'] . ' can sign in again.');
+            } elseif ($a === 'reset_2fa') {
+                DB::update('users', ['totp_secret_enc' => null, 'totp_enabled_at' => null], 'id = ?', [$u['id']]);
+                audit('staff.2fa_reset', null, $u['email']);
+                flash('ok', $u['name'] . ' must set up two-step sign-in again on their next sign-in.');
             } elseif ($a === 'resend') {
                 Mail::queue($u['email'], 'Your SeaGeek team login', 'staff_invite', ['name' => $u['name'], 'by' => $me, 'role' => Staff::roleLabel($u['admin_role']), 'link' => app_url('/reset/' . Auth::issueToken((int) $u['id'], 'reset', '+3 days'))]);
                 Mail::deliver(5);
@@ -384,6 +388,7 @@ $r->add('GET|POST', '/u/{token}', function ($token) {
 
 $r->add('POST', '/newsletter', function () {
     csrf_check();
+    if (Shield::looksAutomated(true)) { Shield::strike('form_bot', '/newsletter', 3); redirect('/'); }
     $email = strtolower(trim((string) input('email')));
     if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !input('consent') || rate_limited('nl:' . client_ip(), 5, 3600)) {
         flash('error', 'Enter your email address and tick the box to agree.');
@@ -399,4 +404,104 @@ $r->add('POST', '/newsletter', function () {
     }
     flash('ok', 'Thanks. You are on the list. We send at most one email a month.');
     redirect(($_SERVER['HTTP_REFERER'] ?? '/') . '#newsletter');
+});
+
+// ---------------------------------------------------------------------------
+// Xero accounting
+// ---------------------------------------------------------------------------
+
+$r->add('GET|POST', '/admin/xero', function () {
+    Auth::requireAdmin('billing');
+    if (is_post()) {
+        csrf_check();
+        $a = (string) input('action');
+        if ($a === 'save') {
+            foreach (['xero_client_id', 'xero_client_secret', 'xero_sales_account', 'xero_bank_account', 'xero_tax_type'] as $k) {
+                if (!array_key_exists($k, $_POST) || ($k === 'xero_client_secret' && $_POST[$k] === '')) continue;
+                Settings::set($k, trim((string) $_POST[$k]));
+            }
+            audit('xero.settings_saved');
+            flash('ok', 'Xero settings saved.');
+        } elseif ($a === 'connect') {
+            if (!Xero::configured()) { flash('error', 'Save the Client ID and Client secret from your Xero app first.'); redirect('/admin/xero'); }
+            redirect(Xero::authorizeUrl());
+        } elseif ($a === 'disconnect') {
+            Xero::disconnect();
+            audit('xero.disconnected');
+            flash('ok', 'Xero is disconnected. Nothing more will be copied.');
+        } elseif ($a === 'sync') {
+            $res = Xero::sync();
+            Cron::mark('xero', json_encode($res));
+            isset($res['skipped']) ? flash('error', 'Connect Xero first.')
+                : flash($res['errors'] ? 'error' : 'ok', "Copied {$res['invoices']} invoices and {$res['payments']} payments" . ($res['voided'] ? ", voided {$res['voided']}" : '') . '.' . ($res['errors'] ? " {$res['errors']} failed; see the log below." : ''));
+        } elseif ($a === 'retry') {
+            DB::run("UPDATE xero_sync SET attempts = 0 WHERE status = 'error'");
+            flash('ok', 'Failed items will be tried again on the next sync.');
+        }
+        redirect('/admin/xero');
+    }
+    $counts = [];
+    foreach (DB::all('SELECT entity, status, COUNT(*) n FROM xero_sync GROUP BY entity, status') as $c) $counts[$c['entity']][$c['status']] = (int) $c['n'];
+    render('admin/xero', ['title' => 'Xero accounting', 'counts' => $counts,
+        'waiting' => (int) DB::value("SELECT COUNT(*) FROM invoices i LEFT JOIN xero_sync x ON x.entity = 'invoice' AND x.local_id = i.id WHERE i.status IN ('unpaid','paid') AND x.id IS NULL"),
+        'log' => DB::all("SELECT x.*, CASE WHEN x.entity = 'contact' THEN o.name ELSE i.number END label FROM xero_sync x
+            LEFT JOIN orgs o ON x.entity = 'contact' AND o.id = x.local_id
+            LEFT JOIN invoices i ON (x.entity = 'invoice' AND i.id = x.local_id) OR (x.entity = 'payment' AND i.id = (SELECT invoice_id FROM payments WHERE id = x.local_id))
+            ORDER BY x.id DESC LIMIT 40")], 'app');
+});
+
+$r->add('GET', '/admin/xero/callback', function () {
+    Auth::requireAdmin('billing');
+    if (input('error')) { flash('error', 'Xero said: ' . mb_substr((string) input('error'), 0, 100)); redirect('/admin/xero'); }
+    try {
+        $name = Xero::finishConnect((string) input('code'), (string) input('state'));
+        audit('xero.connected', null, $name);
+        flash('ok', 'Connected to ' . $name . '. New invoices and payments copy across every few minutes.');
+    } catch (Throwable $e) {
+        flash('error', $e->getMessage());
+    }
+    redirect('/admin/xero');
+});
+
+// ---------------------------------------------------------------------------
+// Security: blocked addresses and suspicious activity
+// ---------------------------------------------------------------------------
+
+$r->add('GET|POST', '/admin/security', function () {
+    Auth::requireAdmin('system');
+    if (is_post()) {
+        csrf_check();
+        $a = (string) input('action');
+        if ($a === 'unblock') {
+            DB::run('DELETE FROM ip_blocks WHERE ip = ?', [(string) input('ip')]);
+            DB::run('DELETE FROM security_events WHERE ip = ?', [(string) input('ip')]);
+            audit('security.unblocked', null, (string) input('ip'));
+            flash('ok', input('ip') . ' can reach the site again.');
+        } elseif ($a === 'block') {
+            $ip = trim((string) input('ip'));
+            if (!filter_var($ip, FILTER_VALIDATE_IP)) { flash('error', 'Enter a valid IP address.'); redirect('/admin/security'); }
+            if ($ip === Shield::ip()) { flash('error', 'That is your own address.'); redirect('/admin/security'); }
+            $until = ts(input('for') === 'forever' ? '+50 years' : '+7 days');
+            DB::run('DELETE FROM ip_blocks WHERE ip = ?', [$ip]);
+            DB::insert('ip_blocks', ['ip' => $ip, 'reason' => 'manual', 'until' => $until, 'created_at' => now()]);
+            audit('security.blocked', null, $ip);
+            flash('ok', $ip . ' is blocked.');
+        } elseif ($a === 'save') {
+            Settings::set('require_staff_2fa', input('require_staff_2fa') ? '1' : '0');
+            Settings::set('turnstile_site_key', trim((string) input('turnstile_site_key')));
+            if ((string) input('turnstile_secret') !== '') Settings::set('turnstile_secret', trim((string) input('turnstile_secret')));
+            if (input('turnstile_clear')) { Settings::set('turnstile_site_key', ''); Settings::set('turnstile_secret', ''); }
+            audit('security.settings_saved');
+            flash('ok', 'Security settings saved.');
+        }
+        redirect('/admin/security');
+    }
+    $since = ts('-24 hours');
+    render('admin/security', ['title' => 'Security',
+        'blocks' => DB::all('SELECT * FROM ip_blocks WHERE until > ? ORDER BY created_at DESC LIMIT 100', [now()]),
+        'kinds' => DB::all('SELECT kind, COUNT(*) n FROM security_events WHERE created_at > ? GROUP BY kind ORDER BY n DESC', [$since]),
+        'top' => DB::all('SELECT ip, COUNT(*) n, MAX(created_at) last FROM security_events WHERE created_at > ? GROUP BY ip ORDER BY n DESC LIMIT 10', [$since]),
+        'events' => DB::all('SELECT * FROM security_events ORDER BY id DESC LIMIT 60'),
+        'no2fa' => DB::all("SELECT name, email FROM users WHERE is_admin = 1 AND disabled_at IS NULL AND totp_enabled_at IS NULL"),
+        'me' => Shield::ip()], 'app');
 });

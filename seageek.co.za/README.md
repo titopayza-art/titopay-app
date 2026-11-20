@@ -57,3 +57,12 @@ PHP 8.1+ with `pdo_mysql` (or `pdo_sqlite`), `curl`, `sodium`, `mbstring`, and `
 - Every form has CSRF protection; sign-in, sign-up, chat, OTP and API calls are rate-limited.
 - Staff see only the admin areas their role allows; switched-off staff are signed out at once.
 - Store webhooks are checked with the platform's HMAC signature (Shopify, WooCommerce) or your store secret.
+- **Bot and attack blocking.** Requests for WordPress, `.env`, database dumps and similar paths, and known attack tools (sqlmap, nikto, wpscan and others), are refused before any page runs. Wrong passwords, wrong API keys, forged forms and bot form posts count against the IP address; 20 in an hour blocks it for an hour. Admin, Security lists blocked addresses and lets you block or unblock by hand.
+- **Form traps.** Every form carries a hidden field and a signed time stamp. Bots that fill the field or post in under two seconds are turned away. Cloudflare Turnstile can be added to public forms by saving its keys under Admin, Security.
+- **Two-step sign-in.** Anyone can turn on authenticator-app codes under "Two-step sign-in". Staff must have it to open the admin console (switch under Admin, Security). An owner can reset it from Staff if someone loses their phone.
+
+## Xero accounting
+
+1. At developer.xero.com create a **Web app** with redirect URI `https://www.seageek.co.za/admin/xero/callback`.
+2. In Admin, Xero accounting, paste the Client ID and Client secret, check the sales (200) and bank (090) account codes and the tax rate, then press **Connect to Xero**.
+3. From then on the scheduled jobs (`php cli.php cron`) copy every invoice, its customer (matched on the 6-digit customer number) and every card, EFT or PayFast payment to Xero, and void invoices voided here. Failures are retried up to five times and shown in the log with Xero's reason.

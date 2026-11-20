@@ -1,6 +1,6 @@
 <?php
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-$isAdmin = str_starts_with($path, '/admin');
+$isAdmin = str_starts_with($path, '/admin') || ($path === '/account/security' && !empty(Auth::user()['is_admin']) && empty($_SESSION['act_as_org']));
 $u = Auth::user();
 $o = $isAdmin ? null : Auth::org();
 $on = fn(string $p, bool $exact = false) => ($exact ? $path === $p : str_starts_with($path, $p)) ? ' on' : '';
@@ -31,6 +31,7 @@ $openTickets = $isAdmin
       <a class="nav<?= $on('/admin/billing') ?><?= $on('/admin/invoices') ?>" href="/admin/billing"><?= icon('card') ?>Invoices &amp; payments</a>
       <a class="nav<?= $on('/admin/eft') ?>" href="/admin/eft"><?= icon('bank') ?>Bank payments (EFT)<?= $eftWaiting ? '<span class="badge">' . $eftWaiting . '</span>' : '' ?></a>
       <a class="nav<?= $on('/admin/quotes') ?>" href="/admin/quotes"><?= icon('calc') ?>Quotes</a>
+      <a class="nav<?= $on('/admin/xero') ?>" href="/admin/xero"><?= icon('book') ?>Xero accounting</a>
       <?php endif; ?>
       <?php if ($can('marketing')): ?>
       <h6>Marketing</h6>
@@ -48,6 +49,7 @@ $openTickets = $isAdmin
       <?php if ($can('staff')): ?><a class="nav<?= $on('/admin/staff') ?>" href="/admin/staff"><?= icon('staff') ?>Staff &amp; permissions</a><?php endif; ?>
       <?php if ($can('settings')): ?><a class="nav<?= $on('/admin/settings') ?>" href="/admin/settings"><?= icon('cog') ?>Settings</a><?php endif; ?>
       <?php if ($can('system')): ?><a class="nav<?= $on('/admin/system') ?>" href="/admin/system"><?= icon('server') ?>Jobs &amp; logs</a><?php endif; ?>
+      <?php if ($can('system')): ?><a class="nav<?= $on('/admin/security') ?>" href="/admin/security"><?= icon('shield') ?>Security</a><?php endif; ?>
       <?php endif; ?>
     <?php else: ?>
       <a class="nav<?= $on('/dashboard', true) ?>" href="/dashboard"><?= icon('grid') ?>Overview</a>
@@ -79,6 +81,7 @@ $openTickets = $isAdmin
     <div class="side-foot">
       <div style="color:var(--text-soft)"><?= e($u['name']) ?></div>
       <div class="small" style="margin-bottom:8px"><?= e($u['email']) ?></div>
+      <a class="small link" href="/account/security" style="display:block;margin-bottom:8px">Two-step sign-in<?= $u['totp_enabled_at'] ? ': on' : ': off' ?></a>
       <form method="post" action="/logout"><?= csrf_field() ?><button><?= icon('logout') ?>Sign out</button></form>
     </div>
   </aside>

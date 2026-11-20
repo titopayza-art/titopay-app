@@ -16,6 +16,8 @@ if (!installed()) {
     exit;
 }
 
+Shield::gate($path);
+
 // Store webhooks (Shopify, WooCommerce, any platform) authenticate with the link and a signature, not an API key
 if (preg_match('#^/api/v1/stores/hooks/([A-Za-z0-9_-]{16,64})$#', $path, $m)) {
     Stores::receive($m[1]);
@@ -28,6 +30,8 @@ header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 header('X-Frame-Options: SAMEORIGIN');
 header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+header('Cross-Origin-Opener-Policy: same-origin');
+if (str_starts_with(app_url(), 'https://')) header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 
 start_session();
 $router = require APP_DIR . '/routes.php';

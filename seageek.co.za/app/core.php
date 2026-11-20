@@ -198,7 +198,7 @@ final class Settings
 {
     private static ?array $cache = null;
 
-    public const SECRET_KEYS = ['payfast_merchant_key', 'payfast_passphrase', 'anthropic_api_key', 'openai_api_key', 'smtp_password'];
+    public const SECRET_KEYS = ['payfast_merchant_key', 'payfast_passphrase', 'anthropic_api_key', 'openai_api_key', 'smtp_password', 'turnstile_secret', 'xero_client_secret', 'xero_tokens'];
 
     public const DEFAULTS = [
         'company_name' => 'SeaGeek Technologies (Pty) Ltd',
@@ -227,6 +227,20 @@ final class Settings
         'payfast_passphrase' => '',
         'min_topup' => '100',
         'startup_credit' => '500',
+        'require_staff_2fa' => '1',
+        'turnstile_site_key' => '',
+        'turnstile_secret' => '',
+        'xero_client_id' => '',
+        'xero_client_secret' => '',
+        'xero_tokens' => '',
+        'xero_tenant_name' => '',
+        'xero_sales_account' => '200',
+        'xero_bank_account' => '090',
+        'xero_tax_type' => 'NONE',
+        'xero_scopes' => 'openid profile email offline_access accounting.transactions accounting.contacts accounting.settings.read',
+        'xero_login_url' => 'https://login.xero.com/identity/connect/authorize',
+        'xero_identity_url' => 'https://identity.xero.com',
+        'xero_api_url' => 'https://api.xero.com',
         'startup_plan_months' => '3',
         'invoice_due_days' => '7',
         'reminder_days' => '0,3,6',
@@ -324,14 +338,20 @@ function csrf_token(): string
     return $_SESSION['csrf'];
 }
 
-function csrf_field(): string { return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">'; }
+function csrf_field(): string { return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">' . Shield::trapFields(); }
 
 function csrf_check(): void
 {
     $sent = $_POST['_csrf'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
     if (!is_string($sent) || !hash_equals(csrf_token(), $sent)) {
+        if (installed()) Shield::strike('csrf', (string) ($_SERVER['REQUEST_URI'] ?? ''));
         http_response_code(419);
         exit('This form has expired. Go back, refresh the page and try again.');
+    }
+    if (Shield::looksAutomated(false)) {
+        Shield::strike('form_bot', (string) ($_SERVER['REQUEST_URI'] ?? ''), 3);
+        http_response_code(400);
+        exit('That did not go through. Go back and try again.');
     }
 }
 

@@ -995,3 +995,5 @@ details.fold-plain summary { cursor: pointer; color: var(--accent); font-size: 1
 @media (max-width: 900px) { .platforms { grid-template-columns: 1fr 1fr !important; } }
 .pick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
 @media (max-width: 700px) { .pick-grid { grid-template-columns: 1fr 1fr; } }
+.hp { position: absolute !important; left: -10000px !important; width: 1px; height: 1px; overflow: hidden; }
+@media (max-width: 980px) { #staff-grid, #xero-grid, #sec-grid { grid-template-columns: 1fr !important; } }

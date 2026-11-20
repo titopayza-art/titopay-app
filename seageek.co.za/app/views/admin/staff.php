@@ -44,11 +44,12 @@ $roleOptions = fn(string $sel) => implode('', array_map(fn($k) => ($k === 'owner
           </form>
         </td>
         <td class="small muted" style="max-width:260px"><?= e(implode(', ', array_map(fn($p) => Staff::PERMISSIONS[$p][0], $perms))) ?></td>
-        <td class="small nowrap"><?= $s['last_login_at'] ? e(date('j M Y H:i', strtotime($s['last_login_at'] . ' UTC'))) : '<span class="muted">Never</span>' ?></td>
+        <td class="small nowrap"><?= $s['totp_enabled_at'] ? '<div class="small">Two-step on</div>' : '<div class="small muted">Two-step off</div>' ?><?= $s['last_login_at'] ? e(date('j M Y H:i', strtotime($s['last_login_at'] . ' UTC'))) : '<span class="muted">Never</span>' ?></td>
         <td><?php $status = $s['disabled_at'] ? 'switched off' : ($s['last_login_at'] ? 'active' : 'invited'); ?><span class="pill <?= $s['disabled_at'] ? 'red' : ($s['last_login_at'] ? 'green' : 'amber') ?>"><?= ucfirst($status) ?></span></td>
         <td class="right nowrap">
           <?php if (!$self): ?>
             <?php if (!$s['last_login_at'] && !$s['disabled_at']): ?><form method="post" class="inline-form"><?= csrf_field() ?><input type="hidden" name="action" value="resend"><input type="hidden" name="user" value="<?= (int) $s['id'] ?>"><button class="btn btn-ghost btn-xs">Resend link</button></form><?php endif; ?>
+            <?php if ($s['totp_enabled_at'] && !$s['disabled_at']): ?><form method="post" class="inline-form" data-confirm="Reset two-step sign-in for <?= e($s['name']) ?>? Use this when they lose their phone."><?= csrf_field() ?><input type="hidden" name="action" value="reset_2fa"><input type="hidden" name="user" value="<?= (int) $s['id'] ?>"><button class="btn btn-ghost btn-xs">Reset two-step</button></form><?php endif; ?>
             <form method="post" class="inline-form" <?= $s['disabled_at'] ? '' : 'data-confirm="Switch off ' . e($s['name']) . '? They are signed out straight away."' ?>><?= csrf_field() ?><input type="hidden" name="action" value="<?= $s['disabled_at'] ? 'enable' : 'disable' ?>"><input type="hidden" name="user" value="<?= (int) $s['id'] ?>"><button class="btn <?= $s['disabled_at'] ? 'btn-ghost' : 'btn-danger' ?> btn-xs"><?= $s['disabled_at'] ? 'Switch on' : 'Switch off' ?></button></form>
           <?php endif; ?>
         </td>

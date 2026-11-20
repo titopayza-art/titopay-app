@@ -42,6 +42,7 @@ $startup = DB::one("SELECT * FROM plans WHERE code = 'startup'");
       <div class="pick-grid"><?php foreach (Catalog::services() as $k => $s): if ($s['status'] === 'planned') continue; ?><label class="consent"><input type="checkbox" name="products[]" value="<?= e($s['name']) ?>"><span><?= e($s['name']) ?></span></label><?php endforeach; ?></div>
     </fieldset>
     <label class="consent"><input type="checkbox" required><span>SeaGeek may use these details to review my application, as described in the <a class="link" href="/privacy">privacy notice</a>.</span></label>
+    <?= Shield::turnstileWidget() ?>
     <button class="btn btn-primary">Send application</button>
   </form>
 </div></section>

@@ -136,6 +136,15 @@ final class Schema
                 "CREATE TABLE campaign_recipients (id {PK}, campaign_id {ID} NOT NULL, name VARCHAR(160), address VARCHAR(190) NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', message_id VARCHAR(30), error VARCHAR(255), updated_at {TS}){ENGINE}",
                 "CREATE INDEX campaign_recipients_c ON campaign_recipients (campaign_id, status, id)",
             ],
+            4 => [
+                "CREATE TABLE ip_blocks (ip VARCHAR(64) PRIMARY KEY, reason VARCHAR(120), until {TS} NOT NULL, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE TABLE security_events (id {PK}, ip VARCHAR(64) NOT NULL, kind VARCHAR(40) NOT NULL, detail VARCHAR(255), created_at {TS} NOT NULL){ENGINE}",
+                "CREATE INDEX security_events_ip ON security_events (ip, created_at)",
+                "ALTER TABLE users ADD COLUMN totp_secret_enc {TEXT}",
+                "ALTER TABLE users ADD COLUMN totp_enabled_at {TS}",
+                "CREATE TABLE xero_sync (id {PK}, entity VARCHAR(20) NOT NULL, local_id {ID} NOT NULL, xero_id VARCHAR(64), status VARCHAR(20) NOT NULL, error VARCHAR(500), attempts INTEGER NOT NULL DEFAULT 0, synced_at {TS}, created_at {TS} NOT NULL){ENGINE}",
+                "CREATE UNIQUE INDEX xero_sync_entity ON xero_sync (entity, local_id)",
+            ],
         ];
     }
 

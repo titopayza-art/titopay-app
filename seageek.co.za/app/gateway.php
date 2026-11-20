@@ -23,7 +23,7 @@ final class Gateway
             $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
             if (!preg_match('/^Bearer\s+(\S+)$/', $auth, $m)) throw new ApiError(401, 'authentication_error', 'Send your API key as "Authorization: Bearer sg_..."');
             $resolved = ApiKeys::resolve($m[1]);
-            if (!$resolved) throw new ApiError(401, 'authentication_error', 'This API key is not valid or has been revoked.');
+            if (!$resolved) { Shield::strike('bad_api_key'); throw new ApiError(401, 'authentication_error', 'This API key is not valid or has been revoked.'); }
             $org = $resolved['org'];
             $env = $resolved['key']['env'];
             $plan = Billing::plan($org);

@@ -6,6 +6,7 @@
     <div class="row"><div class="field"><label for="c-phone">Phone (optional)</label><input id="c-phone" name="phone" type="tel" autocomplete="tel"></div><div class="field"><label for="c-topic">Topic</label><select id="c-topic" name="topic"><option>Sales</option><option>Technical support</option><option>Billing</option><option>Partnership</option><option>Investment</option><option>Other</option></select></div></div>
     <div class="field"><label for="c-msg">Message</label><textarea id="c-msg" name="message" required></textarea></div>
     <label class="consent"><input type="checkbox" required><span>SeaGeek may use these details to reply, as described in the <a class="link" href="/privacy">privacy notice</a>.</span></label>
+    <?= Shield::turnstileWidget() ?>
     <button class="btn btn-primary">Send</button>
   </form>
   <div class="stack">

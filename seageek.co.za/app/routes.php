@@ -108,6 +108,7 @@ $r->add('GET', '/status', function () {
 $r->add('GET|POST', '/startups', function () {
     if (is_post()) {
         csrf_check();
+        Shield::guardPublicForm('/startups#apply');
         if (rate_limited('startup:' . client_ip(), 5, 3600)) { flash('error', 'Too many applications from your connection. Try again later.'); redirect('/startups#apply'); }
         $email = (string) input('email');
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || trim((string) input('what')) === '' || trim((string) input('company')) === '') { flash('error', 'Add your email, startup name and what you are building.'); redirect('/startups#apply'); }
@@ -125,6 +126,7 @@ $r->add('GET|POST', '/startups', function () {
 $r->add('GET|POST', '/contact', function () {
     if (is_post()) {
         csrf_check();
+        Shield::guardPublicForm('/contact');
         if (rate_limited('contact:' . client_ip(), 5, 3600)) { flash('error', 'Too many messages from your connection. Try again later.'); redirect('/contact'); }
         $email = (string) input('email');
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || trim((string) input('message')) === '') { flash('error', 'Add your email address and a message.'); redirect('/contact'); }
@@ -226,6 +228,7 @@ $r->add('GET|POST', '/register', function () {
     if (Auth::user()) redirect('/dashboard');
     if (is_post()) {
         csrf_check();
+        Shield::guardPublicForm('/register');
         $_SESSION['old'] = $_POST;
         $email = strtolower((string) input('email'));
         $pw = (string) input('password');
@@ -259,12 +262,64 @@ $r->add('GET|POST', '/login', function () {
         csrf_check();
         if (rate_limited('login:' . client_ip(), 20, 900)) { flash('error', 'Too many sign-in attempts. Wait 15 minutes.'); redirect('/login'); }
         $res = Auth::attempt((string) input('email'), (string) input('password'));
-        if ($res !== true) { $_SESSION['old'] = ['email' => input('email')]; flash('error', $res); redirect('/login'); }
-        $to = $_SESSION['after_login'] ?? (Auth::user()['is_admin'] ? '/admin' : '/dashboard');
+        if ($res !== true) { Shield::strike('login_failed', (string) input('email')); $_SESSION['old'] = ['email' => input('email')]; flash('error', $res); redirect('/login'); }
+        $u = Auth::user();
+        $to = $_SESSION['after_login'] ?? ($u['is_admin'] ? '/admin' : '/dashboard');
         unset($_SESSION['after_login'], $_SESSION['old']);
-        redirect(str_starts_with($to, '/') ? $to : '/dashboard');
+        $to = str_starts_with($to, '/') ? $to : '/dashboard';
+        if ($u['totp_enabled_at']) {
+            // Password was right; the session only becomes signed in after the authenticator code.
+            Auth::logout();
+            $_SESSION['pending_2fa'] = ['uid' => (int) $u['id'], 'at' => time(), 'to' => $to];
+            redirect('/login/code');
+        }
+        redirect($to);
     }
     render('auth/login', ['title' => 'Sign in'], 'auth');
+});
+$r->add('GET|POST', '/login/code', function () {
+    $p = $_SESSION['pending_2fa'] ?? null;
+    if (!$p || time() - $p['at'] > 600) { unset($_SESSION['pending_2fa']); redirect('/login'); }
+    if (is_post()) {
+        csrf_check();
+        if (rate_limited('2fa:' . $p['uid'], 6, 600)) { unset($_SESSION['pending_2fa']); flash('error', 'Too many wrong codes. Sign in again in 10 minutes.'); redirect('/login'); }
+        $u = DB::one('SELECT * FROM users WHERE id = ? AND disabled_at IS NULL', [$p['uid']]);
+        if ($u && $u['totp_secret_enc'] && Totp::verify(Crypto::decrypt($u['totp_secret_enc']), (string) input('code'))) {
+            unset($_SESSION['pending_2fa']);
+            Auth::login((int) $u['id']);
+            audit('auth.2fa_ok', $u['org_id'] ? (int) $u['org_id'] : null, $u['email']);
+            redirect($p['to']);
+        }
+        Shield::strike('2fa_failed', (string) $p['uid']);
+        flash('error', 'That code is not right. Use the 6-digit code from your authenticator app.');
+        redirect('/login/code');
+    }
+    render('auth/code', ['title' => 'Enter your code'], 'auth');
+});
+$r->add('GET|POST', '/account/security', function () {
+    $u = Auth::requireUser();
+    if (is_post()) {
+        csrf_check();
+        $a = (string) input('action');
+        if ($a === 'enable') {
+            $secret = (string) ($_SESSION['totp_setup'] ?? '');
+            if ($secret === '' || !Totp::verify($secret, (string) input('code'))) { flash('error', 'That code is not right. Scan the QR code again and enter the 6-digit code.'); redirect('/account/security'); }
+            DB::update('users', ['totp_secret_enc' => Crypto::encrypt($secret), 'totp_enabled_at' => now()], 'id = ?', [$u['id']]);
+            unset($_SESSION['totp_setup']);
+            audit('auth.2fa_enabled', $u['org_id'] ? (int) $u['org_id'] : null, $u['email']);
+            flash('ok', 'Two-step sign-in is on. You will be asked for a code each time you sign in.');
+            redirect($u['is_admin'] ? '/admin' : '/account/security');
+        } elseif ($a === 'disable') {
+            if (!$u['totp_secret_enc'] || !Totp::verify(Crypto::decrypt($u['totp_secret_enc']), (string) input('code'))) { flash('error', 'Enter a current code from your app to switch this off.'); redirect('/account/security'); }
+            if ($u['is_admin'] && Settings::get('require_staff_2fa') === '1') { flash('error', 'Two-step sign-in is required for SeaGeek staff.'); redirect('/account/security'); }
+            DB::update('users', ['totp_secret_enc' => null, 'totp_enabled_at' => null], 'id = ?', [$u['id']]);
+            audit('auth.2fa_disabled', $u['org_id'] ? (int) $u['org_id'] : null, $u['email']);
+            flash('ok', 'Two-step sign-in is off.');
+        }
+        redirect('/account/security');
+    }
+    if (!$u['totp_enabled_at'] && empty($_SESSION['totp_setup'])) $_SESSION['totp_setup'] = Totp::newSecret();
+    render('auth/security', ['title' => 'Two-step sign-in', 'u' => $u, 'secret' => $_SESSION['totp_setup'] ?? null], 'app');
 });
 $r->add('POST', '/logout', function () { csrf_check(); Auth::logout(); redirect('/login'); });
 $r->add('GET|POST', '/verify-email', function () {
@@ -296,6 +351,7 @@ $r->add('GET', '/verify/{token}', function ($token) {
 $r->add('GET|POST', '/forgot', function () {
     if (is_post()) {
         csrf_check();
+        Shield::guardPublicForm('/forgot');
         $u = DB::one('SELECT * FROM users WHERE email = ?', [strtolower((string) input('email'))]);
         if ($u && !rate_limited('forgot:' . $u['id'], 3, 3600)) {
             Mail::queue($u['email'], 'Reset your SeaGeek password', 'reset', ['name' => $u['name'], 'link' => app_url('/reset/' . Auth::issueToken((int) $u['id'], 'reset', '+1 hour'))]);

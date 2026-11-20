@@ -107,6 +107,10 @@ final class Auth
             http_response_code(403);
             render('admin/denied', ['title' => 'No access', 'perm' => $perm], empty($u['is_admin']) ? 'auth' : 'app');
         }
+        if (Settings::get('require_staff_2fa') === '1' && !$u['totp_enabled_at'] && empty($_SESSION['act_as_org'])) {
+            flash('error', 'Set up two-step sign-in before using the admin console. It takes a minute with any authenticator app.');
+            redirect('/account/security');
+        }
         return $u;
     }
 
